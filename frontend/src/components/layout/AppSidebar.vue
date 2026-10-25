@@ -2,7 +2,7 @@
 import { computed, nextTick, ref, watch } from "vue";
 import { status } from "../../stores/session";
 import AppNavIcon from "./AppNavIcon.vue";
-import { activeThemeLabel, setThemeMode, themeMode } from "../../stores/theme";
+import { setThemeMode, themeMode } from "../../stores/theme";
 
 const props = defineProps<{
  tabs: Array<{ key: string; label: string; hint: string; icon: string }>;
@@ -10,14 +10,16 @@ const props = defineProps<{
  hasConsoleAccess: boolean; activeDownloadCount: number;
  unreadCompletedDownloadCount?: number; updateAvailable?: boolean;
 }>();
-const emit = defineEmits<{ (event: "select-tab", tab: string): void; (event: "toggle-collapse"): void }>();
+const emit = defineEmits<{ (event: "select-tab", tab: string): void; (event: "toggle-collapse"): void; (event: "open-version"): void }>();
 const root = ref<HTMLElement | null>(null);
 const hidden = computed(() => props.mobile ? !props.mobileOpen : props.collapsed);
 const groups = computed(() => [
  { label: "追番", items: props.tabs.filter(t => ["home", "favorites"].includes(t.key)) },
  { label: "资源管理", items: props.tabs.filter(t => ["subscriptions", "downloads"].includes(t.key)) },
- { label: "工具", items: props.tabs.filter(t => ["logs", "integrations"].includes(t.key)) }
+ { label: "工具", items: props.tabs.filter(t => ["logs", "integrations", "settings"].includes(t.key)) }
 ]);
+const themeLabel = computed(() => themeMode.value === "system" ? "跟随系统" : themeMode.value === "light" ? "浅色" : "深色");
+const versionLabel = computed(() => status.value?.appVersion ? `v${status.value.appVersion.replace(/^v/, "")}` : "版本与更新");
 function cycleTheme() { setThemeMode(themeMode.value === "system" ? "light" : themeMode.value === "light" ? "dark" : "system"); }
 watch(() => props.collapsed, async collapsed => { if (!props.mobile && !collapsed) { await nextTick(); root.value?.querySelector<HTMLButtonElement>('button')?.focus(); } });
 watch(() => props.mobileOpen, async open => { if (props.mobile && open) { await nextTick(); root.value?.querySelector<HTMLButtonElement>('button')?.focus(); } });
@@ -47,9 +49,8 @@ function trapFocus(event: KeyboardEvent) {
    </div>
   </nav>
   <div class="nav-footer">
-   <button class="nav-item" :class="{ active: activeTab === 'settings' }" :aria-current="activeTab === 'settings' ? 'page' : undefined" :disabled="!hasConsoleAccess" @click="emit('select-tab', 'settings')"><AppNavIcon name="settings" /><span class="nav-label">设置</span><span v-if="updateAvailable" class="update-dot" title="有可用更新" /></button>
-   <button class="nav-item" :title="`界面主题：${activeThemeLabel}，点击切换`" @click="cycleTheme"><AppNavIcon :name="themeMode === 'dark' ? 'moon' : themeMode === 'light' ? 'sun' : 'theme'" /><span class="nav-label">{{ activeThemeLabel }}</span></button>
-   <span class="sidebar-caption">Bangumi Cat<span v-if="status?.appVersion"> · v{{ status.appVersion }}</span></span>
+   <button type="button" class="nav-action" :title="`外观：${themeLabel}（点击切换）`" @click="cycleTheme"><AppNavIcon :name="themeMode === 'dark' ? 'moon' : themeMode === 'light' ? 'sun' : 'theme'" /><span class="nav-label">{{ themeLabel }}</span></button>
+   <button type="button" class="nav-action version-action" title="查看版本与更新" :disabled="!hasConsoleAccess" @click="emit('open-version')"><AppNavIcon name="tag" /><span class="version-label-text">{{ versionLabel }}</span><span v-if="updateAvailable" class="update-dot" aria-label="有新版本" /></button>
   </div>
  </aside>
 </template>
@@ -61,6 +62,8 @@ function trapFocus(event: KeyboardEvent) {
 .sidebar-toggle { display:grid; place-items:center; width:32px; height:32px; border-radius:8px; color:var(--muted); flex-shrink:0; }.sidebar-toggle:hover { background:var(--panel); color:var(--ink); }.sidebar-toggle svg { width:18px; height:18px; }
 .nav-sections { display:flex; flex-direction:column; gap:20px; flex:1; min-height:0; overflow:auto; }.nav-section { display:flex; flex-direction:column; gap:2px; }.nav-group-title { padding:0 12px 6px; font-size:11px; font-weight:600; letter-spacing:.08em; color:var(--muted); }
 .nav-item { display:flex; align-items:center; gap:10px; width:100%; min-height:38px; padding:9px 12px; border-radius:12px; font-size:13.5px; text-align:left; color:var(--ink); background:transparent; transition:background .15s,color .15s; }.nav-item svg { width:17px; height:17px; flex-shrink:0; opacity:.8; }.nav-item:hover:not(:disabled) { background:var(--panel); }.nav-item.active { background:var(--accent-soft); color:var(--accent); font-weight:600; }.nav-item:disabled { opacity:.45; cursor:not-allowed; }.nav-label { flex:1; min-width:0; }.nav-count { border-radius:6px; padding:1px 5px; background:var(--accent-soft); color:var(--accent); font-size:11px; }.completed { background:var(--ok-soft); color:var(--ok); }
-.nav-footer { margin-top:auto; padding-top:12px; border-top:1px solid var(--line); display:grid; gap:4px; }.sidebar-caption { padding:6px 12px 0; color:var(--muted); font-size:11px; }.update-dot { width:7px; height:7px; border-radius:50%; background:var(--warn); }
+.nav-footer { margin-top:auto; padding:12px 8px 0; border-top:1px solid var(--line); display:grid; gap:8px; }.sidebar-caption { padding:6px 12px 0; color:var(--muted); font-size:11px; }.update-dot { width:7px; height:7px; border-radius:50%; background:var(--warn); }
+.nav-action { display:flex; align-items:center; gap:10px; width:100%; padding:9px 12px; border-radius:12px; background:transparent; color:var(--ink); font-size:13px; text-align:left; }
+.nav-action svg { width:16px; height:16px; flex-shrink:0; }.nav-action:hover { background:var(--panel); }.nav-action.version-action { padding-inline:10px; font-family:ui-monospace,monospace; font-size:11px; color:var(--muted); }.nav-action.version-action:hover { color:var(--accent); }.version-label-text { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex:1; }.nav-action:disabled { opacity:.5; cursor:not-allowed; }
 @media(max-width:960px) { .nav-item { min-height:44px; } }
 </style>

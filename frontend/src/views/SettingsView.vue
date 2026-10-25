@@ -22,6 +22,7 @@ import {
 } from "../api";
 import type { DriveNetworkStatus, MetadataPlatformInfo } from "../api";
 import type { BackupSummary, ResourceProviderSummary } from "@shared/index";
+import VersionPanel from "../components/settings/VersionPanel.vue";
 import CloudSetup from "../components/settings/CloudSetup.vue";
 import AppNavIcon from "../components/layout/AppNavIcon.vue";
 import { formatBytes } from "../lib/format";
@@ -125,27 +126,9 @@ function isSettingLocked(key: string): boolean {
 
 import { previewThemeAccent, setThemeMode, themeMode } from "../stores/theme";
 import { toastError, updateFeedback } from "../stores/toasts";
-import {
-  persistUpdatePolicy,
-  refreshUpdateOverview,
-  runInstallBackgroundService,
-  runUpdateCheck,
-  runUpdateDownload,
-  runUpdateInstall,
-  runUpdateRollback,
-  stopUpdatePolling,
-  updateBusy,
-  updatePolicy,
-  updateReleases,
-  updateStatus,
-  updateStatusLabel,
-  updateStatusTone,
-  updateVersion
-} from "../stores/update";
-
 // —— 外观：明暗模式 + 主题色 ——
 const THEME_MODE_OPTIONS = [
-  { key: "system", label: "自动" },
+  { key: "system", label: "跟随系统" },
   { key: "light", label: "浅色" },
   { key: "dark", label: "深色" }
 ] as const;
@@ -268,7 +251,6 @@ onMounted(() => {
 });
 
 onUnmounted(() => {
-  stopUpdatePolling();
 });
 
 function formatSessionTime(value: string): string {
@@ -469,19 +451,6 @@ const pageMatchCount = computed<Record<string, number>>(() => {
   return counts;
 });
 
-// 「关于」要打 GitHub API：进到这一页（或搜索把它翻出来）才去拉，别让只改个主题色的人白等
-let updateOverviewRequested = false;
-watch(
-  [activePage, searching],
-  ([page, isSearching]) => {
-    if (!updateOverviewRequested && (page === "about" || isSearching)) {
-      updateOverviewRequested = true;
-      void refreshUpdateOverview();
-    }
-  },
-  { immediate: true }
-);
-
 // 这几个开关会让小节或行出现/消失，搜索中的话重新过滤一遍
 watch(
   () => [settingsForm.downloadClient, settingsForm.githubOAuthEnabled, settingsForm.tunnelMode, settingsForm.tunnelCredentialMode],
@@ -653,47 +622,6 @@ async function loadSourceLists(): Promise<void> {
     // 同上：信息平台列表拉不到也只是空着，不打断用户
   }
 }
-
-const sourceBuild = computed(() => updateVersion.value?.buildType === "source");
-
-const showMacSigningNote = computed(
-  () => updateVersion.value?.buildType === "release" && updateVersion.value.platform === "darwin"
-);
-
-/** 版本历史里排除当前版本：往回退到自己没有意义。最多列 5 个。 */
-const rollbackTargets = computed(() =>
-  updateReleases.value.filter((entry) => entry.tag !== updateStatus.value?.currentVersion).slice(0, 5)
-);
-
-const downloadPercent = computed(() => updateStatus.value?.progress.percent ?? 0);
-
-const canDownload = computed(() => {
-  const status = updateStatus.value;
-  return Boolean(
-    status?.supported && status.updateAvailable && status.downloadedVersion !== status.latestVersion && !sourceBuild.value
-  );
-});
-
-const canInstall = computed(() => {
-  const status = updateStatus.value;
-  if (!status?.supported) {
-    return false;
-  }
-  if (sourceBuild.value) {
-    // 工作区脏、非快进、没有 origin 的时候按钮不该亮着：点了也只会收到一个拒绝。
-    return status.updateAvailable && !status.source?.blockedReason;
-  }
-  return Boolean(status.downloadedVersion) && status.downloadedVersion === status.latestVersion;
-});
-
-function formatUpdateTime(value: string | null | undefined): string {
-  if (!value) {
-    return "-";
-  }
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
-}
-
 
 const liveTunnelState = computed(() => status.value?.tunnelState ?? tunnelStatus.value?.state);
 const tunnelPublicUrl = computed(() => status.value?.tunnelPublicUrl ?? tunnelStatus.value?.publicUrl ?? "");
@@ -1870,202 +1798,7 @@ async function runClearPlaybackCache(): Promise<void> {
             <header class="settings-section-head">
               <h3 class="settings-section-title">版本与更新</h3>
             </header>
-          <div class="settings-summary-grid">
-            <div class="settings-summary-item">
-              <span class="settings-summary-label">当前版本</span>
-              <strong>{{ updateStatus?.currentVersion ?? status?.appVersion ?? "-" }}</strong>
-            </div>
-            <div class="settings-summary-item">
-              <span class="settings-summary-label">构建类型</span>
-              <strong>{{ sourceBuild ? "源码构建" : "发布版" }}</strong>
-            </div>
-            <div class="settings-summary-item">
-              <span class="settings-summary-label">运行平台</span>
-              <strong>{{ updateVersion ? `${updateVersion.platform} / ${updateVersion.arch}` : "-" }}</strong>
-            </div>
-            <div class="settings-summary-item">
-              <span class="settings-summary-label">更新状态</span>
-              <strong :class="`update-badge update-badge-${updateStatusTone}`">{{ updateStatusLabel }}</strong>
-            </div>
-          </div>
-
-          <!-- 「升不了级」必须把原因显示出来，否则它会被读成「已经是最新」。 -->
-          <p
-            v-if="updateStatus && (!updateStatus.supported || updateStatus.kind === 'blocked')"
-            class="update-note update-note-warn"
-          >
-            {{ updateStatus.unsupportedReason || "这个部署方式不支持应用内更新。" }}
-          </p>
-          <p v-if="updateStatus?.lastError" class="update-note update-note-warn">{{ updateStatus.lastError }}</p>
-          <p v-if="updateStatus?.circuitBroken" class="update-note update-note-warn">
-            {{ updateStatus.latestVersion }} 已连续安装失败 {{ updateStatus.failureCount }} 次，自动安装已停止。
-            你仍然可以手动重试。
-          </p>
-
-          <div v-if="updateStatus && (updateStatus.kind === 'downloading' || updateStatus.kind === 'installing')" class="update-progress">
-            <div class="update-progress-label">
-              <span>{{ updateStatus.progress.phase === "checksum" ? "获取校验清单" : updateStatus.kind === "installing" ? "备份并安装" : "下载并校验" }}</span>
-              <strong>{{ downloadPercent }}%</strong>
-            </div>
-            <div class="update-progress-track"><span :style="{ width: `${downloadPercent}%` }"></span></div>
-          </div>
-
-          <div class="settings-item">
-            <span>
-              <span class="settings-title">{{ sourceBuild ? "远端状态" : "最新版本" }}</span>
-              <span class="settings-desc">
-                <!-- 源码部署跟的是一条分支：说「最新 tag 是什么」帮不上忙，
-                     「远端领先几个提交」才是它要的答案。 -->
-                <template v-if="sourceBuild && updateStatus?.source">
-                  <template v-if="!updateStatus.source.upstream">没有 origin 远端</template>
-                  <template v-else-if="!updateStatus.checkedAt">尚未检查</template>
-                  <template v-else-if="updateStatus.source.behind > 0">
-                    {{ updateStatus.source.upstream }} 领先 {{ updateStatus.source.behind }} 个提交
-                  </template>
-                  <template v-else>已与 {{ updateStatus.source.upstream }} 同步</template>
-                  <template v-if="updateStatus.source.latestTag"> · 最新 tag {{ updateStatus.source.latestTag }}</template>
-                </template>
-                <template v-else-if="updateStatus?.kind === 'no_release'">发布仓里还没有任何版本</template>
-                <template v-else>{{ updateStatus?.latestVersion || "尚未检查" }}</template>
-                <template v-if="updateStatus?.latestPublishedAt">
-                  · {{ sourceBuild ? "远端最新提交" : "发布于" }} {{ formatUpdateTime(updateStatus.latestPublishedAt) }}
-                </template>
-                <template v-if="updateStatus?.checkedAt"> · {{ formatUpdateTime(updateStatus.checkedAt) }} 检查过</template>
-              </span>
-            </span>
-            <div class="update-actions">
-              <button type="button" class="settings-secondary-button" :disabled="updateBusy" @click="runUpdateCheck()">
-                {{ updateBusy ? "处理中…" : "检查更新" }}
-              </button>
-              <button
-                v-if="canDownload"
-                type="button"
-                class="settings-primary-button"
-                :disabled="updateBusy"
-                @click="runUpdateDownload()"
-              >
-                下载并校验
-              </button>
-              <button
-                v-if="canInstall"
-                type="button"
-                class="settings-primary-button"
-                :disabled="updateBusy"
-                @click="runUpdateInstall()"
-              >
-                {{ sourceBuild ? "拉取并重新构建" : "重启并安装" }}
-              </button>
-            </div>
-          </div>
-
-          <template v-if="!sourceBuild">
-            <label class="settings-item">
-              <span>
-                <span class="settings-title">下载加速</span>
-                <span class="settings-desc">
-                  自动模式下载前会实测挑一条快的镜像，直连够快就走直连。加速只用于安装包，
-                  校验清单始终直连，安装前都要对上 SHA-256。
-                </span>
-              </span>
-              <select
-                :value="updatePolicy.mirror"
-                class="settings-input settings-input-short"
-                :disabled="updateBusy"
-                @change="persistUpdatePolicy({ mirror: ($event.target as HTMLSelectElement).value })"
-              >
-                <option value="direct">直连 GitHub</option>
-                <option value="auto">自动选择镜像</option>
-              </select>
-            </label>
-
-            <label class="settings-item">
-              <span>
-                <span class="settings-title">自动下载</span>
-                <span class="settings-desc">发现新版本后自动下载并校验 SHA-256，暂存等你决定何时安装。</span>
-              </span>
-              <input
-                :checked="updatePolicy.autoDownload"
-                type="checkbox"
-                class="settings-switch"
-                :disabled="updateBusy || updatePolicy.autoInstall"
-                @change="persistUpdatePolicy({ autoDownload: ($event.target as HTMLInputElement).checked })"
-              />
-            </label>
-
-            <label class="settings-item">
-              <span>
-                <span class="settings-title">自动安装并重启</span>
-                <span class="settings-desc">
-                  下载完成后自动备份、替换并重启，健康检查失败会自动回滚。开启时会一并开启自动下载。
-                </span>
-              </span>
-              <input
-                :checked="updatePolicy.autoInstall"
-                type="checkbox"
-                class="settings-switch"
-                :disabled="updateBusy"
-                @change="persistUpdatePolicy({ autoInstall: ($event.target as HTMLInputElement).checked })"
-              />
-            </label>
-          </template>
-
-          <template v-if="sourceBuild && updateStatus?.source">
-            <div class="settings-item">
-              <span>
-                <span class="settings-title">源码状态</span>
-                <span class="settings-desc">
-                  {{ updateStatus.source.describe || updateStatus.source.headCommit.slice(0, 12) || "-" }}
-                  · 分支 {{ updateStatus.source.branch || "-" }}
-                  <template v-if="updateStatus.source.ahead > 0"> · 本地领先 {{ updateStatus.source.ahead }} 个提交</template>
-                  <template v-if="updateStatus.source.dirty"> · 工作区有未提交改动，更新会被拒绝</template>
-                  <template v-if="updateStatus.source.restartRequired"> · 已构建完成，等待重启生效</template>
-                </span>
-              </span>
-              <button
-                v-if="!updateStatus.source.serviceManager"
-                type="button"
-                class="settings-secondary-button"
-                :disabled="updateBusy"
-                @click="runInstallBackgroundService()"
-              >
-                安装为后台服务
-              </button>
-              <span v-else class="settings-desc">由 {{ updateStatus.source.serviceManager }} 托管</span>
-            </div>
-            <p v-if="!updateStatus.source.serviceManager" class="update-note">
-              当前未安装为后台服务：更新完成后需要你自己重启这个进程。装成服务之后，
-              进程管理器会在更新后把它拉起来。
-            </p>
-          </template>
-
-          <details v-if="updateReleases.length" class="update-history">
-            <summary>版本历史（最近 {{ updateReleases.length }} 个）</summary>
-            <ol class="update-history-list">
-              <li v-for="entry in updateReleases" :key="entry.tag">
-                <div class="update-history-head">
-                  <code>{{ entry.tag }}</code>
-                  <span>{{ formatUpdateTime(entry.publishedAt) }}</span>
-                  <button
-                    v-if="rollbackTargets.some((item) => item.tag === entry.tag)"
-                    type="button"
-                    class="settings-secondary-button"
-                    :disabled="updateBusy"
-                    @click="runUpdateRollback(entry.tag)"
-                  >
-                    回退到 {{ entry.tag }}
-                  </button>
-                </div>
-                <pre v-if="entry.notes" class="update-history-notes">{{ entry.notes }}</pre>
-              </li>
-            </ol>
-          </details>
-
-          <!-- 只有真的会遇到这件事的人才该看到它：源码部署根本没有安装包，
-               非 macOS 也没有 Gatekeeper 这一关。 -->
-          <p v-if="showMacSigningNote" class="update-note">
-            macOS 安装包为 ad-hoc 签名、未经 Apple 公证：首次安装请在访达里右键 → 打开。
-            应用内更新会用同一个签名标识重签，不会再次触发该提示。
-          </p>
+          <VersionPanel v-if="activePage === 'about' || searching" />
 
           <div class="settings-group">
             <div class="settings-item">

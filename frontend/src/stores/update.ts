@@ -30,7 +30,7 @@ export const updateReleases = ref<UpdateReleaseSummary[]>([]);
 
 export const updateBusy = computed(() => isBusy("update-action"));
 
-/** 有可用更新时侧栏「其他设置」上挂一个小黄点。发现新版本只提示，装不装由用户定。 */
+/** 有可用更新时侧栏版本号旁挂一个小黄点。发现新版本只提示，装不装由用户定。 */
 export const updateAvailable = computed(
   () => Boolean(updateStatus.value?.updateAvailable) || updateStatus.value?.kind === "downloaded"
 );
@@ -98,6 +98,7 @@ export const updateStatusTone = computed(() => {
  * 会让人以为一切正常。
  */
 function describeCheckResult(status: UpdateStatus): string {
+  if (status.kind === "error") return status.lastError || "检查更新失败。";
   if (status.kind === "unsupported" || status.kind === "blocked") {
     return status.unsupportedReason || "当前无法更新。";
   }
@@ -172,7 +173,7 @@ export async function runUpdateCheck(): Promise<void> {
     try {
       updateStatus.value = await checkForUpdate();
       updateReleases.value = await getUpdateChangelog(5);
-      updateFeedback(describeCheckResult(updateStatus.value), "success");
+      updateFeedback(describeCheckResult(updateStatus.value), updateStatus.value.kind === "error" ? "error" : "success");
     } catch (error) {
       toastError(error, "检查更新失败。");
     }

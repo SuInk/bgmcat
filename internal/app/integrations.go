@@ -221,15 +221,11 @@ func (a *App) integrationRoutes() {
 		return e
 	})
 	a.handle("GET /api/system/version", func(w http.ResponseWriter, r *http.Request) error {
-		ok(w, Obj{"version": Version, "appVersion": Version, "platform": runtime.GOOS, "arch": runtime.GOARCH, "buildType": "source", "gitDescribe": nil, "packaged": true, "channel": "stable", "source": "go"})
+		ok(w, Obj{"version": Version, "appVersion": Version, "platform": runtime.GOOS, "arch": runtime.GOARCH, "buildType": "source", "gitDescribe": nil, "packaged": false, "channel": "stable", "source": "go"})
 		return nil
 	})
-	status := func(w http.ResponseWriter, r *http.Request) error {
-		ok(w, Obj{"kind": "unsupported", "supported": false, "updateAvailable": false, "currentVersion": Version, "buildType": "source", "platform": runtime.GOOS, "arch": runtime.GOARCH, "unsupportedReason": "Go 版使用 scripts/build.sh 构建，再替换可执行文件；尚无在线发布源。", "latestVersion": "", "latestPublishedAt": nil, "checkedAt": nil, "downloadedVersion": "", "progress": Obj{"phase": "idle", "done": 0, "total": 0, "percent": 0}, "busy": false, "lastError": "", "failureCount": 0, "circuitBroken": false, "source": nil})
-		return nil
-	}
-	a.handle("GET /api/system/update", status)
-	a.handle("POST /api/system/update/check", status)
+	a.handle("GET /api/system/update", func(w http.ResponseWriter, r *http.Request) error { ok(w, a.updateState()); return nil })
+	a.handle("POST /api/system/update/check", func(w http.ResponseWriter, r *http.Request) error { ok(w, a.checkRelease(r.Context())); return nil })
 	a.handle("GET /api/system/update/policy", func(w http.ResponseWriter, r *http.Request) error {
 		s := a.Settings()
 		ok(w, Obj{"autoDownload": s["updateAutoDownload"], "autoInstall": s["updateAutoInstall"], "mirror": s["updateMirror"], "channel": "stable"})
@@ -246,10 +242,18 @@ func (a *App) integrationRoutes() {
 		}
 		return e
 	})
-	a.handle("GET /api/system/update/changelog", func(w http.ResponseWriter, r *http.Request) error { ok(w, []any{}); return nil })
+	a.handle("GET /api/system/update/changelog", func(w http.ResponseWriter, r *http.Request) error {
+		history, _ := a.Store.Get("updates", "history")
+		items := list(history["items"])
+		if items == nil {
+			items = []any{}
+		}
+		ok(w, items)
+		return nil
+	})
 	for _, path := range []string{"download", "install", "rollback", "service"} {
 		a.handle("POST /api/system/update/"+path, func(w http.ResponseWriter, r *http.Request) error {
-			return errors.New("Go 版本尚未发布，请使用本项目的构建与安装脚本")
+			return errors.New(manualUpdateReason)
 		})
 	}
 	a.agentRoutes()
