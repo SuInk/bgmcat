@@ -2,7 +2,7 @@
 
 Go 服务端的番剧订阅、下载与 Google Drive 归档。HTTP API、SQLite、RSS、HTTP/BitTorrent 下载、云盘 OAuth/上传/读取、MCP 都在 Go 进程内运行。保留 Vue 浏览器界面，构建后嵌入可执行文件。
 
-不需要 Node.js、Electron、aria2、gdirect 或 rclone 来运行发布产物。Node.js 仅用于从源码构建网页。FFmpeg/ffprobe 是 MKV、HEVC 等转码及字幕提取的可选组件，Docker 镜像包含它们；普通 MP4 直播放不依赖它们。Cloudflare Tunnel 仅在启用穿透时需要 cloudflared。
+不需要 Node.js、Electron、gdirect 或 rclone；HTTP/BT 下载需要 aria2c，由 bgmcat 自动启动和管理。Node.js 仅用于从源码构建网页。FFmpeg/ffprobe 是 MKV、HEVC 等转码及字幕提取的可选组件，Docker 镜像包含它们；普通 MP4 直播放不依赖它们。Cloudflare Tunnel 仅在启用穿透时需要 cloudflared。
 
 ## 本地启动
 
@@ -58,7 +58,7 @@ Google 测试模式的 OAuth 凭据可能需要重新授权；具体授权状态
 ## 运行差异
 
 - 浏览器管理，关闭网页不停止 Go 服务；没有 Electron 托盘及桌面窗口。
-- 内置 Go HTTP/BT 下载，默认最多四个任务同时执行，下载完成后不持续做种。qBittorrent 可选，需要本机能访问相同下载目录。
+- Go 托管 aria2c HTTP/BT 下载，默认最多四个任务同时执行，下载完成后不持续做种。qBittorrent 可选，需要本机能访问相同下载目录。
 - RSS 关键词过滤、合集过滤、自动下载；订阅刷新去重、相同下载 URL 去重。同集按字幕组、清晰度偏好择优，已开始下载的版本不会被自动替换。
 - Bangumi 首页；Bangumi、AniList、MAL/Jikan、TMDB 搜索（TMDB 需 Key）；蜜柑、Nyaa、ACG.RIP 资源 RSS。
 - MCP：`POST /mcp`（HTTP JSON-RPC），以及 `/mcp/sse` + `/mcp/messages`，使用 `Authorization: Bearer <token>`。

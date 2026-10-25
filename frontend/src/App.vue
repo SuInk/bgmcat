@@ -54,7 +54,7 @@ const downloadClientOnline = computed(() => {
 });
 
 const downloadClientLabel = computed(() =>
-  status.value?.downloadClient === "qbittorrent" ? "qBittorrent" : "Go 下载器"
+  status.value?.downloadClient === "qbittorrent" ? "qBittorrent" : "托管 aria2"
 );
 
 const THEME_OPTIONS = [

@@ -4,7 +4,7 @@
 
 **订阅番剧、自动下载、归档到 Google Drive，再直接播放。**
 
-Go 单文件服务 · 内置 HTTP / BitTorrent · Vue 控制台 · Diana / MCP
+Go 服务 · 托管 aria2 HTTP / BitTorrent · Vue 控制台 · Diana / MCP
 
 [安装与部署](docs/install.md) · [云盘与使用说明](docs/usage.md) · [版本发布](docs/releasing.md) · [Limited Redistribution License (SuInk)](LICENSE)
 
@@ -13,12 +13,12 @@ Go 单文件服务 · 内置 HTTP / BitTorrent · Vue 控制台 · Diana / MCP
 ## 这个项目做什么
 
 - **自动追番**：RSS 订阅、关键词过滤、同集字幕组与清晰度择优。
-- **内置下载**：Go 实现 HTTP 断点续传与 BT 下载，也可连接 qBittorrent。
+- **自动下载**：Go 自动管理 aria2c，提供 HTTP 多连接、断点续传与 BT 下载，也可连接 qBittorrent。
 - **云盘归档**：直接连接 Google Drive，分块上传、大小和 MD5 校验后按设置清理本地文件。
 - **在线播放**：本地或云端 Range 播放；可选 FFmpeg 提供转码和字幕。
 - **AI 接入**：MCP 查询订阅、管理下载，支持 Diana 本机一键配置。
 
-运行发布包不需要 Go、Node.js、Electron、aria2、gdirect 或 rclone。Vue 页面已编译并嵌入 Go 程序。FFmpeg/ffprobe 和 cloudflared 是按功能选择的外部组件，Docker 包含 FFmpeg。
+运行发布包不需要 Go、Node.js、Electron、gdirect 或 rclone；下载功能需要 aria2c，由安装器安装并由 bgmcat 自动管理。Vue 页面已编译并嵌入 Go 程序。FFmpeg/ffprobe 和 cloudflared 是按功能选择的外部组件，Docker 包含 aria2 和 FFmpeg。
 
 > 当前正在准备首个 Go Release，仓库为 `SuInk/bgmcat`。下面的源码启动现在可用；Release 安装须等发布资产后使用。推荐先用私有仓库验证。
 

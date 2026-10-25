@@ -3,8 +3,6 @@ package app
 import (
 	"context"
 	"errors"
-	"fmt"
-	"io"
 	"mime"
 	"net/http"
 	"net/url"
@@ -120,7 +118,7 @@ func (a *App) startJob(gid string) {
 		} else if str(job["sourceType"]) == "direct" {
 			e = a.httpDownload(ctx, job)
 		} else {
-			e = a.torrent.Download(ctx, job)
+			e = a.aria2.Download(ctx, job)
 		}
 		status := "complete"
 		var message any
@@ -191,112 +189,6 @@ func safeName(name string) string {
 func inside(root, path string) bool {
 	r, e := filepath.Rel(root, path)
 	return e == nil && r != "." && r != ".." && !strings.HasPrefix(r, ".."+string(filepath.Separator)) && !filepath.IsAbs(r)
-}
-func (a *App) httpDownload(ctx context.Context, j Obj) error {
-	dir := str(j["directory"])
-	if e := os.MkdirAll(dir, 0700); e != nil {
-		return e
-	}
-	u, _ := url.Parse(str(j["sourceUrl"]))
-	name := safeName(filepath.Base(u.Path))
-	path := filepath.Join(dir, name)
-	if existing := str(j["filePath"]); existing != "" && inside(dir, existing) {
-		path = existing
-	}
-	partial := path + ".part"
-	var offset int64
-	if info, e := os.Stat(partial); e == nil {
-		offset = info.Size()
-	}
-	req, e := http.NewRequestWithContext(ctx, "GET", str(j["sourceUrl"]), nil)
-	if e != nil {
-		return e
-	}
-	req.Header.Set("User-Agent", "AnimeRSS-Go/"+Version)
-	req.Header.Set("Accept-Encoding", "identity")
-	if offset > 0 {
-		req.Header.Set("Range", fmt.Sprintf("bytes=%d-", offset))
-		if tag := str(j["etag"]); tag != "" {
-			req.Header.Set("If-Range", tag)
-		}
-	}
-	client := &http.Client{Transport: a.http.Transport, Timeout: 0}
-	res, e := client.Do(req)
-	if e != nil {
-		return e
-	}
-	defer res.Body.Close()
-	if res.StatusCode != 200 && res.StatusCode != 206 {
-		return fmt.Errorf("下载 HTTP %d", res.StatusCode)
-	}
-	if res.StatusCode == 206 {
-		prefix := fmt.Sprintf("bytes %d-", offset)
-		if !strings.HasPrefix(res.Header.Get("Content-Range"), prefix) {
-			return errors.New("服务器返回错误的断点范围")
-		}
-	} else {
-		offset = 0
-	}
-	total := res.ContentLength
-	if total >= 0 {
-		total += offset
-	}
-	f, e := os.OpenFile(partial, os.O_CREATE|os.O_WRONLY, 0600)
-	if e != nil {
-		return e
-	}
-	defer f.Close()
-	if offset == 0 {
-		if e = f.Truncate(0); e != nil {
-			return e
-		}
-	}
-	if _, e = f.Seek(offset, io.SeekStart); e != nil {
-		return e
-	}
-	_, _ = a.Store.Patch("downloads", str(j["gid"]), Obj{"filePath": path, "etag": res.Header.Get("ETag"), "totalLength": total})
-	buf := make([]byte, 128*1024)
-	done := offset
-	last := time.Now()
-	lastBytes := done
-	for {
-		n, re := res.Body.Read(buf)
-		if n > 0 {
-			wn, we := f.Write(buf[:n])
-			done += int64(wn)
-			if we != nil {
-				return we
-			}
-			if time.Since(last) >= time.Second {
-				_, _ = a.Store.Patch("downloads", str(j["gid"]), Obj{"completedLength": done, "downloadSpeed": int64(float64(done-lastBytes) / time.Since(last).Seconds())})
-				last = time.Now()
-				lastBytes = done
-			}
-		}
-		if re == io.EOF {
-			break
-		}
-		if re != nil {
-			return re
-		}
-	}
-	if total >= 0 && done != total {
-		return errors.New("下载长度不完整")
-	}
-	if e = f.Sync(); e != nil {
-		return e
-	}
-	if e = f.Close(); e != nil {
-		return e
-	}
-	if _, e = os.Stat(path); e == nil {
-		return errors.New("目标文件已存在，拒绝覆盖")
-	}
-	if e = os.Rename(partial, path); e != nil {
-		return e
-	}
-	_, e = a.Store.Patch("downloads", str(j["gid"]), Obj{"completedLength": done, "totalLength": done, "files": []Obj{{"path": path, "size": done}}, "filePath": path})
-	return e
 }
 func (a *App) downloadRoutes() {
 	create := func(w http.ResponseWriter, r *http.Request) error {

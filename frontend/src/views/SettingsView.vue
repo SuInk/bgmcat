@@ -1196,7 +1196,7 @@ async function runClearPlaybackCache(): Promise<void> {
               <div class="settings-item">
                 <span>
                   <span class="settings-title">下载器</span>
-                  <span class="settings-desc">Go 内置 HTTP / BitTorrent 下载器，也可连接 qBittorrent</span>
+                  <span class="settings-desc">Go 托管 aria2 HTTP / BitTorrent 下载器，也可连接 qBittorrent</span>
                 </span>
                 <div class="settings-segmented" role="group" aria-label="下载器">
                   <button
@@ -1205,7 +1205,7 @@ async function runClearPlaybackCache(): Promise<void> {
                     :class="{ 'settings-segmented-button-active': settingsForm.downloadClient === 'native' }"
                     @click="setDownloadClient('native')"
                   >
-                    Go 内置
+                    托管 aria2
                   </button>
                   <button
                     type="button"
@@ -2063,7 +2063,7 @@ async function runClearPlaybackCache(): Promise<void> {
                 <span class="settings-title">开源协议</span>
                 <span class="settings-desc">
                   Limited Redistribution License (SuInk)。修改后分发或部署成网络服务时，需要以同样协议公开完整源码。
-                  Go 服务内置 HTTP / BitTorrent 和 Google Drive；可选 FFmpeg、cloudflared 遵循各自许可。
+                  Go 服务通过托管 aria2c 下载，内置 Google Drive 接入；可选 FFmpeg、cloudflared 遵循各自许可。
                 </span>
               </span>
               <div class="flex shrink-0 gap-2">

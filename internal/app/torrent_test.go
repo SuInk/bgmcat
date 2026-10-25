@@ -46,10 +46,6 @@ func TestNativeTorrentLocalPeer(t *testing.T) {
 		t.Fatal(e)
 	}
 	mi := metainfo.MetaInfo{InfoBytes: raw}
-	var buf bytes.Buffer
-	if e = mi.Write(&buf); e != nil {
-		t.Fatal(e)
-	}
 	seedCfg := localTorrentConfig(seedDir)
 	seedCfg.Seed = true
 	seed, e := torrent.NewClient(seedCfg)
@@ -62,43 +58,42 @@ func TestNativeTorrentLocalPeer(t *testing.T) {
 		t.Fatal(e)
 	}
 	st.VerifyData()
-	client, e := torrent.NewClient(localTorrentConfig(t.TempDir()))
-	if e != nil {
-		t.Fatal(e)
-	}
-	a.torrent.client = client
-	source := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.Write(buf.Bytes()) }))
-	defer source.Close()
-	dir := t.TempDir()
-	j := Obj{"gid": "bt-fixture", "directory": dir, "sourceType": "torrent-url", "sourceUrl": source.URL + "/fixture.torrent"}
-	a.Store.Put("downloads", "bt-fixture", j)
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-	defer cancel()
-	done := make(chan error, 1)
-	go func() { done <- a.torrent.Download(ctx, j) }()
-	tick := time.NewTicker(30 * time.Millisecond)
-	defer tick.Stop()
-	for {
-		select {
-		case e := <-done:
-			if e != nil {
-				t.Fatal(e)
-			}
-			got, e := os.ReadFile(filepath.Join(dir, "fixture.mp4"))
-			if e != nil || !bytes.Equal(got, payload) {
-				t.Fatal("BT bytes differ", e)
-			}
-			return
-		case <-ctx.Done():
-			t.Fatal("local torrent timed out")
-		case <-tick.C:
-			for _, down := range client.Torrents() {
-				for _, addr := range seed.ListenAddrs() {
-					if tcp, ok := addr.(*net.TCPAddr); ok {
-						down.AddPeers([]torrent.PeerInfo{{Addr: tcp, Trusted: true}})
-					}
-				}
+	tracker := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		peers := []map[string]any{}
+		for _, addr := range seed.ListenAddrs() {
+			if tcp, ok := addr.(*net.TCPAddr); ok {
+				peers = append(peers, map[string]any{"ip": "127.0.0.1", "port": tcp.Port})
 			}
 		}
+		data, _ := bencode.Marshal(map[string]any{"interval": 1, "peers": peers})
+		w.Write(data)
+	}))
+	defer tracker.Close()
+	mi.Announce = tracker.URL
+	var buf bytes.Buffer
+	if e = mi.Write(&buf); e != nil {
+		t.Fatal(e)
+	}
+	source := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.Write(buf.Bytes()) }))
+	defer source.Close()
+	for _, kind := range []string{"torrent-url", "magnet"} {
+		t.Run(kind, func(t *testing.T) {
+			dir := t.TempDir()
+			link := source.URL + "/fixture.torrent"
+			if kind == "magnet" {
+				link = mi.Magnet(nil, &info).String()
+			}
+			j := Obj{"gid": "bt-" + kind, "directory": dir, "sourceType": kind, "sourceUrl": link}
+			a.Store.Put("downloads", str(j["gid"]), j)
+			ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
+			defer cancel()
+			if err := a.aria2.Download(ctx, j); err != nil {
+				t.Fatal(err)
+			}
+			got, err := os.ReadFile(filepath.Join(dir, "fixture.mp4"))
+			if err != nil || !bytes.Equal(got, payload) {
+				t.Fatal("BT bytes differ", err)
+			}
+		})
 	}
 }

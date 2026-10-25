@@ -56,7 +56,7 @@ type App struct {
 	mcpMu          sync.Mutex
 	mcpSessions    map[string]chan Obj
 	tunnel         Tunnel
-	torrent        *TorrentEngine
+	aria2          *Aria2Engine
 	media          *Media
 	start          time.Time
 }
@@ -109,7 +109,7 @@ func New(cfg Config) (*App, error) {
 		}
 	}
 	_ = os.MkdirAll(str(s["downloadDir"]), 0700)
-	a.torrent = &TorrentEngine{app: a}
+	a.aria2 = &Aria2Engine{app: a}
 	a.media = NewMedia(a)
 	a.routes()
 	return a, nil
@@ -211,6 +211,15 @@ func (a *App) validToken(token string) bool {
 	return subtle.ConstantTimeCompare([]byte(token), []byte(expected)) == 1 || a.validSession(token)
 }
 func (a *App) Start() {
+	if str(a.Settings()["downloadClient"]) != "qbittorrent" {
+		a.wg.Add(1)
+		go func() {
+			defer a.wg.Done()
+			if _, _, err := a.aria2.ensure(a.ctx); err != nil && a.ctx.Err() == nil {
+				a.Log("warn", err.Error())
+			}
+		}()
+	}
 	a.resumeJobs()
 	if flag(a.Settings()["tunnelEnabled"]) {
 		if e := a.startTunnel(); e != nil {
@@ -255,7 +264,7 @@ func (a *App) Close() error {
 	a.jobsMu.Unlock()
 	a.wg.Wait()
 	a.media.Close()
-	a.torrent.Close()
+	a.aria2.Close()
 	a.driveNetworkMu.Lock()
 	if a.driveIPHTTP != nil {
 		a.driveIPHTTP.CloseIdleConnections()
@@ -272,7 +281,7 @@ func (a *App) status() Obj {
 	if str(s["downloadClient"]) == "qbittorrent" {
 		qbit = a.qbitOnline()
 	}
-	return Obj{"appVersion": Version, "activeHost": host, "activePort": p, "configuredHost": host, "configuredPort": p, "apiBaseUrl": a.cfg.PublicURL, "mcpSseUrl": a.cfg.PublicURL + "/mcp/sse", "tokenHeaderName": "Authorization", "tokenConfigured": true, "localAuthBypassEnabled": false, "aria2Online": true, "qbittorrentOnline": qbit, "downloadClient": s["downloadClient"], "rssPollingEnabled": true, "restartRequired": false, "tunnelEnabled": t["enabled"], "tunnelState": t["state"], "tunnelPublicUrl": t["publicUrl"], "publicExposureActive": str(t["state"]) == "online"}
+	return Obj{"appVersion": Version, "activeHost": host, "activePort": p, "configuredHost": host, "configuredPort": p, "apiBaseUrl": a.cfg.PublicURL, "mcpSseUrl": a.cfg.PublicURL + "/mcp/sse", "tokenHeaderName": "Authorization", "tokenConfigured": true, "localAuthBypassEnabled": false, "aria2Online": a.aria2.online(), "qbittorrentOnline": qbit, "downloadClient": s["downloadClient"], "rssPollingEnabled": true, "restartRequired": false, "tunnelEnabled": t["enabled"], "tunnelState": t["state"], "tunnelPublicUrl": t["publicUrl"], "publicExposureActive": str(t["state"]) == "online"}
 }
 func (a *App) routes() {
 	a.handle("GET /api/health", func(w http.ResponseWriter, r *http.Request) error {
@@ -399,7 +408,7 @@ func (a *App) updateSettings(w http.ResponseWriter, r *http.Request) error {
 			return errors.New("口令至少 24 位")
 		}
 		if k == "downloadClient" && str(v) != "native" && str(v) != "qbittorrent" {
-			return errors.New("请选择内置 Go 下载器或 qBittorrent")
+			return errors.New("请选择托管 aria2 下载器或 qBittorrent")
 		}
 		if k == "pollIntervalMinutes" && (num(v) < 1 || num(v) > 1440) {
 			return errors.New("轮询间隔为 1–1440 分钟")
