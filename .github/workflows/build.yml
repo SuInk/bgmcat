@@ -1,0 +1,107 @@
+name: Build and release
+on: [push, pull_request, workflow_dispatch]
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: {fetch-depth: 0}
+      - uses: actions/setup-node@v4
+        with: {node-version: '22', cache: npm}
+      - uses: actions/setup-go@v5
+        with: {go-version: '1.26.x'}
+      - name: Validate release tag
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          TAG: ${{ github.ref_name }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          version=$(cat internal/version/VERSION)
+          test "$TAG" = "v$version"
+          git merge-base --is-ancestor HEAD "origin/$DEFAULT_BRANCH"
+          test -s "docs/releases/$version.md"
+          if grep -q 'YOUR_ACCOUNT' "docs/releases/$version.md"; then
+            echo 'Replace repository placeholders in release notes before publishing'; exit 1
+          fi
+      - run: npm ci && npm run typecheck && npm run build
+      - run: go test -race ./...
+      - run: go vet ./...
+      - run: python3 scripts/test_install.py
+      - run: python3 scripts/test_commit_message.py
+      - run: python3 scripts/package.py
+      - name: Verify Linux installation
+        run: |
+          sh scripts/install.sh --local-dir release --dir "$RUNNER_TEMP/anime-bin"
+          test "$("$RUNNER_TEMP/anime-bin/bgmcat" --version)" = "$(cat internal/version/VERSION)"
+      - run: docker build -t bgmcat:test .
+      - run: docker run --rm bgmcat:test --version
+      - uses: actions/upload-artifact@v4
+        with: {name: release-packages, path: release/, if-no-files-found: error}
+  windows-install:
+    needs: build
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: {name: release-packages, path: release}
+      - name: Verify Windows installation and upgrade
+        shell: powershell
+        run: |
+          $dest = Join-Path $env:RUNNER_TEMP 'anime-bin'
+          ./scripts/install.ps1 -LocalDir release -InstallDir $dest
+          ./scripts/install.ps1 -LocalDir release -InstallDir $dest
+          $actual = & (Join-Path $dest 'bgmcat.exe') --version
+          if ($actual -ne (Get-Content internal/version/VERSION).Trim()) { throw 'Version mismatch' }
+          if (-not (Test-Path (Join-Path $dest 'bgmcat.exe.previous'))) { throw 'Upgrade backup missing' }
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [build, windows-install]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: {name: release-packages, path: release}
+      - name: Publish complete release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          flags=(--latest)
+          if [[ "$TAG" == *-* ]]; then flags=(--prerelease --latest=false); fi
+          gh release create "$TAG" release/* --verify-tag --title "Bangumi Cat $TAG" --notes-file "docs/releases/${TAG#v}.md" "${flags[@]}"
+  container:
+    if: startsWith(github.ref, 'refs/tags/v') && vars.PUBLISH_CONTAINER == 'true'
+    needs: [build, windows-install]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: tags
+        env:
+          REPOSITORY: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          image="ghcr.io/${REPOSITORY,,}"
+          channel=latest
+          if [[ "$TAG" == *-* ]]; then channel=beta; fi
+          echo "tags=$image:$TAG,$image:$channel" >> "$GITHUB_OUTPUT"
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.tags.outputs.tags }}

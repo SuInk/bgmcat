@@ -1,0 +1,478 @@
+@import "tailwindcss";
+
+/* 设计令牌 v2(design-v2/Tokens.dc.html):冷调中性 + 图标蓝。
+   纯色背景、细边框分层,不用渐变与彩色光晕。
+
+   主色体系只有一个输入:--accent-seed(用户在设置里选的 hex)。
+   其余四个全部由 color-mix 派生,所以换预设/自定义色不需要手写色阶。
+
+   为什么系数是 46% 而不是设计稿标的 52%:
+   设计稿的意图是「默认值落在图标那对颜色上」——点缀 #0041fd、主色 #1f207c。
+   实测 color-mix(in oklab, #0041fd 52%, #0a0d1f) = #0d2a8a,
+   比图标深蓝更亮更艳(ΔOKLab ≈ 0.035,肉眼能分辨)。
+   固定 #0a0d1f 这个锚点扫系数,46% 得到 #0d277c,ΔOKLab ≈ 0.022 为最接近,
+   故取 46%,让默认主题色正好落在图标的深蓝上。 */
+:root {
+  color-scheme: light;
+  font-family:
+    "Inter",
+    -apple-system,
+    BlinkMacSystemFont,
+    "PingFang SC",
+    "HarmonyOS Sans SC",
+    "Microsoft YaHei",
+    "Segoe UI",
+    sans-serif;
+
+  /* 唯一输入:用户选的主题色。stores/theme.ts 会把它写成根元素内联样式覆盖。 */
+  --accent-seed: #0041fd;
+
+  /* 点缀:进度条、评分、链接 hover、选中指示线。小面积提神。 */
+  --accent-vivid: var(--accent-seed);
+  /* 主色:按钮底、品牌块、导航选中底。大面积。 */
+  --accent: color-mix(in oklab, var(--accent-vivid) 46%, #0a0d1f);
+  /* 悬停 / 按下 */
+  --accent-strong: color-mix(in oklab, var(--accent) 80%, black);
+  /* 选中底色 */
+  --accent-soft: color-mix(in srgb, var(--accent) 10%, transparent);
+  /* 选中态描边 */
+  --accent-line: color-mix(in srgb, var(--accent) 30%, transparent);
+  /* 主色上的文字 */
+  --accent-contrast: #ffffff;
+
+  /* 状态色:换主题色时不动 */
+  --ok: #14935f;
+  --ok-soft: color-mix(in srgb, var(--ok) 12%, transparent);
+  --warn: #c77d13;
+  --warn-soft: color-mix(in srgb, var(--warn) 12%, transparent);
+  --err: #d24343;
+  --err-soft: color-mix(in srgb, var(--err) 12%, transparent);
+
+  --ink: #1b1f2a;
+  --muted: #7b8295;
+  --line: rgba(20, 26, 45, 0.1);
+  --card: #ffffff;
+  --panel: #eef1f6;
+  --app-bg: #f6f7fa;
+  --sidebar-card: #fbfcfe;
+  --shell-bg: #f6f7fa;
+  --sidebar-bg: #fbfcfe;
+  --topbar-bg: #ffffff;
+  --input-bg: #ffffff;
+  --table-bg: #ffffff;
+  --table-panel: #fbfcfe;
+  /* 中性薄底：卡片内的分层、悬停、进度槽。深色模式翻成白，
+     不然黑压黑等于没画。高不透明度的黑(播放器遮罩)不在此列。 */
+  --tint-1: rgba(20, 26, 45, 0.03);
+  --tint-2: rgba(20, 26, 45, 0.05);
+  --tint-3: rgba(20, 26, 45, 0.08);
+  --tint-4: rgba(20, 26, 45, 0.12);
+  --soft-shadow: 0 1px 2px rgba(18, 24, 45, 0.05);
+  --strong-shadow: 0 18px 48px -12px rgba(18, 24, 45, 0.22);
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  /* 深底上 #1f207c 几乎看不见,所以主色改成朝白提亮,按钮文字转深色。
+     72% 这个系数让默认蓝落在设计稿深色样例的 #5b82ff 附近(实测 #4b83ff)。 */
+  --accent: color-mix(in oklab, var(--accent-vivid) 72%, white);
+  --accent-strong: color-mix(in oklab, var(--accent) 80%, white);
+  --accent-soft: color-mix(in srgb, var(--accent) 16%, transparent);
+  --accent-line: color-mix(in srgb, var(--accent) 36%, transparent);
+  --accent-contrast: #0b0f1c;
+
+  --ok: #3fbd8a;
+  --ok-soft: color-mix(in srgb, var(--ok) 16%, transparent);
+  --warn: #e0a13c;
+  --warn-soft: color-mix(in srgb, var(--warn) 16%, transparent);
+  --err: #e8666a;
+  --err-soft: color-mix(in srgb, var(--err) 16%, transparent);
+
+  --ink: #e9ecf7;
+  --muted: #8a90a6;
+  --line: rgba(226, 232, 255, 0.12);
+  --card: #1a1e30;
+  --panel: #232840;
+  --app-bg: #101320;
+  --sidebar-card: #151827;
+  --shell-bg: #101320;
+  --sidebar-bg: #151827;
+  --topbar-bg: #1a1e30;
+  --input-bg: #232840;
+  --table-bg: #151827;
+  --table-panel: #1a1e30;
+  --tint-1: rgba(226, 232, 255, 0.03);
+  --tint-2: rgba(226, 232, 255, 0.06);
+  --tint-3: rgba(226, 232, 255, 0.09);
+  --tint-4: rgba(226, 232, 255, 0.13);
+  --soft-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --strong-shadow: 0 18px 48px -12px rgba(0, 0, 0, 0.6);
+}
+
+@layer components {
+  /* 语义化控件类：新代码一律用这些或 [var(--token)]，不要再写死 Tailwind 色号。
+     tests/designTokens.test.ts 会挡住写死的 Tailwind 主色/状态色类名。 */
+  .btn-primary {
+    border-radius: 0.5rem;
+    background: var(--accent);
+    color: var(--accent-contrast);
+    transition: background 150ms ease, opacity 150ms ease;
+  }
+
+  .btn-primary:hover:not(:disabled) {
+    background: var(--accent-strong);
+  }
+
+  .btn-primary:disabled {
+    cursor: not-allowed;
+    opacity: 0.4;
+  }
+
+  .btn-ghost {
+    border-radius: 0.5rem;
+    border: 1px solid var(--line);
+    background: var(--card);
+    color: var(--ink);
+    transition: border-color 150ms ease, opacity 150ms ease;
+  }
+
+  .btn-ghost:hover:not(:disabled) {
+    border-color: var(--accent);
+  }
+
+  .btn-ghost:disabled {
+    cursor: not-allowed;
+    opacity: 0.4;
+  }
+
+  .btn-danger {
+    border-radius: 0.5rem;
+    background: var(--err);
+    color: #ffffff;
+    transition: background 150ms ease, opacity 150ms ease;
+  }
+
+  .btn-danger:hover:not(:disabled) {
+    background: color-mix(in oklab, var(--err) 82%, black);
+  }
+
+  .btn-danger:disabled {
+    cursor: not-allowed;
+    opacity: 0.4;
+  }
+
+  .input-base {
+    border-radius: 0.5rem;
+    border: 1px solid var(--line);
+    background: var(--input-bg);
+    color: var(--ink);
+    outline: none;
+    transition: border-color 150ms ease;
+  }
+
+  .input-base:focus {
+    border-color: var(--accent);
+  }
+
+  .icon-btn {
+    display: inline-grid;
+    place-items: center;
+    width: 2rem;
+    height: 2rem;
+    border-radius: 0.5rem;
+    border: 1px solid var(--line);
+    background: var(--card);
+    color: var(--muted);
+    transition: border-color 150ms ease, color 150ms ease, opacity 150ms ease;
+  }
+
+  .icon-btn:hover:not(:disabled) {
+    border-color: var(--accent);
+    color: var(--ink);
+  }
+
+  .icon-btn:disabled {
+    cursor: not-allowed;
+    opacity: 0.35;
+  }
+
+  .icon-btn > svg {
+    width: 1rem;
+    height: 1rem;
+  }
+
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+    border-radius: 0.5rem;
+    border: 1px solid var(--line);
+    background: var(--card);
+    color: var(--ink);
+    font-weight: 600;
+    transition: border-color 150ms ease, background 150ms ease, color 150ms ease;
+  }
+
+  .chip:hover:not(:disabled) {
+    border-color: var(--accent);
+  }
+
+  .chip-active {
+    border-color: var(--accent);
+    background: var(--accent);
+    color: var(--accent-contrast);
+  }
+
+  .chip-active:hover:not(:disabled) {
+    border-color: var(--accent);
+  }
+
+  .panel-card {
+    border-radius: 0.75rem;
+    border: 1px solid var(--line);
+    background: var(--card);
+  }
+
+  /*
+   * 页面骨架：除首页外的每一页都照首页的样子来——
+   * 顶上一块工具栏（第一行筛选 chip + 右侧计数/主操作，第二行搜索），下面是内容区自己滚。
+   * 不要再在内容区里套一层带边框的卡片：外层 AnimeDetailDrawer / 视图容器已经是卡片了。
+   */
+  .page-shell {
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr);
+    height: 100%;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .page-toolbar {
+    display: grid;
+    min-width: 0;
+    gap: 0.5rem;
+    padding: 0.75rem 1rem 0.5rem;
+  }
+
+  .toolbar-row {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  .toolbar-chips {
+    display: flex;
+    min-width: 0;
+    flex: 1 1 auto;
+    align-items: center;
+    gap: 0.375rem;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .toolbar-chips::-webkit-scrollbar {
+    display: none;
+  }
+
+  .toolbar-chips > .chip {
+    flex-shrink: 0;
+    padding: 0.375rem 0.75rem;
+    font-size: 0.875rem;
+  }
+
+  .chip-count {
+    font-size: 0.6875rem;
+    font-weight: 600;
+    opacity: 0.7;
+  }
+
+  .toolbar-meta {
+    flex-shrink: 0;
+    white-space: nowrap;
+    color: var(--muted);
+    font-size: 0.75rem;
+    font-weight: 600;
+  }
+
+  .search-field {
+    display: flex;
+    min-width: 0;
+    flex: 1 1 auto;
+    align-items: center;
+    gap: 0.5rem;
+    border-radius: 0.5rem;
+    border: 1px solid var(--line);
+    background: var(--input-bg);
+    padding: 0.375rem 0.75rem;
+    transition: border-color 150ms ease;
+  }
+
+  .search-field:focus-within {
+    border-color: var(--accent);
+  }
+
+  .search-field > input {
+    min-width: 0;
+    flex: 1;
+    background: transparent;
+    color: var(--ink);
+    font-size: 0.875rem;
+    outline: none;
+  }
+
+  .search-field > svg {
+    width: 1rem;
+    height: 1rem;
+    flex-shrink: 0;
+    color: var(--muted);
+  }
+
+  .page-body {
+    min-height: 0;
+    overflow: auto;
+    padding: 0.25rem 1rem 1rem;
+  }
+
+  /* 状态小标签：绿=在工作，黄=要留意，红=出错，灰=没开 */
+  .status-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    border-radius: 999px;
+    padding: 0.0625rem 0.5rem;
+    font-size: 0.6875rem;
+    font-weight: 600;
+    line-height: 1.25rem;
+    white-space: nowrap;
+  }
+
+  .status-pill-ok {
+    background: var(--ok-soft);
+    color: var(--ok);
+  }
+
+  .status-pill-warn {
+    background: var(--warn-soft);
+    color: var(--warn);
+  }
+
+  .status-pill-err {
+    background: var(--err-soft);
+    color: var(--err);
+  }
+
+  .status-pill-muted {
+    background: var(--tint-3);
+    color: var(--muted);
+  }
+
+  .status-pill-accent {
+    background: var(--accent-soft);
+    color: var(--accent-vivid);
+  }
+
+  .empty-state {
+    display: grid;
+    min-height: 16rem;
+    place-items: center;
+    border-radius: 0.75rem;
+    border: 1px dashed var(--line);
+    padding: 1.5rem;
+    text-align: center;
+  }
+
+  /* 列表页的行：整行可点、悬停变底，行内操作靠右 */
+  .list-panel {
+    overflow: hidden;
+    border-radius: 0.75rem;
+    border: 1px solid var(--line);
+    background: var(--card);
+  }
+
+  .list-row + .list-row,
+  .list-panel > * + * {
+    border-top: 1px solid var(--line);
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+  overflow: hidden;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: var(--app-bg);
+  color: var(--ink);
+  letter-spacing: 0;
+  font-size: 14px;
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent-vivid);
+  outline-offset: 2px;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+button:disabled {
+  cursor: not-allowed;
+}
+
+::selection {
+  background: color-mix(in srgb, var(--accent-vivid) 30%, transparent);
+}
+
+::placeholder {
+  color: var(--muted);
+  opacity: 0.8;
+}
+
+/* 圆角阶对齐参照项目(sm 8 / md 12):把 Tailwind 工具类整体上调一档 */
+.rounded-md {
+  border-radius: 8px;
+}
+
+.rounded-lg {
+  border-radius: 12px;
+}
+
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--ink) 18%, transparent);
+  background-clip: padding-box;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--ink) 28%, transparent);
+  background-clip: padding-box;
+}
