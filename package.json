@@ -7,9 +7,17 @@
   ],
   "scripts": {
     "build": "npm run build --workspace frontend",
-    "typecheck": "npm run typecheck --workspace frontend"
+    "typecheck": "npm run typecheck --workspace frontend",
+    "desktop:prepare": "npm run typecheck && npm run build && node scripts/prepare-desktop.cjs",
+    "desktop:dev": "npm run desktop:prepare && electron desktop",
+    "desktop:pack": "npm run desktop:prepare && electron-builder --config desktop/builder.cjs --publish never && node scripts/package-desktop-dmg.cjs",
+    "desktop:test": "node --test desktop/*.test.cjs"
   },
   "dependencies": {
     "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "electron": "45.0.0",
+    "electron-builder": "26.18.0"
   }
 }

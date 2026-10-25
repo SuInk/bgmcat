@@ -10,3 +10,6 @@ web/dist
 release
 
 .native
+
+desktop-dist
+desktop/resources

@@ -2,7 +2,7 @@ FROM node:22-bookworm-slim AS ui
 WORKDIR /src
 COPY package.json package-lock.json ./
 COPY frontend/package.json ./frontend/package.json
-RUN npm ci
+RUN ELECTRON_SKIP_BINARY_DOWNLOAD=1 npm ci
 COPY frontend ./frontend
 COPY shared ./shared
 RUN npm run typecheck && npm run build

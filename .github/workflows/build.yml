@@ -25,7 +25,7 @@ jobs:
           if grep -q 'YOUR_ACCOUNT' "docs/releases/$version.md"; then
             echo 'Replace repository placeholders in release notes before publishing'; exit 1
           fi
-      - run: npm ci && npm run typecheck && npm run build
+      - run: ELECTRON_SKIP_BINARY_DOWNLOAD=1 npm ci && npm run typecheck && npm run build
       - run: sudo apt-get update && sudo apt-get install -y aria2
       - run: go test -race ./...
       - run: go vet ./...
@@ -73,9 +73,45 @@ jobs:
           $actual = & (Join-Path $dest 'bgmcat.exe') --version
           if ($actual -ne (Get-Content internal/version/VERSION).Trim()) { throw 'Version mismatch' }
           if (-not (Test-Path (Join-Path $dest 'bgmcat.exe.previous'))) { throw 'Upgrade backup missing' }
+  desktop:
+    name: Desktop ${{ matrix.platform }}-${{ matrix.arch }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {os: macos-14, platform: mac, arch: arm64}
+          - {os: macos-15-intel, platform: mac, arch: x64}
+          - {os: windows-latest, platform: win, arch: x64}
+          - {os: ubuntu-22.04, platform: linux, arch: x64}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: {node-version: '22', cache: npm}
+      - uses: actions/setup-go@v5
+        with: {go-version: '1.26.x'}
+      - run: npm ci
+      - run: npm run desktop:prepare
+      - run: npm run desktop:test
+      - run: npx electron-builder --config desktop/builder.cjs --publish never --${{ matrix.platform }} --${{ matrix.arch }}
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      - name: Create macOS disk image
+        if: runner.os == 'macOS'
+        run: node scripts/package-desktop-dmg.cjs
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desktop-${{ matrix.platform }}-${{ matrix.arch }}
+          if-no-files-found: error
+          path: |
+            desktop-dist/*.dmg
+            desktop-dist/*.zip
+            desktop-dist/*.exe
+            desktop-dist/*.AppImage
+            desktop-dist/*.deb
   release:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [build, windows-install]
+    needs: [build, windows-install, desktop]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -83,6 +119,15 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with: {name: release-packages, path: release}
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: desktop-*
+          path: release
+          merge-multiple: true
+      - name: Add desktop checksums
+        run: |
+          cd release
+          sha256sum bgmcat-desktop-* >> SHA256SUMS
       - name: Publish complete release
         env:
           GH_TOKEN: ${{ github.token }}

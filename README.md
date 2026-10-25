@@ -4,9 +4,9 @@
 
 **订阅番剧、自动下载、归档到 Google Drive，再直接播放。**
 
-Go 服务 · 托管 aria2 HTTP / BitTorrent · Vue 控制台 · Diana / MCP
+Electron 桌面版 · Go 服务 · 托管 aria2 HTTP / BitTorrent · Vue 控制台 · Diana / MCP
 
-[安装与部署](docs/install.md) · [云盘与使用说明](docs/usage.md) · [在线服务与故障处理](docs/online-services.md) · [版本发布](docs/releasing.md) · [Limited Redistribution License (SuInk)](LICENSE)
+[桌面版安装（推荐）](docs/desktop.md) · [服务端部署](docs/install.md) · [云盘与使用说明](docs/usage.md) · [在线服务与故障处理](docs/online-services.md) · [版本发布](docs/releasing.md) · [Limited Redistribution License (SuInk)](LICENSE)
 
 </div>
 
@@ -18,11 +18,17 @@ Go 服务 · 托管 aria2 HTTP / BitTorrent · Vue 控制台 · Diana / MCP
 - **在线播放**：本地或云端 Range 播放；可选 FFmpeg 提供转码和字幕。
 - **AI 接入**：MCP 查询订阅、管理下载，支持 Diana 本机一键配置。
 
-运行发布包不需要 Go、Node.js、Electron、gdirect 或 rclone；下载功能需要 aria2c，由安装器安装并由 bgmcat 自动管理。Vue 页面已编译并嵌入 Go 程序。FFmpeg/ffprobe 和 cloudflared 是按功能选择的外部组件，Docker 包含 aria2 和 FFmpeg。
+桌面版内置 Electron、Go 后端和界面，双击后自动登录，无需反复输入 token。独立 Go 服务版也继续提供，用于服务器和 Docker。下载功能需要 aria2c，由 bgmcat 自动管理；桌面包目前需系统安装 aria2，deb 可通过 apt 自动处理依赖。Vue 页面已编译并嵌入 Go 程序。FFmpeg/ffprobe 和 cloudflared 是按功能选择的外部组件，Docker 包含 aria2 和 FFmpeg。
 
 > 当前正在准备首个 Go Release，仓库为 `SuInk/bgmcat`。下面的源码启动现在可用；Release 安装须等发布资产后使用。推荐先用私有仓库验证。
 
-## 先跑起来
+## 默认选择桌面版
+
+普通桌面用户优先安装 `bgmcat-desktop`：macOS 用 DMG、Windows 用 EXE、Linux 用 deb/AppImage。安装后打开 **Bangumi Cat** 即可，无需手动启动后台服务。详见[桌面安装、依赖与数据迁移](docs/desktop.md)。正式下载须等待 Release 发布。
+
+本地打包：`npm ci && npm run desktop:pack`，产物位于 `desktop-dist/`。
+
+## 服务版：从源码启动
 
 源码环境需要 Go 1.26+、Node.js 22+：
 
@@ -40,7 +46,7 @@ docker compose up -d --build
 docker compose logs bgmcat
 ```
 
-## 发布包安装
+## 服务版：发布包安装
 
 Release 提供 Linux amd64/arm64、macOS Intel/Apple Silicon、Windows amd64 五个平台的完整包，包含程序、启动脚本、文档和许可证，以及统一的 `SHA256SUMS`、`latest.json`。网页已嵌入程序，不需要另行部署。
 
