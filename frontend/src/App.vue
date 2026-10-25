@@ -33,6 +33,10 @@ import {
 } from "./stores/ui";
 
 // 首页以外的视图按需加载,缩小首包(下载页拖着播放器相关依赖尤其值得拆)
+const VersionModal = defineAsyncComponent(() => import("./components/settings/VersionModal.vue"));
+const versionOpen = ref(false);
+function openVersion() { mobileSidebarOpen.value = false; versionOpen.value = true; }
+
 const DownloadsView = defineAsyncComponent(() => import("./views/DownloadsView.vue"));
 const FavoritesView = defineAsyncComponent(() => import("./views/FavoritesView.vue"));
 const IntegrationsView = defineAsyncComponent(() => import("./views/IntegrationsView.vue"));
@@ -82,8 +86,7 @@ async function handleLoginSubmit(): Promise<void> {
   }
 }
 
-// 侧栏小黄点只读服务端已经算好的状态，不触发一次网络检查——真正的检查由服务端
-// 的后台调度做（启动 5 分钟后首检，之后每 6 小时）。半小时刷一次足够让点亮起来。
+// 侧栏只读取最近一次检查状态，不在后台自动访问 GitHub。
 const UPDATE_BADGE_REFRESH_MS = 30 * 60 * 1000;
 let updateBadgeTimer: number | null = null;
 
@@ -126,6 +129,7 @@ onUnmounted(() => {
       :update-available="updateAvailable"
       @select-tab="handleTabSelection"
       @toggle-collapse="handleSidebarToggle"
+      @open-version="openVersion"
     />
 
     <div
@@ -148,6 +152,7 @@ onUnmounted(() => {
       :update-available="updateAvailable"
       @select-tab="handleTabSelection"
       @toggle-collapse="handleSidebarToggle"
+      @open-version="openVersion"
     />
 
     <section class="app-main h-full min-h-0 min-w-0 overflow-hidden" :inert="isMobileViewport && mobileSidebarOpen">
@@ -275,6 +280,7 @@ onUnmounted(() => {
       </div>
     </Transition>
 
+    <VersionModal v-if="versionOpen" @close="versionOpen = false" />
     <AppToastStack :toasts="toasts" @dismiss="dismissToast" />
   </main>
 </template>

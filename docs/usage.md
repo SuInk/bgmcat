@@ -114,3 +114,13 @@ MCP 页面支持检测 Diana、接入、诊断与移除。默认寻找系统缓�
 这实现了 gdirect 补丁中独立控制 SNI 的同类行为，使用 Go 标准库，不链接修改后的 libaria2，也不模拟它的 OpenSSL 指纹。自定义模式通过独立 TLS 握手发送 SNI，并在 `VerifyConnection` 中用原始请求域名执行 `x509.Verify`；证书不可信、过期、域名不符或用途不符均拒绝。自定义/无 SNI 使用 HTTP/1.1，原始模式仍保留默认协议协商。
 
 参考：[gdirect 的 aria2 补丁](https://github.com/mizorewww/gdirect/blob/350d1bed3b5604c58c96dcd85f7106d4958aca2c/vendor/aria2-1.37.0.patch)、[Go VerifyConnection](https://pkg.go.dev/crypto/tls#Config.VerifyConnection)。本地握手测试验证的是 SNI 与证书校验行为；真实 Google 连接是否成功仍需在部署网络中扫描，不能从本地测试推断无代理可达性。
+
+## 版本与更新
+
+侧栏底部显示「跟随系统 / 浅色 / 深色」和当前版本号，点击版本号打开「版本与更新」。设置入口只保留在上方工具导航。
+
+「检查更新」查询 `SuInk/bgmcat` 的 GitHub Releases，显示稳定版本和版本历史；预发布不会当作稳定版更新。失败会显示网络、权限或限额提示，不会误报为最新。状态保存在本地，打开弹窗只读取已知状态，不自动访问 GitHub。
+
+私有仓库检查需要运行服务的机器提供 `GH_TOKEN` / `GITHUB_TOKEN`，或已有可用的 `gh auth login`。凭据只发送到 GitHub API，不返回网页或保存到更新记录。
+
+当前支持检查版本与手动升级，**尚不支持应用内下载、替换、自动安装及重启**。弹窗按桌面安装包、服务端安装包、源码和 Docker 展示对应步骤；安装器命令与本文和 README 保持一致。桌面版需退出后覆盖安装完整桌面包；服务端安装器需先停止旧进程并保留原安装及数据目录；源码需处理本地修改、重新构建后按原参数启动；Docker 根据镜像部署或本地构建选择对应命令。
