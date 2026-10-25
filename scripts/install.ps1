@@ -4,7 +4,8 @@ param(
   [string]$Version = 'latest',
   [string]$InstallDir = (Join-Path $env:LOCALAPPDATA 'AnimeRSS\bin'),
   [string]$LocalDir = '',
-  [switch]$Private
+  [switch]$Private,
+  [switch]$SkipAria2
 )
 $ErrorActionPreference = 'Stop'
 if (-not [IO.Path]::IsPathRooted($InstallDir)) { throw 'InstallDir must be absolute' }
@@ -45,6 +46,13 @@ try {
   } finally { $zip.Dispose() }
   & (Join-Path $temp 'bgmcat.exe') --version
   if ($LASTEXITCODE -ne 0) { throw 'Executable verification failed' }
+  if (-not $SkipAria2 -and -not $env:BGMCAT_ARIA2_PATH -and -not (Get-Command aria2c -ErrorAction SilentlyContinue)) {
+    if (-not (Get-Command winget -ErrorAction SilentlyContinue)) { throw 'Install aria2 or set BGMCAT_ARIA2_PATH; winget is unavailable' }
+    & winget install --id aria2.aria2 --exact --accept-package-agreements --accept-source-agreements
+    if ($LASTEXITCODE -ne 0) { throw 'aria2 installation failed' }
+    $env:Path = [Environment]::GetEnvironmentVariable('Path','Machine') + ';' + [Environment]::GetEnvironmentVariable('Path','User')
+    if (-not (Get-Command aria2c -ErrorAction SilentlyContinue)) { throw 'aria2 installed: reopen PowerShell, then rerun this installer' }
+  }
   New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
   $target = Join-Path $InstallDir 'bgmcat.exe'
   if (Test-Path $target) { Copy-Item $target "$target.previous" -Force }

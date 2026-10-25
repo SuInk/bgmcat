@@ -36,7 +36,7 @@ class InstallerTests(unittest.TestCase):
         self.checksum.write_text(hashlib.sha256(self.archive.read_bytes()).hexdigest() + '  ' + self.archive.name + '\n')
 
     def install(self):
-        return subprocess.run(['sh', str(SCRIPT), '--local-dir', str(self.root), '--dir', str(self.dest)], capture_output=True, text=True)
+        return subprocess.run(['sh', str(SCRIPT), '--skip-aria2', '--local-dir', str(self.root), '--dir', str(self.dest)], capture_output=True, text=True)
 
     def test_install_preserves_data_and_previous_binary(self):
         result = self.install()

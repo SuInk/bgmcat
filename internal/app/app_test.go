@@ -100,12 +100,11 @@ func TestRSSRefreshDedupAndRules(t *testing.T) {
 		}
 	}
 }
-func TestHTTPResumeAndRangePlayback(t *testing.T) {
+func TestLegacyHTTPPartialRestartAndRangePlayback(t *testing.T) {
 	a := testApp(t)
 	content := bytes.Repeat([]byte("0123456789"), 10000)
-	var rangeSeen bool
+
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		rangeSeen = r.Header.Get("Range") == "bytes=1234-"
 		http.ServeContent(w, r, "episode.mp4", time.Time{}, bytes.NewReader(content))
 	}))
 	defer server.Close()
@@ -119,8 +118,8 @@ func TestHTTPResumeAndRangePlayback(t *testing.T) {
 		t.Fatal(e)
 	}
 	got, e := os.ReadFile(path)
-	if e != nil || !bytes.Equal(got, content) || !rangeSeen {
-		t.Fatal("resume failed", e, rangeSeen)
+	if e != nil || !bytes.Equal(got, content) {
+		t.Fatal("legacy partial restart failed", e)
 	}
 	r := httptest.NewRequest("GET", "/api/downloads/fixture/stream?token="+str(a.Settings()["token"]), nil)
 	r.Header.Set("Range", "bytes=20-29")
@@ -133,10 +132,10 @@ func TestHTTPResumeAndRangePlayback(t *testing.T) {
 		t.Fatal("unprotected playback")
 	}
 }
-func TestHTTPWrongResumeRangeRejected(t *testing.T) {
+func TestHTTPWrongRangeRejected(t *testing.T) {
 	a := testApp(t)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Range", "bytes 0-4/5")
+		w.Header().Set("Content-Range", "bytes 99-103/104")
 		w.WriteHeader(206)
 		io.WriteString(w, "xxxxx")
 	}))

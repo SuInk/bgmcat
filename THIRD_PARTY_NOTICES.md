@@ -1,10 +1,10 @@
 # Go 版本依赖说明
 
-本目录的 Go 版不分发 Electron、aria2、gdirect 或 rclone。下面保留原项目的许可记录供来源追溯，其中“随包附带”等描述仅适用于原 Electron 构建。
+Go Release 压缩包不分发 Electron、aria2、gdirect 或 rclone；安装器通过系统包管理器安装 aria2，Docker 镜像包含发行版 aria2。下面保留原项目的许可记录供来源追溯，其中“随包附带”等描述仅适用于原 Electron 构建。
 
 当前 Go 版直接依赖：
 
-- github.com/anacrolix/torrent v1.61.0：MPL-2.0。
+- github.com/anacrolix/torrent v1.61.0：MPL-2.0，仅用于集成测试的 BT 种子服务。
 - github.com/mmcdole/gofeed v1.3.0：MIT。
 - modernc.org/sqlite v1.61.0：BSD 风格许可，SQLite 核心为 public domain。
 - Vue、Vite、HLS.js、Artplayer 等网页依赖按 package-lock.json 固定版本，沿用各自许可。
@@ -64,3 +64,7 @@ redistributed alongside it and remain under their own licenses.
 [MyAnimeList](https://myanimelist.net/)，以及启用后的 [TMDB](https://www.themoviedb.org/)。
 本产品使用 TMDB API，但未经 TMDB 认可或认证（This product uses the TMDB API but is not endorsed or certified by TMDB）。
 各平台数据的版权归其所有者，使用时请遵守对应平台的服务条款。
+
+## aria2 下载进程
+
+运行时通过私有本机 JSON-RPC 管理 aria2c（GPL-2.0-or-later，项目 https://github.com/aria2/aria2）。它不链接进 Go 程序，不引入 CGO。安装器使用系统包管理器获取；Docker 包含发行版的 aria2 包及其许可文件。anacrolix/torrent 仅作为本机 BT 集成测试的种子服务，不再进入生产下载器。

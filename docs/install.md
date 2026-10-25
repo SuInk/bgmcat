@@ -4,13 +4,13 @@
 
 | 方式 | 安装前准备 | 运行时依赖 |
 | --- | --- | --- |
-| Release 完整包 | 已发布的对应平台资产；SHA-256 工具 | 可选 FFmpeg、cloudflared |
+| Release 完整包 | 已发布的对应平台资产；SHA-256 工具 | aria2c；可选 FFmpeg、cloudflared |
 | 私有 Release 安装器 | GitHub CLI、`gh auth login`、仓库读取权限 | 同上 |
 | 公开 Release 安装器 | Shell/curl 或 PowerShell | 同上 |
-| Docker 源码构建 | Docker + Compose、项目源码 | 镜像包含 FFmpeg |
+| Docker 源码构建 | Docker + Compose、项目源码 | 镜像包含 aria2 和 FFmpeg |
 | 源码构建 | Go 1.26+、Node.js 22+、npm | 构建后同 Release |
 
-当前没有实际发布仓库，不能把文档中的占位地址直接当成可用下载地址。
+仓库为 `SuInk/bgmcat`，Release 安装仍须等待实际发布对应版本。
 
 ## 原生安装
 
@@ -30,9 +30,9 @@ gh auth login
 & "$env:LOCALAPPDATA\AnimeRSS\bin\bgmcat.exe"
 ```
 
-将安装目录加入 PATH 后可直接使用 `bgmcat`。安装器不改动系统 PATH、不要求管理员权限、不配置开机自启。不要把访问令牌直接写进命令；自动化可按 GitHub CLI 的机制安全注入认证环境。
+将安装目录加入 PATH 后可直接使用 `bgmcat`。安装器不改动系统 PATH、安装主程序无需管理员权限，安装 aria2 系统包可能需要 sudo；不配置开机自启。不要把访问令牌直接写进命令；自动化可按 GitHub CLI 的机制安全注入认证环境。
 
-若将来仓库公开，省略 `--private` / `-Private` 即可。可以下载并审阅 `scripts/install.sh` / `install.ps1` 后执行；私有仓库的 raw 链接不支持匿名 `curl | sh`，不要照搬公开仓库的一行命令。
+若将来仓库公开，省略 `--private` / `-Private` 即可。可以下载并审阅 `scripts/install.sh` 与同目录的 `install-aria2.sh`，或 Windows 的 `install.ps1` 后执行；私有仓库的 raw 链接不支持匿名 `curl | sh`，不要照搬公开仓库的一行命令。
 
 指定版本和安装目录：
 
@@ -95,3 +95,13 @@ docker compose logs -f bgmcat
 停止原生服务后，移除安装目录中的 `bgmcat`（Windows 为 `bgmcat.exe`）及其 `.previous` 副本。默认数据目录 `~/.anime-rss-go` 独立保留，恢复安装后可以继续使用。
 
 Docker 用 `docker compose down` 移除容器，保留数据卷；不要加 `-v`，除非明确要删除全部持久化数据。
+
+## 托管 aria2 下载引擎
+
+HTTP 与 BT 使用独立的 `aria2c`，由 Go 服务自动启动、关闭与恢复。RPC 仅监听随机本机端口，密钥保存在 0600 配置文件中，无需填写旧版 RPC 地址。主程序仍可 `CGO_ENABLED=0` 构建。
+
+安装器默认安装缺失的 aria2：macOS 使用 Homebrew，Linux 使用 apt/dnf/pacman/apk（可能需要 sudo），Windows 使用 winget。离线或仅使用 qBittorrent 时可传 `--skip-aria2` / `-SkipAria2`；手动解压运行前请自行安装 aria2，或执行包内 `sh scripts/install-aria2.sh`。Docker 已包含 aria2。
+
+查找顺序是 `BGMCAT_ARIA2_PATH`、bgmcat 可执行文件旁的 aria2c、系统 PATH。发行包本身不捆绑 aria2，安装依赖需要网络；Windows 安装后可能需要重开终端以刷新 PATH。
+
+暂停、关闭服务和进程恢复使用 `.aria2` 控制文件续传。不要删除任务目录中的这些文件。旧 Go 下载器的 `.part` 文件保留，首次切换会从头下载；旧 BT 文件由 aria2 按种子校验后复用。完成下载后不继续做种。Google Drive 上传、OAuth 和按需播放仍使用 Go 实现，IP 直连策略不变。

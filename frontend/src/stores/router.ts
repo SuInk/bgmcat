@@ -6,7 +6,7 @@ export const TABS: Array<{ key: TabKey; label: string; hint: string; icon: strin
   { key: "home", label: "首页新番", hint: "Bangumi", icon: "🌸", subtitle: "当季新番与番剧搜索" },
   { key: "favorites", label: "我的收藏", hint: "Watch", icon: "⭐", subtitle: "收藏的番剧与追番订阅" },
   { key: "subscriptions", label: "订阅配置", hint: "RSS", icon: "📡", subtitle: "RSS 源与自动下载规则" },
-  { key: "downloads", label: "下载管理", hint: "Go 下载器", icon: "📥", subtitle: "下载任务与在线播放" },
+  { key: "downloads", label: "下载管理", hint: "托管 aria2", icon: "📥", subtitle: "下载任务与在线播放" },
   { key: "logs", label: "运行日志", hint: "Logs", icon: "📋", subtitle: "后端服务运行记录" },
   { key: "integrations", label: "MCP", hint: "Agent", icon: "🔌", subtitle: "AI 客户端接入配置" },
   { key: "settings", label: "其他设置", hint: "服务", icon: "⚙️", subtitle: "服务、下载与数据源设置" }

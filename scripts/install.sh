@@ -6,6 +6,7 @@ version=latest
 dest=${ANIME_RSS_BIN_DIR:-"$HOME/.local/bin"}
 local_dir=
 private=false
+skip_aria2=false
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --repository|--version|--dir|--local-dir)
@@ -13,7 +14,8 @@ while [ "$#" -gt 0 ]; do
       case "$1" in --repository) repo=$2;; --version) version=$2;; --dir) dest=$2;; --local-dir) local_dir=$2;; esac
       shift 2;;
     --private) private=true; shift;;
-    --help|-h) echo 'Usage: sh install.sh --repository OWNER/REPO [--private] [--version vX.Y.Z] [--dir PATH] [--local-dir RELEASE_DIR]'; exit 0;;
+    --skip-aria2) skip_aria2=true; shift;;
+    --help|-h) echo 'Usage: sh install.sh --repository OWNER/REPO [--private] [--version vX.Y.Z] [--dir PATH] [--local-dir RELEASE_DIR] [--skip-aria2]'; exit 0;;
     *) echo "Unknown option: $1" >&2; exit 1;;
   esac
 done
@@ -51,6 +53,7 @@ entry="bgmcat-$platform-$arch/bgmcat"
 mkdir "$tmp/extract"
 tar -xzf "$tmp/$asset" -C "$tmp/extract" "$entry"
 [ -f "$tmp/extract/$entry" ] && [ ! -L "$tmp/extract/$entry" ] || { echo 'Invalid package binary' >&2; exit 1; }
+if [ "$skip_aria2" != true ]; then sh "$(dirname "$0")/install-aria2.sh"; fi
 mkdir -p "$dest"
 stage=$(mktemp "$dest/.bgmcat-install.XXXXXX")
 trap 'rm -rf "$tmp"; rm -f "${stage:-}"' EXIT HUP INT TERM
