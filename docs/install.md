@@ -14,25 +14,27 @@
 
 ## 原生安装
 
-先在已克隆的仓库目录运行。私有仓库使用 GitHub CLI 已保存的登录态：
+发布首个 Release 后，登录有仓库读取权限的 GitHub 账号即可安装，无需克隆源码。先运行一次 `gh auth login`。
+
+macOS / Linux（macOS 需先有 Homebrew）：
 
 ```sh
-gh auth login
-sh scripts/install.sh --repository SuInk/bgmcat --private
-"$HOME/.local/bin/bgmcat"
+gh api repos/SuInk/bgmcat/contents/scripts/install.sh -H 'Accept: application/vnd.github.raw+json' | sh -s -- --private --start
 ```
 
-Windows PowerShell：
+Windows PowerShell（需 GitHub CLI；自动安装 aria2 需要 winget）：
 
 ```powershell
-gh auth login
-.\scripts\install.ps1 -Repository SuInk/bgmcat -Private
-& "$env:LOCALAPPDATA\AnimeRSS\bin\bgmcat.exe"
+$installer = gh api repos/SuInk/bgmcat/contents/scripts/install.ps1 -H 'Accept: application/vnd.github.raw+json'
+if ($LASTEXITCODE -ne 0) { throw '下载安装脚本失败' }
+& ([scriptblock]::Create(($installer -join "`n"))) -Private -Start
 ```
 
-将安装目录加入 PATH 后可直接使用 `bgmcat`。安装器不改动系统 PATH、安装主程序无需管理员权限，安装 aria2 系统包可能需要 sudo；不配置开机自启。不要把访问令牌直接写进命令；自动化可按 GitHub CLI 的机制安全注入认证环境。
+安装器选择当前系统和架构、校验发行包 SHA-256，并安装缺失的 aria2。`--start` / `-Start` 在当前终端启动，访问终端输出的地址，用 Ctrl+C 停止；不会配置后台服务或开机自启。只安装时省略该参数，之后执行 `"$HOME/.local/bin/bgmcat"`，Windows 执行 `& "$env:LOCALAPPDATA\AnimeRSS\bin\bgmcat.exe"`。
 
-若将来仓库公开，省略 `--private` / `-Private` 即可。可以下载并审阅 `scripts/install.sh` 与同目录的 `install-aria2.sh`，或 Windows 的 `install.ps1` 后执行；私有仓库的 raw 链接不支持匿名 `curl | sh`，不要照搬公开仓库的一行命令。
+安装主程序无需管理员权限，安装 aria2 系统包可能需要 sudo。安装器不修改 PATH，也不会停止正在运行的服务；升级前先停止现有进程。私有仓库需要 GitHub 登录态，匿名 curl 无法访问。当前尚无正式 Release，上述命令须在发行资产发布后使用；现在可使用 README 的源码启动或 Docker 构建。
+
+手机和平板通过浏览器访问运行中的服务，不需要安装 Go 或 aria2。跨设备访问需显式配置服务监听地址及网络访问；默认仅本机访问，详细配置见使用文档。
 
 指定版本和安装目录：
 

@@ -5,6 +5,7 @@ param(
   [string]$InstallDir = (Join-Path $env:LOCALAPPDATA 'AnimeRSS\bin'),
   [string]$LocalDir = '',
   [switch]$Private,
+  [switch]$Start,
   [switch]$SkipAria2
 )
 $ErrorActionPreference = 'Stop'
@@ -46,6 +47,12 @@ try {
   } finally { $zip.Dispose() }
   & (Join-Path $temp 'bgmcat.exe') --version
   if ($LASTEXITCODE -ne 0) { throw 'Executable verification failed' }
+  $adjacentAria2 = Join-Path $InstallDir 'aria2c.exe'
+  if (-not $env:BGMCAT_ARIA2_PATH -and (Test-Path $adjacentAria2)) { $env:BGMCAT_ARIA2_PATH = $adjacentAria2 }
+  if (-not $SkipAria2 -and $env:BGMCAT_ARIA2_PATH) {
+    & $env:BGMCAT_ARIA2_PATH --version | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw 'BGMCAT_ARIA2_PATH does not point to a working aria2 executable' }
+  }
   if (-not $SkipAria2 -and -not $env:BGMCAT_ARIA2_PATH -and -not (Get-Command aria2c -ErrorAction SilentlyContinue)) {
     if (-not (Get-Command winget -ErrorAction SilentlyContinue)) { throw 'Install aria2 or set BGMCAT_ARIA2_PATH; winget is unavailable' }
     & winget install --id aria2.aria2 --exact --accept-package-agreements --accept-source-agreements
@@ -59,5 +66,10 @@ try {
   Copy-Item (Join-Path $temp 'bgmcat.exe') "$target.new" -Force
   Move-Item "$target.new" $target -Force
   Write-Host "Installed: $target"
-  Write-Host 'Start manually. Stop the existing process before upgrading on Windows. Application data is preserved.'
+  Write-Host 'Application data is preserved.'
+  if (-not $Start) { Write-Host "Start: & `"$target`"" }
 } finally { Remove-Item -LiteralPath $temp -Recurse -Force }
+if ($Start) {
+  Write-Host 'Starting bgmcat in this terminal. Press Ctrl+C to stop. Use the address printed below.'
+  & $target
+}
