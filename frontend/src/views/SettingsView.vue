@@ -61,7 +61,6 @@ import {
   settingsSaveState,
   status
 } from "../stores/session";
-import { selectTab } from "../stores/boot";
 
 const driveNetwork = ref<DriveNetworkStatus | null>(null);
 const driveCandidates = ref("");
@@ -124,9 +123,7 @@ function isSettingLocked(key: string): boolean {
   return (settings.value?.lockedSettings ?? []).includes(key);
 }
 
-import { lastAppTab } from "../stores/router";
 import { previewThemeAccent, setThemeMode, themeMode } from "../stores/theme";
-import { viewportWidth } from "../stores/ui";
 import { toastError, updateFeedback } from "../stores/toasts";
 import {
   persistUpdatePolicy,
@@ -370,25 +367,18 @@ function readStoredPage(): SettingsPageKey {
 const activePage = ref<SettingsPageKey>(readStoredPage());
 const activePageMeta = computed(() => ALL_PAGES.find((page) => page.key === activePage.value) ?? ALL_PAGES[0]!);
 const settingsShellRef = ref<HTMLElement | null>(null);
+const settingsLayoutRef = ref<HTMLElement | null>(null);
 
-/** 手机上侧栏和内容放不下并排：先看分类列表，点进去再看内容 */
-const narrowLayout = computed(() => viewportWidth.value < 768);
-const mobileContentOpen = ref(false);
 
 function openPage(key: SettingsPageKey): void {
   activePage.value = key;
   settingsQuery.value = "";
-  mobileContentOpen.value = true;
-  settingsShellRef.value?.scrollTo({ top: 0 });
+  settingsLayoutRef.value?.scrollTo({ top: 0 });
   try {
     window.localStorage.setItem(SETTINGS_PAGE_KEY, key);
   } catch {
     // 存不了就每次从「常规」开始，不影响使用
   }
-}
-
-function backToApp(): void {
-  selectTab(lastAppTab.value);
 }
 
 const searching = computed(() => Boolean(settingsQuery.value.trim()));
@@ -461,13 +451,10 @@ function applySettingsSearch(): void {
 }
 
 watch(settingsQuery, async () => {
-  if (searching.value) {
-    mobileContentOpen.value = true;
-  }
   // 等 v-show 把其他分类的小节放出来再过滤
   await nextTick();
   applySettingsSearch();
-  settingsShellRef.value?.scrollTo({ top: 0 });
+  settingsLayoutRef.value?.scrollTo({ top: 0 });
 });
 
 /** 搜索时侧栏每个分类后面标出命中了几节，没命中的变灰 */
@@ -884,14 +871,9 @@ async function runClearPlaybackCache(): Promise<void> {
 </script>
 
 <template>
-  <div class="settings-app" :class="{ 'settings-app-narrow': narrowLayout }">
-    <!-- 设置自己的侧栏：返回应用 / 搜索 / 分组的分类 -->
-    <aside v-show="!narrowLayout || !mobileContentOpen" class="settings-sidebar">
-      <button type="button" class="settings-back" @click="backToApp">
-        <AppNavIcon name="chevron-left" aria-hidden="true" />
-        返回应用
-      </button>
-
+  <div ref="settingsLayoutRef" class="settings-app">
+    <!-- 主导航始终保留；设置分类在内容区内并排显示，手机端换行排列。 -->
+    <aside class="settings-sidebar">
       <label class="settings-sidebar-search">
         <AppNavIcon name="search" aria-hidden="true" />
         <input v-model="settingsQuery" type="search" placeholder="搜索设置…" aria-label="搜索设置" />
@@ -915,22 +897,16 @@ async function runClearPlaybackCache(): Promise<void> {
             <AppNavIcon :name="page.icon" aria-hidden="true" />
             <span class="min-w-0 flex-1 truncate">{{ page.label }}</span>
             <span v-if="searching && pageMatchCount[page.key]" class="settings-nav-count">{{ pageMatchCount[page.key] }}</span>
-            <AppNavIcon v-else-if="narrowLayout" name="chevron-right" class="settings-nav-chevron" aria-hidden="true" />
           </button>
         </div>
       </nav>
     </aside>
 
-    <section v-show="!narrowLayout || mobileContentOpen" ref="settingsShellRef" class="settings-shell">
+    <section ref="settingsShellRef" class="settings-shell">
       <div class="settings-content">
-        <button v-if="narrowLayout" type="button" class="settings-back settings-back-inline" @click="mobileContentOpen = false; settingsQuery = ''">
-          <AppNavIcon name="chevron-left" aria-hidden="true" />
-          设置
-        </button>
-
         <header class="settings-page-head">
           <div class="min-w-0">
-            <h1 class="settings-page-title">{{ searching ? `搜索「${settingsQuery.trim()}」` : activePageMeta.label }}</h1>
+            <h2 class="settings-page-title">{{ searching ? `搜索「${settingsQuery.trim()}」` : activePageMeta.label }}</h2>
             <p class="settings-page-desc">
               {{ searching ? (visibleSectionIds?.size ? "下面是所有分类里匹配的设置项。" : "没有匹配的设置项，换个关键词试试。") : activePageMeta.desc }}
             </p>
@@ -2256,7 +2232,7 @@ async function runClearPlaybackCache(): Promise<void> {
 }
 
 /*
- * 整窗布局：左侧设置侧栏 + 右侧内容。照 ChatGPT 桌面端的设置页。
+ * 设置分类与内容并排，外层保留应用导航。
  * 内容区限宽居中：设置项是一行一行读的，拉到 1400px 宽只会让左边的名字和右边的开关隔得老远。
  */
 .settings-app {
@@ -3387,5 +3363,28 @@ async function runClearPlaybackCache(): Promise<void> {
   .settings-input:not(.settings-input-short) {
     width: 100%;
   }
+}
+/* Diana 式嵌套设置布局：保留应用顶栏与主导航。 */
+.settings-app { grid-template-columns:190px minmax(0,1fr); gap:20px; align-items:start; overflow:auto; padding:0; }
+.settings-sidebar { position:sticky; top:0; padding:4px 0 16px; border:0; background:transparent; overflow:visible; }
+.settings-nav { gap:16px; }.settings-nav-group { gap:2px; }
+.settings-nav-group-label { font-size:11.5px; padding:0 10px 5px; }
+.settings-nav-link { padding:8px 10px; border-radius:12px; font-size:13.5px; min-height:36px; }
+.settings-nav-link-active, .settings-nav-link-active:hover { background:var(--accent-soft); color:var(--accent); }
+.settings-nav-link-active > svg { color:inherit; }
+.settings-shell { overflow:visible; min-width:0; }
+.settings-content { width:100%; max-width:1000px; margin:0; padding:0 0 40px; }
+.settings-page-head { margin-bottom:16px; gap:12px; flex-wrap:wrap; }
+.settings-page-title { font-size:16px; line-height:1.4; }
+.settings-group { border-radius:14px; }
+.settings-sidebar-search { border:1px solid var(--line); background:var(--input-bg); }
+@media(max-width:640px) {
+ .settings-app { grid-template-columns:minmax(0,1fr); gap:18px; }
+ .settings-sidebar { position:static; padding:0; }
+ .settings-nav { display:flex; flex-wrap:wrap; gap:6px; }
+ .settings-nav-group { display:contents; }.settings-nav-group-label { display:none; }
+ .settings-nav-link { width:auto; min-height:40px; padding:8px 10px; font-size:12px; }
+ .settings-nav-link svg { display:none; }
+ .settings-content { padding:0 0 32px; }
 }
 </style>

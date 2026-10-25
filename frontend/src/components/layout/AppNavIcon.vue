@@ -15,7 +15,10 @@ defineProps<{
     stroke-linejoin="round"
     aria-hidden="true"
   >
-    <template v-if="name === 'home'">
+    <template v-if="name === 'panel-left'">
+      <rect x="3" y="4" width="18" height="16" rx="2" /><path d="M9 4v16" />
+    </template>
+    <template v-else-if="name === 'home'">
       <path d="M4 12.5 12 5l8 7.5" />
       <path d="M6.5 11v8h11v-8" />
       <path d="M9.5 19v-5h5v5" />

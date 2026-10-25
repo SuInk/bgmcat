@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, defineAsyncComponent, onMounted, onUnmounted, ref } from "vue";
+import { computed, defineAsyncComponent, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 
 import AppToastStack from "./components/common/AppToastStack.vue";
 import CuteLoader from "./components/common/CuteLoader.vue";
@@ -10,6 +10,7 @@ import { loadDashboard, bootstrap, globalSyncOverlay, isLoading, refreshCurrentV
 import { isBusy } from "./stores/busy";
 import { onlineDownloadCount, unreadCompletedDownloadCount } from "./stores/downloads";
 import { refreshUpdateStatus, updateAvailable } from "./stores/update";
+import { openExternalLink } from "./lib/actions";
 import { activeTab, TABS, type TabKey } from "./stores/router";
 import {
   authChecked,
@@ -22,7 +23,7 @@ import {
   startGithubLogin,
   status
 } from "./stores/session";
-import { activeThemeLabel, initTheme, setThemeMode, teardownTheme, themeMode } from "./stores/theme";
+import { initTheme, teardownTheme } from "./stores/theme";
 import { dismissToast, feedback, toasts } from "./stores/toasts";
 import {
   handleWindowResize,
@@ -39,9 +40,6 @@ const LogsView = defineAsyncComponent(() => import("./views/LogsView.vue"));
 const SettingsView = defineAsyncComponent(() => import("./views/SettingsView.vue"));
 const SubscriptionsView = defineAsyncComponent(() => import("./views/SubscriptionsView.vue"));
 
-/** 设置页和 ChatGPT 桌面端一样接管整个窗口：主侧栏和顶栏让位给设置自己的侧栏 */
-const settingsTakeover = computed(() => hasConsoleAccess.value && activeTab.value === "settings");
-
 const activeTabMeta = computed(() => TABS.find((tab) => tab.key === activeTab.value) ?? TABS[0]);
 
 const refreshing = computed(() => isBusy("refresh-view"));
@@ -57,31 +55,10 @@ const downloadClientLabel = computed(() =>
   status.value?.downloadClient === "qbittorrent" ? "qBittorrent" : "托管 aria2"
 );
 
-const THEME_OPTIONS = [
-  { key: "system", label: "自动", icon: "theme" },
-  { key: "light", label: "浅色", icon: "sun" },
-  { key: "dark", label: "深色", icon: "moon" }
-] as const;
-
-const themeMenuOpen = ref(false);
-const themeMenuRef = ref<HTMLElement | null>(null);
-
-const themeIconName = computed(
-  () => THEME_OPTIONS.find((option) => option.key === themeMode.value)?.icon ?? "theme"
-);
-
-function pickTheme(mode: (typeof THEME_OPTIONS)[number]["key"]): void {
-  setThemeMode(mode);
-  themeMenuOpen.value = false;
-}
-
-function handleDocumentPointerDown(event: MouseEvent): void {
-  const target = event.target as Node | null;
-  if (target && themeMenuRef.value?.contains(target)) {
-    return;
-  }
-  themeMenuOpen.value = false;
-}
+const menuButton = ref<HTMLButtonElement | null>(null);
+watch(mobileSidebarOpen, async open => { if (!open) { await nextTick(); menuButton.value?.focus(); } });
+watch(sidebarCollapsed, async collapsed => { if (collapsed) { await nextTick(); menuButton.value?.focus(); } });
+function closeDrawer(event: KeyboardEvent) { if (event.key === "Escape") mobileSidebarOpen.value = false; }
 
 function handleTabSelection(tab: string): void {
   selectTab(tab as TabKey);
@@ -93,6 +70,8 @@ function handleTabSelection(tab: string): void {
 function handleSidebarToggle(): void {
   if (isMobileViewport.value) {
     mobileSidebarOpen.value = !mobileSidebarOpen.value;
+  } else {
+    sidebarCollapsed.value = !sidebarCollapsed.value;
   }
 }
 
@@ -111,7 +90,7 @@ let updateBadgeTimer: number | null = null;
 onMounted(() => {
   initTheme();
   window.addEventListener("resize", handleWindowResize);
-  window.addEventListener("mousedown", handleDocumentPointerDown);
+  window.addEventListener("keydown", closeDrawer);
   void bootstrap();
   void refreshUpdateStatus();
   updateBadgeTimer = window.setInterval(() => void refreshUpdateStatus(), UPDATE_BADGE_REFRESH_MS);
@@ -125,17 +104,17 @@ onUnmounted(() => {
   teardown();
   teardownTheme();
   window.removeEventListener("resize", handleWindowResize);
-  window.removeEventListener("mousedown", handleDocumentPointerDown);
+  window.removeEventListener("keydown", closeDrawer);
 });
 </script>
 
 <template>
   <main
-    class="grid h-[100dvh] min-h-screen overflow-hidden bg-[var(--shell-bg)]"
-    :style="{ gridTemplateColumns: isMobileViewport || settingsTakeover ? 'minmax(0,1fr)' : sidebarCollapsed ? '88px minmax(0,1fr)' : '236px minmax(0,1fr)' }"
+    class="app-shell grid h-[100dvh] min-h-screen overflow-hidden bg-[var(--shell-bg)]"
+    :style="{ gridTemplateColumns: isMobileViewport ? 'minmax(0,1fr)' : sidebarCollapsed ? '0px minmax(0,1fr)' : '236px minmax(0,1fr)' }"
   >
     <AppSidebar
-      v-if="!isMobileViewport && !settingsTakeover"
+      v-if="!isMobileViewport"
       :tabs="TABS"
       :active-tab="activeTab"
       :collapsed="sidebarCollapsed"
@@ -157,7 +136,7 @@ onUnmounted(() => {
     ></div>
 
     <AppSidebar
-      v-if="isMobileViewport && !settingsTakeover"
+      v-if="isMobileViewport"
       :tabs="TABS"
       :active-tab="activeTab"
       :collapsed="false"
@@ -171,29 +150,28 @@ onUnmounted(() => {
       @toggle-collapse="handleSidebarToggle"
     />
 
-    <SettingsView v-if="settingsTakeover" />
-
-    <section v-else class="h-full min-h-0 overflow-hidden">
-      <section class="relative grid h-full min-h-0 grid-rows-[auto_minmax(0,1fr)] gap-2 overflow-hidden p-2 sm:p-3">
+    <section class="app-main h-full min-h-0 min-w-0 overflow-hidden" :inert="isMobileViewport && mobileSidebarOpen">
+      <section class="relative grid h-full min-h-0 grid-rows-[auto_minmax(0,1fr)] overflow-hidden">
         <header
           v-if="hasConsoleAccess"
-          class="flex items-center gap-3 rounded-lg border border-[var(--line)] bg-[var(--topbar-bg)] px-4 py-2.5 shadow-[var(--soft-shadow)] sm:px-5"
+          class="app-topbar"
         >
           <button
-            v-if="isMobileViewport"
+            v-if="isMobileViewport || sidebarCollapsed"
+            ref="menuButton"
             type="button"
             class="icon-btn size-9 shrink-0"
+            :aria-expanded="isMobileViewport ? mobileSidebarOpen : !sidebarCollapsed"
+            aria-controls="app-sidebar"
             aria-label="打开侧栏"
-            @click="mobileSidebarOpen = true"
+            @click="handleSidebarToggle"
           >
-            <AppNavIcon name="menu" />
+            <AppNavIcon name="panel-left" />
           </button>
 
           <div class="min-w-0 flex-1">
-            <h1 class="truncate text-lg font-semibold text-[var(--ink)] sm:text-xl">{{ activeTabMeta.label }}</h1>
-            <p v-if="!isMobileViewport" class="mt-0.5 truncate text-xs font-semibold text-[var(--muted)]">
-              {{ activeTabMeta.subtitle }}
-            </p>
+            <h1 class="topbar-title">{{ activeTabMeta.label }}</h1>
+
           </div>
 
           <div class="flex shrink-0 items-center gap-2">
@@ -204,48 +182,12 @@ onUnmounted(() => {
             >
               需重启生效
             </span>
-            <span
-              v-if="downloadClientOnline === false"
-              class="inline-flex items-center gap-1.5 rounded-full border border-[var(--err-soft)] bg-[var(--err-soft)] px-3 py-1.5 text-xs font-medium text-[var(--err)]"
-              :title="`${downloadClientLabel} 离线，请检查设置`"
-            >
-              <span class="size-1.5 animate-pulse rounded-full bg-[var(--err)]"></span>
-              {{ downloadClientLabel }} 离线
+            <span v-if="downloadClientOnline !== null" class="download-status" :class="downloadClientOnline ? 'online' : 'offline'" :title="`${downloadClientLabel} ${downloadClientOnline ? '在线' : '离线，请检查设置'}`">
+              <span class="connection-dot" aria-hidden="true" />
+              <span class="download-client-label">{{ downloadClientLabel }}</span>{{ downloadClientOnline ? '在线' : '离线' }}
             </span>
 
-            <div ref="themeMenuRef" class="relative">
-              <button
-                type="button"
-                class="icon-btn"
-                :class="{ 'border-[var(--accent)] text-[var(--ink)]': themeMenuOpen }"
-                :title="`界面主题：${activeThemeLabel}`"
-                aria-haspopup="menu"
-                :aria-expanded="themeMenuOpen"
-                @click="themeMenuOpen = !themeMenuOpen"
-              >
-                <AppNavIcon :name="themeIconName" />
-              </button>
-              <div
-                v-if="themeMenuOpen"
-                class="absolute right-0 top-[calc(100%+0.375rem)] z-40 w-32 rounded-md border border-[var(--line)] bg-[var(--card)] p-1 shadow-[var(--strong-shadow)]"
-                role="menu"
-              >
-                <button
-                  v-for="option in THEME_OPTIONS"
-                  :key="option.key"
-                  type="button"
-                  role="menuitemradio"
-                  :aria-checked="themeMode === option.key"
-                  class="flex w-full items-center gap-2 rounded px-2.5 py-1.5 text-left text-sm transition"
-                  :class="themeMode === option.key ? 'bg-[var(--panel)] font-medium text-[var(--ink)]' : 'text-[var(--muted)] hover:bg-[var(--panel)] hover:text-[var(--ink)]'"
-                  @click="pickTheme(option.key)"
-                >
-                  <AppNavIcon :name="option.icon" class="size-4 shrink-0" />
-                  <span class="flex-1">{{ option.label }}</span>
-                  <span v-if="themeMode === option.key" class="text-[var(--accent)]">✓</span>
-                </button>
-              </div>
-            </div>
+            <button type="button" class="icon-btn topbar-repo" title="GitHub 源码仓库" aria-label="GitHub 源码仓库" @click="openExternalLink('https://github.com/SuInk/bgmcat')"><AppNavIcon name="external" /></button>
             <button type="button" class="icon-btn" title="刷新数据" :disabled="refreshing" @click="refreshCurrentView">
               <AppNavIcon name="refresh" :class="{ 'animate-spin': refreshing }" />
             </button>
@@ -255,7 +197,7 @@ onUnmounted(() => {
           </div>
         </header>
 
-        <div class="h-full min-h-0 overflow-hidden">
+        <div class="app-content h-full min-h-0 overflow-hidden">
           <section
             v-if="!authChecked"
             class="grid h-full place-items-center rounded-lg border border-[var(--line)] bg-[var(--table-bg)] p-8"
@@ -315,6 +257,7 @@ onUnmounted(() => {
             <DownloadsView v-else-if="activeTab === 'downloads'" />
             <LogsView v-else-if="activeTab === 'logs'" />
             <IntegrationsView v-else-if="activeTab === 'integrations'" />
+            <SettingsView v-else-if="activeTab === 'settings'" />
           </template>
         </div>
       </section>
@@ -337,6 +280,15 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
+.app-shell { transition:grid-template-columns .2s ease; }
+.app-topbar { position:relative; z-index:30; display:flex; align-items:center; gap:12px; height:56px; padding:0 24px; border-bottom:1px solid var(--line); background:color-mix(in srgb,var(--shell-bg) 82%,transparent); backdrop-filter:blur(10px); }
+.download-status { display:inline-flex; align-items:center; gap:6px; padding:4px 8px; border-radius:8px; font-size:11px; white-space:nowrap; }.download-status.online { color:var(--ok); background:var(--ok-soft); }.download-status.offline { color:var(--err); background:var(--err-soft); }.connection-dot { width:6px; height:6px; border-radius:50%; background:currentColor; }
+.topbar-title { font-size:16px; font-weight:650; color:var(--ink); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.app-topbar .icon-btn { border:none; background:transparent; box-shadow:none; width:32px; height:32px; border-radius:8px; }
+.app-topbar .icon-btn:hover { background:var(--panel); }
+.app-content { padding:18px clamp(16px, 2vw, 32px) 20px; }
+@media(max-width:640px) { .app-topbar { padding:0 12px; gap:8px; }.app-content { padding:12px 10px; }.topbar-repo, .download-client-label { display:none; } }
+
 .sync-overlay-enter-active,
 .sync-overlay-leave-active {
   transition: opacity 200ms ease;
