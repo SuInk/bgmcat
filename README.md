@@ -44,19 +44,21 @@ docker compose logs bgmcat
 
 Release 提供 Linux amd64/arm64、macOS Intel/Apple Silicon、Windows amd64 五个平台的完整包，包含程序、启动脚本、文档和许可证，以及统一的 `SHA256SUMS`、`latest.json`。网页已嵌入程序，不需要另行部署。
 
-**私有仓库**：先 `gh auth login` 并取得仓库读取权限，再在已克隆的项目目录执行：
+**私有仓库**：先 `gh auth login` 并取得仓库读取权限，无需克隆源码即可执行（须先发布 Release）：
 
 ```sh
-sh scripts/install.sh --repository SuInk/bgmcat --private
+gh api repos/SuInk/bgmcat/contents/scripts/install.sh -H 'Accept: application/vnd.github.raw+json' | sh -s -- --private --start
 ```
 
 Windows PowerShell：
 
 ```powershell
-.\scripts\install.ps1 -Repository SuInk/bgmcat -Private
+$installer = gh api repos/SuInk/bgmcat/contents/scripts/install.ps1 -H 'Accept: application/vnd.github.raw+json'
+if ($LASTEXITCODE -ne 0) { throw '下载安装脚本失败' }
+& ([scriptblock]::Create(($installer -join "`n"))) -Private -Start
 ```
 
-安装器只安装程序、校验 SHA-256，保留旧程序副本和应用数据；不会自行启动或重启服务。升级时使用同一条命令，之后重启服务。默认安装位置、指定版本、公开仓库安装及手动解压见[安装文档](docs/install.md)。
+安装器自动选择平台、校验 SHA-256 并安装 aria2，保留旧程序副本和应用数据。`--start` / `-Start` 可安装后在当前终端启动，Ctrl+C 停止；升级前先停止原服务，再运行安装命令。默认安装位置、指定版本、公开仓库安装及手动解压见[安装文档](docs/install.md)。
 
 ## Google Drive 与空间占用
 

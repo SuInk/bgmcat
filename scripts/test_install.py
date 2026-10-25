@@ -25,6 +25,7 @@ class InstallerTests(unittest.TestCase):
         osname = 'macos' if platform.system() == 'Darwin' else 'linux'
         arch = 'arm64' if platform.machine() in ('arm64', 'aarch64') else 'amd64'
         name = f'bgmcat-{osname}-{arch}'
+        self.name = name
         self.archive = self.root / (name + '.tar.gz')
         with tarfile.open(self.archive, 'w:gz') as archive:
             body = b'#!/bin/sh\necho 0.2.0\n'
@@ -32,6 +33,10 @@ class InstallerTests(unittest.TestCase):
             entry.size = len(body)
             entry.mode = 0o755
             archive.addfile(entry, io.BytesIO(body))
+            helper = b'#!/bin/sh\necho dependency-helper-ran\n'
+            entry = tarfile.TarInfo(name + '/scripts/install-aria2.sh')
+            entry.size = len(helper)
+            archive.addfile(entry, io.BytesIO(helper))
         self.checksum = self.root / 'SHA256SUMS'
         self.checksum.write_text(hashlib.sha256(self.archive.read_bytes()).hexdigest() + '  ' + self.archive.name + '\n')
 
@@ -44,6 +49,14 @@ class InstallerTests(unittest.TestCase):
         self.assertEqual(subprocess.check_output([str(self.old), '--version'], text=True).strip(), '0.2.0')
         self.assertEqual((self.dest / 'bgmcat.previous').read_text(), 'old version')
         self.assertEqual(self.data.read_text(), 'existing data')
+
+    def test_stdin_install_without_checkout_and_start(self):
+        result = subprocess.run(['sh', '-s', '--', '--local-dir', str(self.root), '--dir', str(self.dest), '--start'],
+                                input=SCRIPT.read_text(), cwd=self.root, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('dependency-helper-ran', result.stdout)
+        self.assertIn('Starting bgmcat', result.stdout)
+        self.assertEqual(result.stdout.count('0.2.0'), 2)
 
     def test_corruption_leaves_installation_unchanged(self):
         with self.archive.open('ab') as stream:

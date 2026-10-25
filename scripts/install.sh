@@ -7,6 +7,7 @@ dest=${ANIME_RSS_BIN_DIR:-"$HOME/.local/bin"}
 local_dir=
 private=false
 skip_aria2=false
+start=false
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --repository|--version|--dir|--local-dir)
@@ -14,8 +15,9 @@ while [ "$#" -gt 0 ]; do
       case "$1" in --repository) repo=$2;; --version) version=$2;; --dir) dest=$2;; --local-dir) local_dir=$2;; esac
       shift 2;;
     --private) private=true; shift;;
+    --start) start=true; shift;;
     --skip-aria2) skip_aria2=true; shift;;
-    --help|-h) echo 'Usage: sh install.sh --repository OWNER/REPO [--private] [--version vX.Y.Z] [--dir PATH] [--local-dir RELEASE_DIR] [--skip-aria2]'; exit 0;;
+    --help|-h) echo 'Usage: sh install.sh --repository OWNER/REPO [--private] [--version vX.Y.Z] [--dir PATH] [--local-dir RELEASE_DIR] [--skip-aria2] [--start]'; exit 0;;
     *) echo "Unknown option: $1" >&2; exit 1;;
   esac
 done
@@ -53,7 +55,15 @@ entry="bgmcat-$platform-$arch/bgmcat"
 mkdir "$tmp/extract"
 tar -xzf "$tmp/$asset" -C "$tmp/extract" "$entry"
 [ -f "$tmp/extract/$entry" ] && [ ! -L "$tmp/extract/$entry" ] || { echo 'Invalid package binary' >&2; exit 1; }
-if [ "$skip_aria2" != true ]; then sh "$(dirname "$0")/install-aria2.sh"; fi
+if [ "$skip_aria2" != true ]; then
+  helper="bgmcat-$platform-$arch/scripts/install-aria2.sh"
+  tar -xzf "$tmp/$asset" -C "$tmp/extract" "$helper"
+  [ -f "$tmp/extract/$helper" ] && [ ! -L "$tmp/extract/$helper" ] || { echo 'Invalid package dependency installer' >&2; exit 1; }
+  if [ -z "${BGMCAT_ARIA2_PATH:-}" ] && [ -x "$dest/aria2c" ]; then
+    BGMCAT_ARIA2_PATH="$dest/aria2c"; export BGMCAT_ARIA2_PATH
+  fi
+  sh "$tmp/extract/$helper"
+fi
 mkdir -p "$dest"
 stage=$(mktemp "$dest/.bgmcat-install.XXXXXX")
 trap 'rm -rf "$tmp"; rm -f "${stage:-}"' EXIT HUP INT TERM
@@ -61,4 +71,10 @@ install -m 755 "$tmp/extract/$entry" "$stage"
 "$stage" --version
 if [ -f "$dest/bgmcat" ]; then cp -p "$dest/bgmcat" "$dest/bgmcat.previous"; fi
 mv -f "$stage" "$dest/bgmcat"
-printf 'Installed: %s/bgmcat\nStart (or restart your existing service) manually. Data is preserved.\n' "$dest"
+printf 'Installed: %s/bgmcat\nData is preserved.\n' "$dest"
+if [ "$start" = true ]; then
+  echo 'Starting bgmcat in this terminal. Press Ctrl+C to stop. Use the address printed below.'
+  "$dest/bgmcat"
+else
+  printf 'Start: "%s/bgmcat"\n' "$dest"
+fi

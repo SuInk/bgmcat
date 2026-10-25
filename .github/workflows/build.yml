@@ -53,6 +53,8 @@ jobs:
         shell: powershell
         env:
           GH_TOKEN: ${{ github.token }}
+          # The test seeder caches mmap handles; classic IO allows Windows fixture cleanup.
+          TORRENT_STORAGE_DEFAULT_FILE_IO: classic
         run: |
           gh release download release-1.37.0 --repo aria2/aria2 --pattern aria2-1.37.0-win-64bit-build1.zip --dir $env:RUNNER_TEMP
           if ($LASTEXITCODE -ne 0) { throw 'aria2 download failed' }

@@ -1155,7 +1155,7 @@ async function runClearPlaybackCache(): Promise<void> {
                 </label>
                 <label class="settings-title" for="drive-network-candidates">自定义候选 IP（可选）</label>
                 <textarea id="drive-network-candidates" v-model="driveCandidates" class="settings-input settings-input-wide" rows="3" placeholder="每行一个公网 IP，支持 # 注释。留空使用 DNS、历史记录和内置候选。最多 256 个。" />
-                <div class="flex items-center gap-3">
+                <div class="flex flex-wrap items-center gap-3 break-all">
                   <button class="settings-secondary-button" :disabled="driveScanning" @click="scanCloudNetwork">{{ driveScanning ? '正在探测，最长约 60 秒…' : '扫描可用 IP' }}</button>
                   <span class="settings-desc">{{ driveNetwork?.enabled ? (driveNetwork.selectedIP ? `当前选择：${driveNetwork.selectedIP}` : '当前使用系统网络：没有有效候选') : '直连未启用，当前使用系统网络' }}</span>
                 </div>

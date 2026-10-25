@@ -843,7 +843,7 @@ watch(
 
         <!-- 空列表时主操作交给空态卡片，不在工具栏摆一排永远禁用的按钮 -->
         <div v-if="downloads.length" class="toolbar-row flex-wrap">
-          <label class="search-field min-w-[14rem]">
+          <label class="search-field w-full sm:w-auto sm:min-w-[14rem]">
             <AppNavIcon name="search" aria-hidden="true" />
             <input v-model="searchQuery" type="search" aria-label="搜索下载任务" placeholder="搜索番剧、集数、GID 或字幕组" />
           </label>
@@ -859,7 +859,7 @@ watch(
             <span class="size-1.5 animate-pulse rounded-full bg-current"></span>
             正在查询番剧详情…
           </span>
-          <div class="ml-auto flex shrink-0 items-center gap-2">
+          <div class="ml-auto flex flex-wrap items-center justify-end gap-2">
             <button
               type="button"
               class="btn-ghost px-3 py-1.5 text-sm font-semibold"
@@ -1155,13 +1155,13 @@ watch(
       class="fixed inset-0 z-50 grid place-items-center bg-black/55 p-4"
       @click.self="manualComposerOpen = false"
     >
-      <section class="grid w-full max-w-2xl gap-5 rounded-lg border border-[var(--line)] bg-[var(--card)] p-6 shadow-[var(--strong-shadow)]">
+      <section class="grid max-h-[calc(100dvh-2rem)] overflow-y-auto w-full max-w-2xl gap-5 rounded-lg border border-[var(--line)] bg-[var(--card)] p-6 shadow-[var(--strong-shadow)]">
         <div class="flex items-start justify-between gap-4">
           <div class="grid gap-2">
             <h3 class="text-lg font-semibold text-[var(--ink)]">添加下载链接</h3>
             <p class="text-sm text-[var(--muted)]">支持磁力、.torrent 地址和普通 HTTP(S) 直链。</p>
           </div>
-          <button type="button" class="btn-ghost rounded-lg px-4 py-2 text-sm font-semibold" @click="manualComposerOpen = false">关闭</button>
+          <button type="button" class="btn-ghost shrink-0 whitespace-nowrap rounded-lg px-4 py-2 text-sm font-semibold" @click="manualComposerOpen = false">关闭</button>
         </div>
 
         <div class="grid gap-3">
@@ -1207,13 +1207,13 @@ watch(
       class="fixed inset-0 z-50 grid place-items-center bg-black/55 p-4"
       @click.self="manualOptionsOpen = false"
     >
-      <section class="grid w-full max-w-xl gap-5 rounded-lg border border-[var(--line)] bg-[var(--card)] p-6 shadow-[var(--strong-shadow)]">
+      <section class="grid max-h-[calc(100dvh-2rem)] overflow-y-auto w-full max-w-xl gap-5 rounded-lg border border-[var(--line)] bg-[var(--card)] p-6 shadow-[var(--strong-shadow)]">
         <div class="flex items-start justify-between gap-4">
           <div class="grid gap-2">
             <h3 class="text-lg font-semibold text-[var(--ink)]">更多下载选项</h3>
             <p class="text-sm text-[var(--muted)]">当前识别：{{ sourceTypeLabel(inferredManualSourceType) }}</p>
           </div>
-          <button type="button" class="btn-ghost rounded-lg px-4 py-2 text-sm font-semibold" @click="manualOptionsOpen = false">关闭</button>
+          <button type="button" class="btn-ghost shrink-0 whitespace-nowrap rounded-lg px-4 py-2 text-sm font-semibold" @click="manualOptionsOpen = false">关闭</button>
         </div>
 
         <div class="grid gap-3">
@@ -1246,7 +1246,7 @@ watch(
       class="fixed inset-0 z-50 grid place-items-center bg-black/55 p-4"
       @click.self="closeDeleteDialog"
     >
-      <section class="grid w-full max-w-lg gap-5 rounded-lg border border-[var(--line)] bg-[var(--card)] p-6 shadow-[var(--strong-shadow)]">
+      <section class="grid max-h-[calc(100dvh-2rem)] overflow-y-auto w-full max-w-lg gap-5 rounded-lg border border-[var(--line)] bg-[var(--card)] p-6 shadow-[var(--strong-shadow)]">
         <div class="grid gap-2">
           <h3 class="break-words text-lg font-semibold text-[var(--ink)]">
             {{ batchDeleteCandidates.length ? `删除 ${batchDeleteCandidates.length} 个下载任务` : "删除下载任务" }}
