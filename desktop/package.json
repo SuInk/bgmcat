@@ -1,0 +1,9 @@
+{
+  "name": "bgmcat-desktop",
+  "productName": "Bangumi Cat",
+  "version": "0.2.0",
+  "description": "猫追番桌面客户端",
+  "main": "main.cjs",
+  "author": "SuInk",
+  "license": "AGPL-3.0-only"
+}

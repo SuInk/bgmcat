@@ -34,15 +34,23 @@ git push origin v0.2.0
 
 `.github/workflows/build.yml` 在 PR 和分支 push 上进行验证，在版本标签上额外发布。校验不通过时不会进入 Release 作业。Release 使用手写中文说明；不会只拿自动生成的提交列表当正文。
 
-预期 7 项 Release 资产：五个平台完整包、`SHA256SUMS`、`latest.json`。不上传独立裸二进制。版本清单 schema 1 提供版本、标签、预发布状态、各平台文件名/大小/SHA-256；这是发布元数据，目前未接入 WebUI 自更新器。
+服务版预期 7 项 Release 资产：五个平台完整包、`SHA256SUMS`、`latest.json`。不上传独立裸二进制。版本清单 schema 1 提供版本、标签、预发布状态、各平台文件名/大小/SHA-256；这是发布元数据，目前未接入 WebUI 自更新器。
 
 发布说明的安装命令使用 `SuInk/bgmcat` 并注明私有下载需要授权。无需为源码包捏造可下载的 Release URL。
 
 ## 发布后核验
 
-- 检查工作流全部成功、Release 非 Draft、Prerelease 标记正确、7 项资产齐全。
+- 检查工作流全部成功、Release 非 Draft、Prerelease 标记正确、服务版和桌面版资产齐全。
 - 实际下载 macOS ARM64 包和 SHA256SUMS，在本机重新计算并验证。
 - 解压检查启动脚本、文档和二进制，运行 `--version`，在隔离数据目录启动检查健康接口。
 - Linux 与 Windows 在相应平台做原生启动和安装测试，尤其是升级时文件占用行为；交叉编译不能代替运行验证。
 - 若启用 GHCR，检查对应版本和通道标签的镜像确实存在，并实测拉取。
 - 验证完成后才宣称发布成功。保留历史 Release，不覆盖旧版本资产；修复发布使用新版本。
+
+## 桌面发布
+
+默认用户入口是 Electron 桌面安装包，服务版继续保留。`desktop` CI 在 macOS ARM64、macOS Intel、Windows x64、Linux x64 原生构建，包含 Go 后端生命周期测试。桌面作业失败时禁止发布 Release。产物合并进入相同 Release，桌面安装包摘要追加到 SHA256SUMS；现有 latest.json 仍仅描述服务版，不是桌面更新源。
+
+`npm run desktop:prepare` 从 VERSION 同步桌面 manifest 并生成本机后端；`npm run desktop:test` 验证真实子进程认证、跨启动 token 持久化、退出清理和外链/IPC 地址策略。本地还需实际打开安装后的应用，验证无 token 登录页、重新打开、退出释放端口；CI 的后端测试不等于图形界面验证。
+
+当前桌面产物没有正式签名/公证，CI 明确禁用身份自动发现。未来面向正式分发需配置签名并增加签名验收。桌面包不含 aria2（deb 声明系统依赖），发布说明必须保留安装依赖说明。

@@ -36,6 +36,7 @@
 | Cloudflare Tunnel / `trycloudflare.com` 或用户绑定域名 | 可选远程访问 | 本地使用不需要。临时隧道地址不适合作为永久服务地址。 |
 | Homebrew、apt/dnf/pacman/apk、winget 的软件源 | 安装 aria2 等依赖 | 安装阶段需要；装好后不参与页面加载。 |
 | 用户配置的 Ollama 地址（默认 `127.0.0.1:11434`） | 可选 AI 模型查询及聊天；远程地址由用户配置 | 不参与番剧信息和首屏加载。 |
+| Electron 官方 GitHub Release、electron-builder 工具资产 | 桌面构建时下载运行时和打包工具 | 仅构建需要；已安装桌面包启动不需要在线下载 Electron。 |
 | npm、Go 模块源、容器基础镜像仓库 | 从源码构建 | 发布包运行不需要。 |
 
 aria2、FFmpeg、qBittorrent 是本地或用户自建组件，不是固定在线信息服务。gdirect、rclone、Diana 也不是本应用运行所需的在线服务。

@@ -1,6 +1,6 @@
 # Go 版本依赖说明
 
-Go Release 压缩包不分发 Electron、aria2、gdirect 或 rclone；安装器通过系统包管理器安装 aria2，Docker 镜像包含发行版 aria2。下面保留原项目的许可记录供来源追溯，其中“随包附带”等描述仅适用于原 Electron 构建。
+Go Release 压缩包不分发 Electron、aria2、gdirect 或 rclone；安装器通过系统包管理器安装 aria2，Docker 镜像包含发行版 aria2。新版 `bgmcat-desktop` 另行分发 Electron 45.0.0（MIT，含 Chromium 等第三方许可）和 Go 后端，不捆绑 aria2、FFmpeg 或 cloudflared。Electron 的许可文件随运行时保留。electron-builder 26.18.0（MIT）仅用于构建。下面保留原项目的许可记录供来源追溯，其中旧版附带外部程序的描述不适用于当前桌面包。
 
 当前 Go 版直接依赖：
 
