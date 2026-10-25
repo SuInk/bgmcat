@@ -42,9 +42,9 @@ func publicDriveIP(value string) bool {
 	return true
 }
 
-// Override only the TCP destination. The URL, Host, TLS SNI and certificate
-// verification still use the real Google hostname. OAuth uses a.http unchanged.
-func driveIPTransport(ip string) *http.Transport {
+// Pin the TCP destination. Optional SNI policy is independent of certificate identity.
+// OAuth uses a.http unchanged.
+func driveIPTransport(ip string, policies ...driveTLSPolicy) *http.Transport {
 	tr := http.DefaultTransport.(*http.Transport).Clone()
 	tr.Proxy = nil
 	dialer := &net.Dialer{Timeout: 3 * time.Second, KeepAlive: 30 * time.Second}
@@ -60,6 +60,9 @@ func driveIPTransport(ip string) *http.Transport {
 	}
 	tr.TLSHandshakeTimeout = 3 * time.Second
 	tr.ResponseHeaderTimeout = 30 * time.Second
+	if len(policies) > 0 && policies[0].Mode != "original" {
+		configureDriveTLS(tr, policies[0], nil)
+	}
 	return tr
 }
 
@@ -73,7 +76,7 @@ func probeDrive(ctx context.Context, client *http.Client) (string, error) {
 	}
 	res, err := get(driveBase + "/about?fields=user")
 	if err != nil {
-		return "", errors.New("Drive API 连接或 TLS 校验失败")
+		return "", fmt.Errorf("Drive API 连接或 TLS 校验失败：%w", err)
 	}
 	var body struct {
 		Error struct {
@@ -87,7 +90,7 @@ func probeDrive(ctx context.Context, client *http.Client) (string, error) {
 	}
 	res, err = get("https://drive.usercontent.google.com/download?id=0B9P1L--7Wd2vU3VUVlFnbTgtS2c&export=download&confirm=t")
 	if err != nil {
-		return "", errors.New("Drive 下载端点连接或 TLS 校验失败")
+		return "", fmt.Errorf("Drive 下载端点连接或 TLS 校验失败：%w", err)
 	}
 	defer res.Body.Close()
 	if res.StatusCode == 403 || res.StatusCode == 404 {
@@ -128,21 +131,26 @@ func (a *App) driveNetworkStatus() Obj {
 	if state == nil {
 		state = Obj{"enabled": false, "results": []any{}}
 	}
+	policy := drivePolicy(state)
+	state["sniMode"], state["sniHost"] = policy.Mode, policy.ServerName
 	state["selectedIP"] = selectedDriveIP(state, time.Now())
 	return state
 }
 func (a *App) driveTransport() (http.RoundTripper, string) {
 	a.driveNetworkMu.Lock()
 	defer a.driveNetworkMu.Unlock()
-	ip := str(a.driveNetworkStatus()["selectedIP"])
+	state := a.driveNetworkStatus()
+	ip := str(state["selectedIP"])
+	policy := drivePolicy(state)
 	if ip == "" {
 		return a.http.Transport, ""
 	}
-	if a.driveIP != ip {
+	if a.driveIP != ip || a.driveTLSKey != policy.key() {
 		if a.driveIPHTTP != nil {
 			a.driveIPHTTP.CloseIdleConnections()
 		}
-		a.driveIP, a.driveIPHTTP = ip, driveIPTransport(ip)
+		a.driveIP, a.driveIPHTTP = ip, driveIPTransport(ip, policy)
+		a.driveTLSKey = policy.key()
 	}
 	return a.driveIPHTTP, ip
 }
@@ -206,7 +214,9 @@ func (a *App) driveNetworkRoutes() {
 	a.handle("GET /api/cloud/network", func(w http.ResponseWriter, r *http.Request) error { ok(w, a.driveNetworkStatus()); return nil })
 	a.handle("PATCH /api/cloud/network", func(w http.ResponseWriter, r *http.Request) error {
 		var input struct {
-			Enabled bool `json:"enabled"`
+			Enabled *bool   `json:"enabled"`
+			SNIMode *string `json:"sniMode"`
+			SNIHost *string `json:"sniHost"`
 		}
 		if err := json.NewDecoder(io.LimitReader(r.Body, 1024)).Decode(&input); err != nil {
 			return err
@@ -214,7 +224,36 @@ func (a *App) driveNetworkRoutes() {
 		a.driveNetworkMu.Lock()
 		defer a.driveNetworkMu.Unlock()
 		state := a.driveNetworkStatus()
-		state["enabled"] = input.Enabled
+		oldPolicy := drivePolicy(state)
+		if input.Enabled != nil {
+			state["enabled"] = *input.Enabled
+		}
+		if input.SNIMode != nil {
+			state["sniMode"] = *input.SNIMode
+		}
+		if input.SNIHost != nil {
+			state["sniHost"] = strings.ToLower(strings.TrimSpace(*input.SNIHost))
+		}
+		policy := drivePolicy(state)
+		if policy.Mode != "custom" {
+			state["sniHost"] = ""
+			policy.ServerName = ""
+		}
+		if err := policy.validate(); err != nil {
+			return err
+		}
+		if policy != oldPolicy {
+			state["results"] = []any{}
+			delete(state, "scannedAt")
+			state["candidateCount"] = 0
+			state["partial"] = false
+		}
+		if a.driveIPHTTP != nil {
+			a.driveIPHTTP.CloseIdleConnections()
+		}
+		a.driveIPHTTP = nil
+		a.driveIP = ""
+		a.driveTLSKey = ""
 		if err := a.Store.Put("config", "drive-network", state); err != nil {
 			return err
 		}
@@ -278,8 +317,9 @@ func (a *App) driveNetworkRoutes() {
 				}
 			}
 		}
+		policy := drivePolicy(a.driveNetworkStatus())
 		rows := scanDriveIPs(ctx, candidates, func(ctx context.Context, ip string) (string, error) {
-			tr := driveIPTransport(ip)
+			tr := driveIPTransport(ip, policy)
 			defer tr.CloseIdleConnections()
 			client := &http.Client{Transport: tr, Timeout: 5 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 			return probeDrive(ctx, client)
@@ -290,6 +330,9 @@ func (a *App) driveNetworkRoutes() {
 		a.driveNetworkMu.Lock()
 		defer a.driveNetworkMu.Unlock()
 		state := a.driveNetworkStatus()
+		if drivePolicy(state) != policy {
+			return errors.New("扫描期间 SNI 设置已更改，请重新扫描")
+		}
 		state["results"] = rows
 		state["scannedAt"] = now()
 		state["partial"] = len(rows) < len(candidates)

@@ -51,6 +51,7 @@ type App struct {
 	driveNetworkMu sync.Mutex
 	driveScanMu    sync.Mutex
 	driveIP        string
+	driveTLSKey    string
 	driveIPHTTP    *http.Transport
 	driveMu        sync.Mutex
 	oauthMu        sync.Mutex

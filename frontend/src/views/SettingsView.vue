@@ -64,21 +64,37 @@ import { selectTab } from "../stores/boot";
 
 const driveNetwork = ref<DriveNetworkStatus | null>(null);
 const driveCandidates = ref("");
+const driveSNIMode = ref<DriveNetworkStatus["sniMode"]>("original");
+const driveSNIHost = ref("");
+function applyDriveNetwork(value: DriveNetworkStatus) {
+  driveNetwork.value = value;
+  driveSNIMode.value = value.sniMode;
+  driveSNIHost.value = value.sniHost;
+}
+async function saveDriveTLS() {
+  driveNetworkSaving.value = true;
+  try { applyDriveNetwork(await setDriveNetwork({ sniMode: driveSNIMode.value, sniHost: driveSNIHost.value })); }
+  catch (error) { toastError(error, "保存 SNI 设置失败"); }
+  finally { driveNetworkSaving.value = false; }
+}
 const driveScanning = ref(false);
 const driveNetworkSaving = ref(false);
 async function refreshDriveNetwork() {
-  try { driveNetwork.value = await getDriveNetwork(); } catch (error) { toastError(error, "读取云盘网络状态失败"); }
+  try { applyDriveNetwork(await getDriveNetwork()); } catch (error) { toastError(error, "读取云盘网络状态失败"); }
 }
 async function toggleDriveNetwork(event: Event) {
   const input = event.target as HTMLInputElement;
   driveNetworkSaving.value = true;
-  try { driveNetwork.value = await setDriveNetwork(input.checked); }
+  try { driveNetwork.value = await setDriveNetwork({ enabled: input.checked }); }
   catch (error) { input.checked = driveNetwork.value?.enabled ?? false; toastError(error, "保存云盘网络设置失败"); }
   finally { driveNetworkSaving.value = false; }
 }
 async function scanCloudNetwork() {
   driveScanning.value = true;
-  try { driveNetwork.value = await scanDriveNetwork(driveCandidates.value); }
+  try {
+    applyDriveNetwork(await setDriveNetwork({ sniMode: driveSNIMode.value, sniHost: driveSNIHost.value }));
+    driveNetwork.value = await scanDriveNetwork(driveCandidates.value);
+  }
   catch (error) { toastError(error, "云盘 IP 扫描失败"); }
   finally { driveScanning.value = false; }
 }
@@ -1153,10 +1169,22 @@ async function runClearPlaybackCache(): Promise<void> {
                   <span><span class="settings-title">Google Drive IP 直连</span><span class="settings-desc">开启后，上传及云端播放使用最近 24 小时内探测最快的可用 IP；无可用地址时走系统网络。OAuth 授权仍走系统网络。</span></span>
                   <input type="checkbox" class="settings-switch" :checked="driveNetwork?.enabled ?? false" :disabled="!driveNetwork || driveNetworkSaving" @change="toggleDriveNetwork" />
                 </label>
+                <label class="settings-title" for="drive-sni-mode">TLS SNI 模式</label>
+                <select id="drive-sni-mode" v-model="driveSNIMode" class="settings-input settings-input-wide" :disabled="driveScanning || driveNetworkSaving">
+                  <option value="original">原始 Google 域名（默认）</option>
+                  <option value="none">不发送 SNI</option>
+                  <option value="custom">自定义 SNI 域名</option>
+                </select>
+                <input v-if="driveSNIMode === 'custom'" v-model="driveSNIHost" aria-label="自定义 SNI 域名" class="settings-input settings-input-wide" placeholder="仅域名，不含 https://、端口或路径" :disabled="driveScanning || driveNetworkSaving" />
+                <div class="flex flex-wrap items-center gap-3">
+                  <button class="settings-secondary-button" :disabled="!driveNetwork || driveScanning || driveNetworkSaving" @click="saveDriveTLS">保存 SNI 设置</button>
+                  <span class="settings-desc">修改模式会清除旧扫描结果；扫描按钮会先保存当前模式。</span>
+                </div>
+                <p class="settings-desc">仅修改握手发送的 SNI，证书链、有效期和真实 Google 域名仍会校验。扫描、上传及云端播放使用相同模式；OAuth 使用系统网络。不发送或自定义 SNI 不保证所有网络都可直连。</p>
                 <label class="settings-title" for="drive-network-candidates">自定义候选 IP（可选）</label>
                 <textarea id="drive-network-candidates" v-model="driveCandidates" class="settings-input settings-input-wide" rows="3" placeholder="每行一个公网 IP，支持 # 注释。留空使用 DNS、历史记录和内置候选。最多 256 个。" />
                 <div class="flex flex-wrap items-center gap-3 break-all">
-                  <button class="settings-secondary-button" :disabled="driveScanning" @click="scanCloudNetwork">{{ driveScanning ? '正在探测，最长约 60 秒…' : '扫描可用 IP' }}</button>
+                  <button class="settings-secondary-button" :disabled="!driveNetwork || driveScanning || driveNetworkSaving" @click="scanCloudNetwork">{{ driveScanning ? '正在探测，最长约 60 秒…' : '扫描可用 IP' }}</button>
                   <span class="settings-desc">{{ driveNetwork?.enabled ? (driveNetwork.selectedIP ? `当前选择：${driveNetwork.selectedIP}` : '当前使用系统网络：没有有效候选') : '直连未启用，当前使用系统网络' }}</span>
                 </div>
                 <p class="settings-desc">扫描在运行 bgmcat 的机器上进行。这里测量响应时间，不代表实际下载带宽；不会生成浏览器直链。TUN 代理仍可能接管网络。</p>

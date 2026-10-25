@@ -93,7 +93,17 @@ MCP 页面支持检测 Diana、接入、诊断与移除。默认寻找系统缓�
 - 同时最多探测 8 个地址，检查真实 Google 域名的 TLS 证书、Drive API 的预期 401 响应和一个公开测试文件。测试文件丢失或内容改变时会显示“仅通过 API 验证”，不承诺文件下载正常。
 - 扫描最长约 60 秒，超时保存已完成的部分结果。选择最近 24 小时验证成功、探测耗时最低的地址。到期需重新扫描；没有有效地址时自动使用系统网络。
 - 开启后作用于 Go 服务的 Drive API、上传及云端播放读取，OAuth 授权和令牌刷新继续走原来的系统网络。实际传输连接失败会标记该 IP 不可用，下次请求选择其他有效 IP 或系统网络；不会自动重放失败的上传请求。
-- 不修改系统 DNS，不关闭证书校验，不修改 SNI。直连模式不使用 HTTP 代理，但 TUN/VPN 仍可能接管连接。
+- 不修改系统 DNS。SNI 可选择原始域名（默认）、自定义 ASCII 域名或不发送；证书链、有效期、服务端用途和真实 Google 域名仍严格校验。直连模式不使用 HTTP 代理，但 TUN/VPN 仍可能接管连接。
 - 探测结果属于运行 bgmcat 的机器，响应耗时不是下载带宽测试；这项功能不会生成浏览器绕过 bgmcat 的播放直链。
 
 网络配置与扫描结果持久化在应用数据库中。API 为 `GET/PATCH /api/cloud/network` 和 `POST /api/cloud/network/scan`，均要求应用鉴权；扫描请求体示例 `{"candidates":""}`，开关请求体示例 `{"enabled":true}`。
+
+### Drive TLS / SNI 模式
+
+在“设置 → 下载 → Google Drive IP 直连 → TLS SNI 模式”选择模式。自定义时只填写域名，不含协议、端口、路径或通配符。点击“扫描可用 IP”会先保存当前模式，再使用同一模式探测；修改模式会清除旧结果并关闭旧连接池。已有进行中的请求仍按启动时模式完成。扫描中修改模式时，该次旧模式结果不会写回。
+
+可用结果选中后，Go 发出的 Drive API、上传及云端 Range 播放请求都会使用此模式。没有可用结果或关闭直连时，回到原系统网络，不应用自定义 SNI。OAuth 认证/刷新始终使用系统网络；独立 aria2c 的普通 HTTP/BT 下载不受此设置影响。
+
+这实现了 gdirect 补丁中独立控制 SNI 的同类行为，使用 Go 标准库，不链接修改后的 libaria2，也不模拟它的 OpenSSL 指纹。自定义模式通过独立 TLS 握手发送 SNI，并在 `VerifyConnection` 中用原始请求域名执行 `x509.Verify`；证书不可信、过期、域名不符或用途不符均拒绝。自定义/无 SNI 使用 HTTP/1.1，原始模式仍保留默认协议协商。
+
+参考：[gdirect 的 aria2 补丁](https://github.com/mizorewww/gdirect/blob/350d1bed3b5604c58c96dcd85f7106d4958aca2c/vendor/aria2-1.37.0.patch)、[Go VerifyConnection](https://pkg.go.dev/crypto/tls#Config.VerifyConnection)。本地握手测试验证的是 SNI 与证书校验行为；真实 Google 连接是否成功仍需在部署网络中扫描，不能从本地测试推断无代理可达性。

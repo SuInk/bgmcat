@@ -754,6 +754,8 @@ export const disconnectCloud = () => request<{ connected: boolean }>("/api/cloud
 
 export interface DriveNetworkStatus {
   enabled: boolean;
+  sniMode: "original" | "custom" | "none";
+  sniHost: string;
   selectedIP: string;
   scannedAt?: string;
   partial?: boolean;
@@ -761,5 +763,5 @@ export interface DriveNetworkStatus {
   results: Array<{ ip: string; available: boolean; latencyMs: number; verifiedAt: number; warning: string; error: string }>;
 }
 export const getDriveNetwork = () => request<DriveNetworkStatus>("/api/cloud/network");
-export const setDriveNetwork = (enabled: boolean) => request<DriveNetworkStatus>("/api/cloud/network", { method: "PATCH", body: JSON.stringify({ enabled }) });
+export const setDriveNetwork = (settings: Partial<Pick<DriveNetworkStatus, "enabled" | "sniMode" | "sniHost">>) => request<DriveNetworkStatus>("/api/cloud/network", { method: "PATCH", body: JSON.stringify(settings) });
 export const scanDriveNetwork = (candidates: string) => request<DriveNetworkStatus>("/api/cloud/network/scan", { method: "POST", body: JSON.stringify({ candidates }) }, 70000);
