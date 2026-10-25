@@ -765,3 +765,8 @@ export interface DriveNetworkStatus {
 export const getDriveNetwork = () => request<DriveNetworkStatus>("/api/cloud/network");
 export const setDriveNetwork = (settings: Partial<Pick<DriveNetworkStatus, "enabled" | "sniMode" | "sniHost">>) => request<DriveNetworkStatus>("/api/cloud/network", { method: "PATCH", body: JSON.stringify(settings) });
 export const scanDriveNetwork = (candidates: string) => request<DriveNetworkStatus>("/api/cloud/network/scan", { method: "POST", body: JSON.stringify({ candidates }) }, 70000);
+
+export interface CloudFolder { id: string; name: string }
+export const listCloudFolders = (parent: string, pageToken = "") => request<{ files: CloudFolder[]; nextPageToken?: string }>(`/api/cloud/folders?${new URLSearchParams({ parent, pageToken })}`);
+export const createCloudFolder = (parent: string) => request<CloudFolder>("/api/cloud/folders", { method: "POST", body: JSON.stringify({ parent }) });
+export const checkCloudFolder = (folderId: string) => request<{ verified: boolean }>("/api/cloud/check", { method: "POST", body: JSON.stringify({ folderId }) }, 45000);

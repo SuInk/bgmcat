@@ -22,6 +22,7 @@ import (
 const driveBase = "https://www.googleapis.com/drive/v3"
 
 func (a *App) cloudRoutes() {
+	a.cloudSetupRoutes()
 	a.handle("GET /api/cloud/status", func(w http.ResponseWriter, r *http.Request) error {
 		token, _ := a.Store.Get("secrets", "google")
 		ok(w, Obj{"connected": token != nil && str(token["refresh_token"]) != "", "configured": str(a.Settings()["googleClientId"]) != ""})
