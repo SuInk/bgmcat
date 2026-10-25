@@ -48,19 +48,19 @@
   --err: #d24343;
   --err-soft: color-mix(in srgb, var(--err) 12%, transparent);
 
-  --ink: #1b1f2a;
-  --muted: #7b8295;
-  --line: rgba(20, 26, 45, 0.1);
+  --ink: #251d23;
+  --muted: #857982;
+  --line: rgba(36, 24, 32, 0.1);
   --card: #ffffff;
-  --panel: #eef1f6;
-  --app-bg: #f6f7fa;
-  --sidebar-card: #fbfcfe;
-  --shell-bg: #f6f7fa;
-  --sidebar-bg: #fbfcfe;
+  --panel: #f4eff2;
+  --app-bg: #f7f4f5;
+  --sidebar-card: #fdfcfc;
+  --shell-bg: #f7f4f5;
+  --sidebar-bg: #fdfcfc;
   --topbar-bg: #ffffff;
   --input-bg: #ffffff;
   --table-bg: #ffffff;
-  --table-panel: #fbfcfe;
+  --table-panel: #fdfcfc;
   /* 中性薄底：卡片内的分层、悬停、进度槽。深色模式翻成白，
      不然黑压黑等于没画。高不透明度的黑(播放器遮罩)不在此列。 */
   --tint-1: rgba(20, 26, 45, 0.03);
@@ -89,19 +89,19 @@
   --err: #e8666a;
   --err-soft: color-mix(in srgb, var(--err) 16%, transparent);
 
-  --ink: #e9ecf7;
-  --muted: #8a90a6;
+  --ink: #f1eaef;
+  --muted: #8d8290;
   --line: rgba(226, 232, 255, 0.12);
-  --card: #1a1e30;
-  --panel: #232840;
-  --app-bg: #101320;
-  --sidebar-card: #151827;
-  --shell-bg: #101320;
-  --sidebar-bg: #151827;
-  --topbar-bg: #1a1e30;
-  --input-bg: #232840;
-  --table-bg: #151827;
-  --table-panel: #1a1e30;
+  --card: #201c26;
+  --panel: #2a2531;
+  --app-bg: #16131a;
+  --sidebar-card: #1a171f;
+  --shell-bg: #16131a;
+  --sidebar-bg: #1a171f;
+  --topbar-bg: #201c26;
+  --input-bg: #2a2531;
+  --table-bg: #1a171f;
+  --table-panel: #201c26;
   --tint-1: rgba(226, 232, 255, 0.03);
   --tint-2: rgba(226, 232, 255, 0.06);
   --tint-3: rgba(226, 232, 255, 0.09);

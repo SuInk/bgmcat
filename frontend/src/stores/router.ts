@@ -9,7 +9,7 @@ export const TABS: Array<{ key: TabKey; label: string; hint: string; icon: strin
   { key: "downloads", label: "下载管理", hint: "托管 aria2", icon: "📥", subtitle: "下载任务与在线播放" },
   { key: "logs", label: "运行日志", hint: "Logs", icon: "📋", subtitle: "后端服务运行记录" },
   { key: "integrations", label: "MCP", hint: "Agent", icon: "🔌", subtitle: "AI 客户端接入配置" },
-  { key: "settings", label: "其他设置", hint: "服务", icon: "⚙️", subtitle: "服务、下载与数据源设置" }
+  { key: "settings", label: "设置", hint: "服务", icon: "⚙️", subtitle: "服务、下载与数据源设置" }
 ];
 
 const TAB_PATH_BY_KEY: Record<TabKey, string> = {
