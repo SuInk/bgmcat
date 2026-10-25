@@ -309,6 +309,20 @@ export async function getAnimeDetail(animeId: string): Promise<AnimeDetail> {
   return request<AnimeDetail>(`/api/discovery/anime/${encodeURIComponent(animeId)}`, undefined, 20000);
 }
 
+// Keep hover and click on the same request. Limit retained summaries and expire them.
+const animeSummaries = new Map<string, { expires: number; value: Promise<AnimeDetail> }>();
+export function getAnimeSummary(animeId: string): Promise<AnimeDetail> {
+ const cached = animeSummaries.get(animeId);
+ if (cached && cached.expires > Date.now()) return cached.value;
+ const value = request<AnimeDetail>(`/api/discovery/anime/${encodeURIComponent(animeId)}?view=summary`, undefined, 10000);
+ const entry = { expires: Date.now() + 5 * 60 * 1000, value };
+ animeSummaries.delete(animeId);
+ animeSummaries.set(animeId, entry);
+ while (animeSummaries.size > 64) animeSummaries.delete(animeSummaries.keys().next().value!);
+ void value.catch(() => { if (animeSummaries.get(animeId) === entry) animeSummaries.delete(animeId); });
+ return value;
+}
+
 export interface MetadataPlatformInfo {
   id: string;
   displayName: string;

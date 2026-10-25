@@ -8,7 +8,7 @@ import type {
   MikanDownloadItem
 } from "@shared/index";
 
-import { createDownload, getAnimeDetail, listHomepageAnime, searchAnime } from "../api";
+import { createDownload, getAnimeDetail, getAnimeSummary, listHomepageAnime, searchAnime } from "../api";
 import { t } from "../i18n";
 import { isPlaceholderDownloadTitle } from "../lib/downloadTitle";
 import { broadcastWeekday, buildPaginationItems, clampPage } from "../lib/format";
@@ -390,34 +390,39 @@ export function closeAnimeDetail(): void {
 const PENDING_POLL_INTERVAL_MS = 2000;
 const PENDING_POLL_TIMEOUT_MS = 30_000;
 let pendingPollTimer: ReturnType<typeof setTimeout> | null = null;
+let pendingPollGeneration = 0;
 
 function stopPendingPoll(): void {
+  pendingPollGeneration += 1;
   if (pendingPollTimer) {
     clearTimeout(pendingPollTimer);
     pendingPollTimer = null;
   }
 }
 
-function schedulePendingRefill(animeId: string, deadline: number): void {
+function schedulePendingRefill(animeId: string, deadline: number, delay = PENDING_POLL_INTERVAL_MS): void {
   stopPendingPoll();
+  const generation = pendingPollGeneration;
   if (Date.now() >= deadline) {
     return;
   }
   pendingPollTimer = setTimeout(() => {
     pendingPollTimer = null;
-    if (selectedAnimeId.value !== animeId) {
+    if (selectedAnimeId.value !== animeId || generation !== pendingPollGeneration) {
       return;
     }
     void getAnimeDetail(animeId)
       .then((detail) => {
-        if (selectedAnimeId.value !== animeId) {
+        if (selectedAnimeId.value !== animeId || generation !== pendingPollGeneration) {
           return;
         }
-        // 只补资源，不动用户当前的筛选与翻页——补齐不该把人踢回第一页
+        // 补分集和资源，不重置用户当前的筛选与翻页。
         const current = animeDetail.value;
         if (current) {
           animeDetail.value = {
             ...current,
+            episodes: detail.episodes,
+            detailPending: detail.detailPending,
             downloads: detail.downloads,
             providerStatuses: detail.providerStatuses
           };
@@ -427,9 +432,12 @@ function schedulePendingRefill(animeId: string, deadline: number): void {
         }
       })
       .catch(() => {
-        // 补齐失败不打扰用户：首屏那批结果还在，下次再说
+        if (selectedAnimeId.value === animeId && generation === pendingPollGeneration && animeDetail.value) {
+          animeDetail.value = { ...animeDetail.value, detailPending: false, providerStatuses: (animeDetail.value.providerStatuses ?? []).map(status => ({ ...status, pending: false, ok: false, reason: "资源加载失败，请重新打开详情重试" })) };
+          animeDetailError.value = "番剧信息已显示，分集或下载资源加载失败，请重新打开详情重试。";
+        }
       });
-  }, PENDING_POLL_INTERVAL_MS);
+  }, delay);
 }
 
 function applyAnimeDetail(detail: AnimeDetail, fallbackImageUrl: string | null = null): void {
@@ -446,8 +454,8 @@ function applyAnimeDetail(detail: AnimeDetail, fallbackImageUrl: string | null =
     : null;
 
   stopPendingPoll();
-  if ((detail.providerStatuses ?? []).some((status) => status.pending)) {
-    schedulePendingRefill(detail.anime.animeId, Date.now() + PENDING_POLL_TIMEOUT_MS);
+  if (detail.detailPending || (detail.providerStatuses ?? []).some((status) => status.pending)) {
+    schedulePendingRefill(detail.anime.animeId, Date.now() + PENDING_POLL_TIMEOUT_MS, 0);
   }
 }
 
@@ -463,34 +471,17 @@ function createPendingAnimeDetail(anime: HomepageAnime): AnimeDetail {
   };
 }
 
-/**
- * 悬停预取。真正慢的是服务端那一轮跨源抓取(蜜柑一轮 6~10s),
- * 打一次详情接口就能把服务端缓存焐热,等用户真点进去往往已经是命中。
- *
- * 三道闸:同一部番只预取一次、同时最多 2 路在飞、结果整个丢掉不进 UI。
- * 预取失败一律咽掉——它只是省时间,不该冒出任何提示。
- */
-const prefetchedAnimeIds = new Set<string>();
+/** Only prefetch metadata; a click reuses the same bounded, expiring request cache. */
 let prefetchInFlight = 0;
 const PREFETCH_CONCURRENCY = 2;
-
 export function prefetchAnimeDetail(animeId: string): void {
-  if (!animeId || prefetchedAnimeIds.has(animeId) || prefetchInFlight >= PREFETCH_CONCURRENCY) {
-    return;
-  }
-  prefetchedAnimeIds.add(animeId);
-  prefetchInFlight += 1;
-  void getAnimeDetail(animeId)
-    .catch(() => {
-      // 预取失败就当没发生:让用户真点进去时走正常路径,该报错那时再报
-      prefetchedAnimeIds.delete(animeId);
-    })
-    .finally(() => {
-      prefetchInFlight -= 1;
-    });
+ if (!animeId || prefetchInFlight >= PREFETCH_CONCURRENCY) return;
+ prefetchInFlight += 1;
+ void getAnimeSummary(animeId).catch(() => {}).finally(() => { prefetchInFlight -= 1; });
 }
 
 export async function openAnimeDetail(anime: HomepageAnime): Promise<void> {
+  stopPendingPoll();
   selectedAnimeId.value = anime.animeId;
   detailLoadingAnimeId.value = anime.animeId;
   selectedSubgroup.value = "all";
@@ -501,19 +492,19 @@ export async function openAnimeDetail(anime: HomepageAnime): Promise<void> {
   animeDetailError.value = null;
   await withBusy(`anime-detail:${anime.animeId}`, async () => {
     try {
-      const detail = await getAnimeDetail(anime.animeId);
+      const detail = await getAnimeSummary(anime.animeId);
       // 用户可能在加载途中点了别的番剧，只应用最后一次点击的结果
       if (selectedAnimeId.value !== anime.animeId) {
         return;
       }
       applyAnimeDetail(detail, anime.imageUrl);
-      if (!animeDetailError.value) {
+      if (!animeDetailError.value && !detail.detailPending) {
         updateFeedback(
           t("home.syncMikan", { count: detail.downloads.length }),
           "success"
         );
       } else {
-        feedback.value = animeDetailError.value;
+        feedback.value = animeDetailError.value ?? "番剧信息已显示，正在加载分集和下载资源…";
       }
     } catch (error) {
       if (selectedAnimeId.value === anime.animeId) {
@@ -547,6 +538,7 @@ function downloadDetailAnimeId(download: DownloadJob): string | null {
 
 /** 从下载任务反查番剧详情（下载页右栏）。 */
 export async function openDownloadAnimeDetail(download: DownloadJob): Promise<void> {
+  stopPendingPoll();
   selectedAnimeId.value = null;
   const keyword = detailSearchKeyword(download);
   const savedAnimeId = downloadDetailAnimeId(download);
@@ -564,7 +556,7 @@ export async function openDownloadAnimeDetail(download: DownloadJob): Promise<vo
       let detail: AnimeDetail | null = null;
       let fallbackImageUrl: string | null = download.feedItemImageUrl ?? null;
       if (savedAnimeId) {
-        detail = await getAnimeDetail(savedAnimeId).catch(() => null);
+        detail = await getAnimeSummary(savedAnimeId).catch(() => null);
       }
       if (!detail) {
         const matches = await searchAnime(keyword);
@@ -574,13 +566,17 @@ export async function openDownloadAnimeDetail(download: DownloadJob): Promise<vo
           feedback.value = animeDetailError.value;
           return;
         }
-        detail = await getAnimeDetail(anime.animeId);
+        detail = await getAnimeSummary(anime.animeId);
         fallbackImageUrl = anime.imageUrl ?? fallbackImageUrl;
       }
 
+      if (selectedDownloadDetailGid.value !== download.gid) return;
+      selectedAnimeId.value = detail.anime.animeId;
       applyAnimeDetail(detail, fallbackImageUrl);
       if (animeDetailError.value) {
         feedback.value = animeDetailError.value;
+      } else if (detail.detailPending) {
+        feedback.value = "番剧信息已显示，正在加载分集和下载资源…";
       } else {
         updateFeedback(
           t("home.queryAnime", { title: detail.anime.title, count: detail.downloads.length }),
@@ -588,6 +584,7 @@ export async function openDownloadAnimeDetail(download: DownloadJob): Promise<vo
         );
       }
     } catch (error) {
+      if (selectedDownloadDetailGid.value !== download.gid) return;
       animeDetailError.value = formatAnimeDetailError(keyword || displayTitle(download), error);
       feedback.value = animeDetailError.value;
     }

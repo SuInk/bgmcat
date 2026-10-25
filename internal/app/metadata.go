@@ -166,7 +166,7 @@ func (a *App) searchAnime(ctx context.Context, q string) (Obj, error) {
 	}
 	return Obj{"items": items, "platformFailures": failures}, nil
 }
-func (a *App) externalDetail(ctx context.Context, id string) (Obj, error) {
+func (a *App) externalDetail(ctx context.Context, id string, summaryOnly ...bool) (Obj, error) {
 	d, e := a.Store.Get("cache", "detail:"+id)
 	if e != nil {
 		return nil, e
@@ -174,6 +174,13 @@ func (a *App) externalDetail(ctx context.Context, id string) (Obj, error) {
 	if d == nil {
 		return nil, errors.New("请重新搜索此番剧以加载信息")
 	}
+	if len(summaryOnly) > 0 && summaryOnly[0] {
+		d["downloads"] = []Obj{}
+		d["providerStatuses"] = a.pendingResourceStatuses()
+		d["detailPending"] = true
+		return d, nil
+	}
+	d["detailPending"] = false
 	downloads, statuses := a.parallelResources(ctx, str(d["mikanKeyword"]))
 	d["downloads"] = downloads
 	d["providerStatuses"] = statuses

@@ -113,3 +113,29 @@ func TestStaticAssetCacheHeaders(t *testing.T) {
 		t.Fatal("SPA fallback must not be immutable")
 	}
 }
+
+func TestDetailSummaryDoesNotWaitForEpisodesOrResources(t *testing.T) {
+	a := testApp(t)
+	a.Store.Patch("config", "settings", Obj{"enabledResourceProviders": []string{"mikan"}})
+	var calls atomic.Int32
+	a.http.Transport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		calls.Add(1)
+		if !strings.Contains(r.URL.Path, "/subjects/") {
+			t.Errorf("summary fetched slow dependency: %s", r.URL)
+			return nil, errors.New("blocked dependency")
+		}
+		return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"id":1,"name":"Fixture","summary":"Fast synopsis","images":{}}`))}, nil
+	})
+	w := apiTest(a, "GET", "/api/discovery/anime/1?view=summary", nil, true)
+	if w.Code != 200 || !strings.Contains(w.Body.String(), "Fast synopsis") || !strings.Contains(w.Body.String(), `"detailPending":true`) {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	if calls.Load() != 1 {
+		t.Fatal("unexpected upstream calls", calls.Load())
+	}
+	a.Store.Put("cache", "detail:anilist:2", Obj{"anime": Obj{"animeId": "anilist:2"}, "mikanKeyword": "Fixture"})
+	w = apiTest(a, "GET", "/api/discovery/anime/anilist:2?view=summary", nil, true)
+	if w.Code != 200 || !strings.Contains(w.Body.String(), `"detailPending":true`) || calls.Load() != 1 {
+		t.Fatal("external summary blocked on resources", w.Body.String())
+	}
+}
