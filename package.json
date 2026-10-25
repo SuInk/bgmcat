@@ -1,0 +1,15 @@
+{
+  "name": "bgmcat-ui-build",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "frontend"
+  ],
+  "scripts": {
+    "build": "npm run build --workspace frontend",
+    "typecheck": "npm run typecheck --workspace frontend"
+  },
+  "dependencies": {
+    "zod": "^4.6.7"
+  }
+}

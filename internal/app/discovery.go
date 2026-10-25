@@ -1,0 +1,352 @@
+package app
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"net/url"
+	"strings"
+	"time"
+)
+
+func (a *App) getAny(ctx context.Context, endpoint string) (any, error) {
+	req, e := http.NewRequestWithContext(ctx, "GET", endpoint, nil)
+	if e != nil {
+		return nil, e
+	}
+	req.Header.Set("User-Agent", "AnimeRSS-Go/"+Version+" (personal RSS reader)")
+	res, e := a.http.Do(req)
+	if e != nil {
+		return nil, e
+	}
+	defer res.Body.Close()
+	if res.StatusCode != 200 {
+		return nil, fmt.Errorf("数据源 HTTP %d", res.StatusCode)
+	}
+	var v any
+	e = json.NewDecoder(io.LimitReader(res.Body, 16<<20)).Decode(&v)
+	return v, e
+}
+func animeFromBangumi(o Obj, day int64) Obj {
+	id := str(o["id"])
+	title := str(o["name_cn"])
+	if title == "" {
+		title = str(o["name"])
+	}
+	image := object(o["images"])["large"]
+	if image == nil {
+		image = object(o["images"])["common"]
+	}
+	return Obj{"animeId": id, "bangumiId": id, "title": title, "imageUrl": image, "searchKeyword": o["name"], "airDay": day % 7, "isOnAir": true, "isRestricted": flag(o["nsfw"]), "rating": object(o["rating"])["score"], "source": "bangumi", "mikanId": nil, "officialSite": nil, "externalIds": Obj{"bangumi": id}, "matchedPlatforms": []string{"bangumi"}}
+}
+func (a *App) homepage(ctx context.Context) ([]Obj, error) {
+	cache, _ := a.Store.Get("cache", "home")
+	if cache != nil && num(cache["expires"]) > time.Now().Unix() {
+		out := []Obj{}
+		for _, v := range list(cache["items"]) {
+			out = append(out, object(v))
+		}
+		return out, nil
+	}
+	data, e := a.getAny(ctx, "https://api.bgm.tv/calendar")
+	if e != nil {
+		return nil, e
+	}
+	out := []Obj{}
+	for _, v := range list(data) {
+		day := object(v)
+		for _, item := range list(day["items"]) {
+			out = append(out, animeFromBangumi(object(item), num(object(day["weekday"])["id"])))
+		}
+	}
+	_ = a.Store.Put("cache", "home", Obj{"items": out, "expires": time.Now().Add(time.Hour).Unix()})
+	return out, nil
+}
+func (a *App) bangumiSearch(ctx context.Context, keyword string) (Obj, error) {
+	o, e := a.requestJSON(ctx, "POST", "https://api.bgm.tv/v0/search/subjects?limit=30", Obj{"keyword": keyword, "filter": Obj{"type": []int{2}}}, nil)
+	if e != nil {
+		return nil, e
+	}
+	items := []Obj{}
+	for _, item := range list(o["data"]) {
+		items = append(items, animeFromBangumi(object(item), 0))
+	}
+	return Obj{"items": items, "platformFailures": []any{}}, nil
+}
+func (a *App) resourceURL(provider, keyword string) string {
+	switch provider {
+	case "mikan":
+		return strings.TrimRight(str(a.Settings()["mikanBaseUrl"]), "/") + "/RSS/Search?searchstr=" + url.QueryEscape(keyword)
+	case "nyaa":
+		return "https://nyaa.si/?page=rss&c=1_2&f=0&q=" + url.QueryEscape(keyword)
+	case "acgrip":
+		return "https://acg.rip/.xml?term=" + url.QueryEscape(keyword)
+	}
+	return ""
+}
+func (a *App) searchResources(ctx context.Context, provider, keyword string) ([]Obj, error) {
+	endpoint := a.resourceURL(provider, keyword)
+	if endpoint == "" {
+		return nil, errors.New("未知资源来源")
+	}
+	feed, e := a.fetchFeed(ctx, endpoint)
+	if e != nil {
+		return nil, e
+	}
+	items := []Obj{}
+	for _, item := range feed.Items {
+		src, kind := feedSource(item)
+		if src == "" {
+			continue
+		}
+		var magnet, torrent any
+		if kind == "magnet" {
+			magnet = src
+		} else if kind == "torrent-url" {
+			torrent = src
+		}
+		items = append(items, Obj{"id": hash(src), "title": item.Title, "subgroup": nil, "magnetUrl": magnet, "torrentUrl": torrent, "pageUrl": item.Link, "sizeText": nil, "publishedAt": item.Published, "sourceType": kind, "providerId": provider, "displayName": provider, "resourceKey": hash(src), "infoHash": nil, "episode": episode(item.Title), "resolution": resolutionRE.FindString(item.Title), "providerIds": []string{provider}, "sizeBytes": nil, "seeders": nil, "leechers": nil, "sources": []Obj{{"providerId": provider, "pageUrl": item.Link}}})
+	}
+	return items, nil
+}
+func (a *App) animeDetail(ctx context.Context, id string) (Obj, error) {
+	if strings.Contains(id, ":") && !strings.HasPrefix(id, "bangumi:") {
+		return a.externalDetail(ctx, id)
+	}
+	id = strings.TrimPrefix(id, "bangumi:")
+	o, e := a.requestJSON(ctx, "GET", "https://api.bgm.tv/v0/subjects/"+url.PathEscape(id), nil, nil)
+	if e != nil {
+		return nil, e
+	}
+	anime := animeFromBangumi(o, 0)
+	keyword := str(anime["title"])
+	downloads := []Obj{}
+	statuses := []Obj{}
+	for _, v := range list(a.Settings()["enabledResourceProviders"]) {
+		provider := str(v)
+		start := time.Now()
+		items, e := a.searchResources(ctx, provider, keyword)
+		reason := ""
+		if e != nil {
+			reason = e.Error()
+		}
+		statuses = append(statuses, Obj{"providerId": provider, "displayName": provider, "ok": e == nil, "count": len(items), "error": reason, "reason": reason, "elapsedMs": time.Since(start).Milliseconds()})
+		downloads = append(downloads, items...)
+	}
+	eps := []Obj{}
+	epData, e := a.requestJSON(ctx, "GET", "https://api.bgm.tv/v0/episodes?subject_id="+url.QueryEscape(id)+"&type=0&limit=100", nil, nil)
+	if e == nil {
+		for _, v := range list(epData["data"]) {
+			ep := object(v)
+			title := str(ep["name_cn"])
+			if title == "" {
+				title = str(ep["name"])
+			}
+			eps = append(eps, Obj{"episodeId": str(ep["id"]), "title": title, "episodeNumber": str(ep["sort"]), "airDate": ep["airdate"]})
+		}
+	}
+	tags := []any{}
+	for _, v := range list(o["tags"]) {
+		tags = append(tags, object(v)["name"])
+	}
+	return Obj{"anime": anime, "titles": []any{o["name"], o["name_cn"]}, "summary": o["summary"], "intro": o["summary"], "episodes": eps, "mikanKeyword": keyword, "downloads": downloads, "providerStatuses": statuses, "tags": tags, "rank": object(o["rating"])["rank"], "totalEpisodes": o["total_episodes"], "platforms": []Obj{{"id": "bangumi", "displayName": "Bangumi", "url": "https://bgm.tv/subject/" + id, "score": object(o["rating"])["score"], "scoreMax": 10}}, "platformFailures": []any{}}, nil
+}
+func (a *App) favorites() ([]Obj, error) {
+	favorites, e := a.Store.List("favorites")
+	if e != nil {
+		return nil, e
+	}
+	subs, _ := a.Store.List("subscriptions")
+	for _, f := range favorites {
+		related := []Obj{}
+		f["subscriptionId"] = nil
+		f["rssUrl"] = nil
+		f["subscriptionAutoDownload"] = nil
+		for _, s := range subs {
+			if str(s["animeId"]) == str(f["animeId"]) {
+				related = append(related, Obj{"id": s["id"], "providerId": s["providerId"], "providerName": s["providerId"], "name": s["name"], "url": s["url"], "enabled": s["enabled"], "autoDownload": object(s["rule"])["autoDownload"]})
+				if f["subscriptionId"] == nil {
+					f["subscriptionId"] = s["id"]
+					f["rssUrl"] = s["url"]
+					f["subscriptionName"] = s["name"]
+					f["subscriptionAutoDownload"] = object(s["rule"])["autoDownload"]
+				}
+			}
+		}
+		f["subscriptions"] = related
+	}
+	return favorites, nil
+}
+func (a *App) discoveryRoutes() {
+	a.handle("GET /api/discovery/home", func(w http.ResponseWriter, r *http.Request) error {
+		o, e := a.homepage(r.Context())
+		if e == nil {
+			ok(w, o)
+		}
+		return e
+	})
+	a.handle("GET /api/discovery/search", func(w http.ResponseWriter, r *http.Request) error {
+		o, e := a.searchAnime(r.Context(), r.URL.Query().Get("keyword"))
+		if e == nil {
+			ok(w, o)
+		}
+		return e
+	})
+	a.handle("GET /api/discovery/anime/{id}", func(w http.ResponseWriter, r *http.Request) error {
+		o, e := a.animeDetail(r.Context(), r.PathValue("id"))
+		if e == nil {
+			ok(w, o)
+		}
+		return e
+	})
+	a.handle("GET /api/discovery/mikan/search", func(w http.ResponseWriter, r *http.Request) error {
+		o, e := a.searchResources(r.Context(), "mikan", r.URL.Query().Get("keyword"))
+		if e == nil {
+			ok(w, o)
+		}
+		return e
+	})
+	a.handle("GET /api/discovery/providers", func(w http.ResponseWriter, r *http.Request) error {
+		out := []Obj{}
+		for _, id := range []string{"mikan", "nyaa", "acgrip"} {
+			enabled := false
+			for _, v := range list(a.Settings()["enabledResourceProviders"]) {
+				if str(v) == id {
+					enabled = true
+				}
+			}
+			out = append(out, Obj{"id": id, "displayName": id, "enabled": enabled, "baseUrl": a.resourceURL(id, ""), "supportsSearch": true, "supportsSubscription": true})
+		}
+		ok(w, out)
+		return nil
+	})
+	a.handle("POST /api/discovery/providers/{id}/test", func(w http.ResponseWriter, r *http.Request) error {
+		o, e := body(w, r)
+		if e != nil {
+			return e
+		}
+		start := time.Now()
+		items, e := a.searchResources(r.Context(), r.PathValue("id"), str(o["keyword"]))
+		reason := ""
+		if e != nil {
+			reason = e.Error()
+		}
+		ok(w, Obj{"providerId": r.PathValue("id"), "displayName": r.PathValue("id"), "ok": e == nil, "count": len(items), "error": reason, "reason": reason, "elapsedMs": time.Since(start).Milliseconds()})
+		return nil
+	})
+	a.handle("GET /api/discovery/metadata-platforms", func(w http.ResponseWriter, r *http.Request) error {
+		out := []Obj{}
+		for _, id := range []string{"bangumi", "anilist", "mal", "tmdb"} {
+			enabled := false
+			for _, v := range list(a.Settings()["enabledMetadataPlatforms"]) {
+				if str(v) == id {
+					enabled = true
+				}
+			}
+			out = append(out, Obj{"id": id, "displayName": platformNames[id], "enabled": enabled, "configured": id != "tmdb" || str(a.Settings()["tmdbApiKey"]) != "", "requiresApiKey": id == "tmdb"})
+		}
+		ok(w, out)
+		return nil
+	})
+	a.handle("POST /api/discovery/metadata-platforms/{id}/test", func(w http.ResponseWriter, r *http.Request) error {
+		o, e := body(w, r)
+		if e != nil {
+			return e
+		}
+		start := time.Now()
+		items, e := a.platformSearch(r.Context(), r.PathValue("id"), str(o["keyword"]))
+		reason := ""
+		if e != nil {
+			reason = e.Error()
+		}
+		ok(w, Obj{"id": r.PathValue("id"), "displayName": platformNames[r.PathValue("id")], "ok": e == nil, "count": len(items), "error": reason, "reason": reason, "elapsedMs": time.Since(start).Milliseconds()})
+		return nil
+	})
+	a.handle("GET /api/favorites", func(w http.ResponseWriter, r *http.Request) error {
+		o, e := a.favorites()
+		if e == nil {
+			ok(w, o)
+		}
+		return e
+	})
+	a.handle("POST /api/favorites", func(w http.ResponseWriter, r *http.Request) error {
+		o, e := body(w, r)
+		if e != nil {
+			return e
+		}
+		f := object(o["anime"])
+		if str(f["animeId"]) == "" {
+			return errors.New("番剧 ID 不能为空")
+		}
+		f["mikanKeyword"] = str(o["mikanKeyword"])
+		if f["mikanKeyword"] == "" {
+			f["mikanKeyword"] = f["title"]
+		}
+		f["createdAt"] = now()
+		f["updatedAt"] = now()
+		f["subscriptions"] = []any{}
+		e = a.Store.Put("favorites", str(f["animeId"]), f)
+		if e == nil {
+			ok(w, f)
+		}
+		return e
+	})
+	a.handle("DELETE /api/favorites/{id}", func(w http.ResponseWriter, r *http.Request) error {
+		e := a.Store.Delete("favorites", r.PathValue("id"))
+		if e == nil {
+			ok(w, Obj{"deleted": true})
+		}
+		return e
+	})
+	a.handle("POST /api/favorites/subscribe", func(w http.ResponseWriter, r *http.Request) error {
+		o, e := body(w, r)
+		if e != nil {
+			return e
+		}
+		anime := object(o["anime"])
+		id := str(anime["animeId"])
+		if id == "" {
+			return errors.New("缺少番剧 ID")
+		}
+		keyword := str(o["mikanKeyword"])
+		if keyword == "" {
+			keyword = str(anime["title"])
+		}
+		providers := list(o["providerIds"])
+		if len(providers) == 0 {
+			providers = list(a.Settings()["enabledResourceProviders"])
+		}
+		out := []Obj{}
+		existing, _ := a.Store.List("subscriptions")
+		for _, v := range providers {
+			provider := str(v)
+			var found Obj
+			for _, s := range existing {
+				if str(s["animeId"]) == id && str(s["providerId"]) == provider {
+					found = s
+					break
+				}
+			}
+			if found != nil {
+				out = append(out, found)
+				continue
+			}
+			s, e := a.newSubscription(Obj{"name": str(anime["title"]) + " · " + provider, "url": a.resourceURL(provider, keyword), "animeId": id, "providerId": provider})
+			if e != nil {
+				return e
+			}
+			out = append(out, s)
+		}
+		anime["mikanKeyword"] = keyword
+		anime["createdAt"] = now()
+		anime["updatedAt"] = now()
+		if e = a.Store.Put("favorites", id, anime); e != nil {
+			return e
+		}
+		ok(w, out)
+		return nil
+	})
+}

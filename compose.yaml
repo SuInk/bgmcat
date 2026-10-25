@@ -1,0 +1,12 @@
+services:
+  bgmcat:
+    build: .
+    ports:
+      - "127.0.0.1:3001:3001"
+    volumes:
+      - anime-data:/data
+    environment:
+      ANIME_RSS_PUBLIC_URL: ${ANIME_RSS_PUBLIC_URL:-http://127.0.0.1:3001}
+    restart: unless-stopped
+volumes:
+  anime-data:

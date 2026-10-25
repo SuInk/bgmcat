@@ -1,0 +1,182 @@
+type Locale = "zh-CN" | "en";
+type MessageParams = Record<string, string | number | boolean | null | undefined>;
+type MessageValue = string | ((params: MessageParams) => string);
+
+const zhCN = {
+  "api.requestTimeout": "本机服务响应超时。请打开 Logs 页面查看后端日志。",
+  "api.networkError": "无法连接 Bangumi Cat 本机服务。请打开 Logs 页面查看后端日志。",
+  "api.invalidResponse": "服务返回了无法解析的响应。HTTP {status}",
+  "api.aria2Offline": "Aria2 RPC 未连接。请检查 Aria2 是否已启动，或到设置中确认 Aria2 已启用。",
+  "api.aria2Timeout": "连接 Aria2 RPC 超时。请稍后重试，或打开 Logs 页面查看后端日志。",
+  "api.aria2InvalidResponse": "Aria2 RPC 返回异常响应。请打开 Logs 页面查看后端日志。",
+  "api.qbittorrentOffline": "qBittorrent Web API 未连接。请检查 qBittorrent 是否已启动，并确认 Web UI 已启用。",
+  "api.qbittorrentAuthFailed": "qBittorrent Web API 登录失败。请检查用户名和密码。",
+  "api.qbittorrentInvalidResponse": "qBittorrent Web API 返回异常响应。请打开 Logs 页面查看后端日志。",
+  "api.mikanFetchFailed": "蜜柑数据同步失败。请稍后重试，或打开 Logs 页面查看后端日志。",
+  "api.bangumiDataFetchFailed": "Bangumi 数据同步失败。请稍后重试，或打开 Logs 页面查看后端日志。",
+  "common.copied": "已复制到剪贴板。",
+  "dashboard.ready": "已就绪。",
+  "dashboard.partialLoadFailed": "部分数据加载失败：{details}",
+  "dashboard.loadFailed": "加载仪表盘失败。",
+  "dashboard.sectionFailure": "{label}: {message}",
+  "detail.mikanSyncFailed": "「{title}」的蜜柑下载候选同步失败。请稍后重试，或打开 Logs 页面查看后端日志。",
+  "detail.loadFailed": "「{title}」详情加载失败。请稍后重试，或打开 Logs 页面查看后端日志。",
+  "logs.readFailed": "日志读取失败。",
+  "home.queryAnime": "已查询「{title}」：{count} 条候选。",
+  "home.syncMikan": "已同步蜜柑下载列表：{count} 条。",
+  "home.syncSeason": "已同步 {count} 部 Bangumi 当季新番。",
+  "home.backToSeason": "已回到当季新番列表。",
+  "home.historyHits": "历史番剧搜索命中 {count} 条。",
+  "favorites.added": "已加入收藏。",
+  "favorites.addFailed": "加入收藏失败。",
+  "favorites.removed": "已取消收藏。",
+  "favorites.removeFailed": "取消收藏失败。",
+  "subscriptions.createdFromAnime": "RSS 订阅已创建。",
+  "subscriptions.createFromAnimeFailed": "创建 RSS 订阅失败。",
+  "subscriptions.refreshAllDone": "刷新完成，抓取 {createdCount} 条，入队 {queuedCount} 条。",
+  "subscriptions.refreshAllFailed": "批量刷新订阅失败。",
+  "subscriptions.updated": "订阅已更新。",
+  "subscriptions.created": "订阅已创建。",
+  "subscriptions.requestFailed": "订阅请求失败。",
+  "subscriptions.refreshOneDone": "已抓取 {createdCount} 条，入队 {queuedCount} 条。",
+  "subscriptions.refreshFailed": "刷新订阅失败。",
+  "subscriptions.deleted": "订阅已删除。",
+  "subscriptions.deleteFailed": "删除订阅失败。",
+  "downloads.noMikanUrl": "这个蜜柑条目没有可用下载地址。",
+  "downloads.alreadyQueued": "这个资源已在下载列表中。",
+  "downloads.queued": "已加入下载队列。",
+  "downloads.queueFailed": "加入下载失败。",
+  "downloads.manualQueued": "手动下载任务已加入队列。",
+  "downloads.manualFailed": "手动下载失败。",
+  "downloads.feedQueued": "下载任务已加入队列。",
+  "downloads.feedQueueFailed": "加入下载队列失败。",
+  "downloads.removeWithFiles": "已删除下载任务，并删除 {count} 个本地文件。",
+  "downloads.removeKeepFiles": "已删除下载任务，本地文件已保留。",
+  "downloads.pauseCompleted": "下载任务已暂停。",
+  "downloads.resumeCompleted": "下载任务已继续。",
+  "downloads.updateFailed": "更新下载任务失败。",
+  "downloads.conflictRecheck": "已尝试重新校验并重新入队。",
+  "downloads.conflictOverwrite": "已按覆盖模式重新入队。",
+  "downloads.conflictDeleteExisting": "已删除旧文件并重新入队。",
+  "downloads.conflictFailed": "处理文件冲突失败。",
+  "downloads.clearFinishedDone": "已清理 {count} 条完成/失败任务。",
+  "downloads.clearFinishedFailed": "清理完成/失败任务失败。",
+  "downloads.resumeAllNone": "当前没有可继续的任务。",
+  "downloads.resumeAllDone": "已继续 {count} 个任务。",
+  "downloads.resumeAllPartial": "已尝试继续 {count} 个任务，其中 {failedCount} 个失败。",
+  "downloads.pauseAllNone": "当前没有可暂停的任务。",
+  "downloads.pauseAllDone": "已暂停 {count} 个任务。",
+  "downloads.pauseAllPartial": "已尝试暂停 {count} 个任务，其中 {failedCount} 个失败。",
+  "auth.tokenAccepted": "Token 验证通过。",
+  "auth.loginFailed": "登录失败。",
+  "auth.tokenCleared": "Token 已清除。",
+  "playback.unsupportedInApp": "当前文件格式不适合内置播放器，建议使用系统或第三方播放器。",
+  "playback.readFailed": "读取播放信息失败。",
+  "playback.playerCalled": "已调用 {playerLabel}。",
+  "playback.playerFailed": "调用播放器失败。",
+  "settings.saved": "设置已保存。",
+  "settings.saveFailed": "保存设置失败。",
+  "agent.actionFailed": "Agent 操作失败。"
+} satisfies Record<string, MessageValue>;
+
+const en: Record<keyof typeof zhCN, MessageValue> = {
+  "api.requestTimeout": "The local service timed out. Open the Logs page for backend details.",
+  "api.networkError": "Could not connect to the local Bangumi Cat service. Open the Logs page for backend details.",
+  "api.invalidResponse": "The service returned an unreadable response. HTTP {status}",
+  "api.aria2Offline": "Aria2 RPC is offline. Check whether Aria2 is running, or confirm it is enabled in Settings.",
+  "api.aria2Timeout": "Connecting to Aria2 RPC timed out. Try again later, or open the Logs page for backend details.",
+  "api.aria2InvalidResponse": "Aria2 RPC returned an invalid response. Open the Logs page for backend details.",
+  "api.qbittorrentOffline": "qBittorrent Web API is offline. Check whether qBittorrent is running and Web UI is enabled.",
+  "api.qbittorrentAuthFailed": "qBittorrent Web API login failed. Check the username and password.",
+  "api.qbittorrentInvalidResponse": "qBittorrent Web API returned an invalid response. Open the Logs page for backend details.",
+  "api.mikanFetchFailed": "Failed to sync Mikan data. Try again later, or open the Logs page for backend details.",
+  "api.bangumiDataFetchFailed": "Failed to sync Bangumi data. Try again later, or open the Logs page for backend details.",
+  "common.copied": "Copied to clipboard.",
+  "dashboard.ready": "Ready.",
+  "dashboard.partialLoadFailed": "Some data failed to load: {details}",
+  "dashboard.loadFailed": "Failed to load dashboard.",
+  "dashboard.sectionFailure": "{label}: {message}",
+  "detail.mikanSyncFailed": "Failed to sync Mikan download candidates for \"{title}\". Try again later, or open the Logs page for backend details.",
+  "detail.loadFailed": "Failed to load details for \"{title}\". Try again later, or open the Logs page for backend details.",
+  "logs.readFailed": "Failed to read logs.",
+  "home.queryAnime": "Loaded \"{title}\": {count} candidates.",
+  "home.syncMikan": "Synced {count} Mikan download candidates.",
+  "home.syncSeason": "Synced {count} current-season Bangumi titles.",
+  "home.backToSeason": "Returned to the current-season list.",
+  "home.historyHits": "Historical search matched {count} titles.",
+  "favorites.added": "Added to favorites.",
+  "favorites.addFailed": "Failed to add to favorites.",
+  "favorites.removed": "Removed from favorites.",
+  "favorites.removeFailed": "Failed to remove from favorites.",
+  "subscriptions.createdFromAnime": "RSS subscription created.",
+  "subscriptions.createFromAnimeFailed": "Failed to create RSS subscription.",
+  "subscriptions.refreshAllDone": "Refresh completed. Fetched {createdCount} items and queued {queuedCount}.",
+  "subscriptions.refreshAllFailed": "Failed to refresh subscriptions.",
+  "subscriptions.updated": "Subscription updated.",
+  "subscriptions.created": "Subscription created.",
+  "subscriptions.requestFailed": "Subscription request failed.",
+  "subscriptions.refreshOneDone": "Fetched {createdCount} items and queued {queuedCount}.",
+  "subscriptions.refreshFailed": "Failed to refresh subscription.",
+  "subscriptions.deleted": "Subscription deleted.",
+  "subscriptions.deleteFailed": "Failed to delete subscription.",
+  "downloads.noMikanUrl": "This Mikan item does not have a valid download URL.",
+  "downloads.alreadyQueued": "This resource is already in the download list.",
+  "downloads.queued": "Added to the download queue.",
+  "downloads.queueFailed": "Failed to queue the download.",
+  "downloads.manualQueued": "Manual download queued.",
+  "downloads.manualFailed": "Manual download failed.",
+  "downloads.feedQueued": "Download queued.",
+  "downloads.feedQueueFailed": "Failed to queue the download.",
+  "downloads.removeWithFiles": "Deleted the download and deleted {count} local files.",
+  "downloads.removeKeepFiles": "Deleted the download and kept local files.",
+  "downloads.pauseCompleted": "Download pause completed.",
+  "downloads.resumeCompleted": "Download resume completed.",
+  "downloads.updateFailed": "Failed to update the download.",
+  "downloads.conflictRecheck": "Rechecked the files and re-queued the task.",
+  "downloads.conflictOverwrite": "Re-queued the task in overwrite mode.",
+  "downloads.conflictDeleteExisting": "Deleted the old files and re-queued the task.",
+  "downloads.conflictFailed": "Failed to handle the file conflict.",
+  "downloads.clearFinishedDone": "Cleared {count} finished or failed tasks.",
+  "downloads.clearFinishedFailed": "Failed to clear finished or failed tasks.",
+  "downloads.resumeAllNone": "There are no paused tasks to resume.",
+  "downloads.resumeAllDone": "Resumed {count} tasks.",
+  "downloads.resumeAllPartial": "Tried to resume {count} tasks, and {failedCount} failed.",
+  "downloads.pauseAllNone": "There are no running tasks to pause.",
+  "downloads.pauseAllDone": "Paused {count} tasks.",
+  "downloads.pauseAllPartial": "Tried to pause {count} tasks, and {failedCount} failed.",
+  "auth.tokenAccepted": "Token accepted.",
+  "auth.loginFailed": "Login failed.",
+  "auth.tokenCleared": "Token cleared.",
+  "playback.unsupportedInApp": "This format is not suitable for the built-in player. Use the system player or a third-party player instead.",
+  "playback.readFailed": "Failed to read playback info.",
+  "playback.playerCalled": "Launched {playerLabel}.",
+  "playback.playerFailed": "Failed to launch the player.",
+  "settings.saved": "Settings saved.",
+  "settings.saveFailed": "Failed to save settings.",
+  "agent.actionFailed": "Agent action failed."
+};
+
+const messages: Record<Locale, Record<keyof typeof zhCN, MessageValue>> = {
+  "zh-CN": zhCN,
+  en
+};
+
+export function getSystemLocale(): Locale {
+  if (typeof navigator === "undefined") {
+    return "zh-CN";
+  }
+
+  const languages = navigator.languages?.length ? navigator.languages : [navigator.language];
+  return languages.some((value) => value.toLowerCase().startsWith("zh")) ? "zh-CN" : "en";
+}
+
+export function t(key: keyof typeof zhCN, params: MessageParams = {}): string {
+  const locale = getSystemLocale();
+  const entry = messages[locale][key] ?? zhCN[key];
+
+  if (typeof entry === "function") {
+    return entry(params);
+  }
+
+  return entry.replace(/\{(\w+)\}/g, (_match, token: string) => String(params[token] ?? ""));
+}
