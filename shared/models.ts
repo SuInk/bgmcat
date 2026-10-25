@@ -440,6 +440,8 @@ export interface MikanDownloadItem {
 }
 
 export interface AnimeDetail {
+  /** 基本信息已就绪，分集与下载资源仍在补充。 */
+  detailPending?: boolean;
   anime: HomepageAnime;
   titles: string[];
   summary: string | null;

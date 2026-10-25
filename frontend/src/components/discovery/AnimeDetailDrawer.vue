@@ -14,9 +14,10 @@ import { computed } from "vue";
 import type { HomepageAnime, MikanDownloadItem } from "@shared/index";
 
 import { copyText, openExternalLink } from "../../lib/actions";
-import { isBusy, isBusyMatching } from "../../stores/busy";
+import { isBusy } from "../../stores/busy";
 import {
   animeDetail,
+  selectedAnimeId,
   animeDetailError,
   closeAnimeDetail,
   detailDownloadPageSize,
@@ -37,7 +38,7 @@ import {
   selectedSubgroup,
   setDownloadPage
 } from "../../stores/discovery";
-import { openPlayback } from "../../stores/downloads";
+import { openPlayback, selectedDownloadDetailGid } from "../../stores/downloads";
 import {
   createFavoriteFromAnime,
   createSubscriptionFromAnime,
@@ -49,7 +50,7 @@ import AppNavIcon from "../layout/AppNavIcon.vue";
 import AnimeDetailPane from "./AnimeDetailPane.vue";
 
 const detailLoading = computed(() =>
-  isBusyMatching((key) => key.startsWith("anime-detail:") || key.startsWith("download-detail:"))
+  Boolean((selectedAnimeId.value && isBusy(`anime-detail:${selectedAnimeId.value}`)) || (selectedDownloadDetailGid.value && isBusy(`download-detail:${selectedDownloadDetailGid.value}`)))
 );
 
 /** 加载中也要立刻接管，否则点下去到数据回来之间像是没反应。 */

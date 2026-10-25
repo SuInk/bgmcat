@@ -128,9 +128,10 @@ func (a *App) fetchResources(ctx context.Context, provider, keyword string) ([]O
 	}
 	return items, nil
 }
-func (a *App) animeDetail(ctx context.Context, id string) (Obj, error) {
+func (a *App) animeDetail(ctx context.Context, id string, summaryOnly ...bool) (Obj, error) {
+	basic := len(summaryOnly) > 0 && summaryOnly[0]
 	if strings.Contains(id, ":") && !strings.HasPrefix(id, "bangumi:") {
-		return a.externalDetail(ctx, id)
+		return a.externalDetail(ctx, id, basic)
 	}
 	id = strings.TrimPrefix(id, "bangumi:")
 	o, e := a.discoveryCached(ctx, "subject:"+id, 6*time.Hour, 7*24*time.Hour, func(ctx context.Context) (Obj, error) {
@@ -141,33 +142,38 @@ func (a *App) animeDetail(ctx context.Context, id string) (Obj, error) {
 	}
 	anime := animeFromBangumi(o, 0)
 	keyword := str(anime["title"])
-	type resourceResult struct{ downloads, statuses []Obj }
-	resources := make(chan resourceResult, 1)
-	go func() {
-		downloads, statuses := a.parallelResources(ctx, keyword)
-		resources <- resourceResult{downloads, statuses}
-	}()
 	eps := []Obj{}
-	epData, e := a.discoveryCached(ctx, "episodes:"+id, time.Hour, 7*24*time.Hour, func(ctx context.Context) (Obj, error) {
-		return a.requestJSON(ctx, "GET", "https://api.bgm.tv/v0/episodes?subject_id="+url.QueryEscape(id)+"&type=0&limit=100", nil, nil)
-	})
-	if e == nil {
-		for _, v := range list(epData["data"]) {
-			ep := object(v)
-			title := str(ep["name_cn"])
-			if title == "" {
-				title = str(ep["name"])
+	downloads, statuses := []Obj{}, []Obj{}
+	if !basic {
+		type resourceResult struct{ downloads, statuses []Obj }
+		resources := make(chan resourceResult, 1)
+		go func() {
+			downloads, statuses := a.parallelResources(ctx, keyword)
+			resources <- resourceResult{downloads, statuses}
+		}()
+		epData, e := a.discoveryCached(ctx, "episodes:"+id, time.Hour, 7*24*time.Hour, func(ctx context.Context) (Obj, error) {
+			return a.requestJSON(ctx, "GET", "https://api.bgm.tv/v0/episodes?subject_id="+url.QueryEscape(id)+"&type=0&limit=100", nil, nil)
+		})
+		if e == nil {
+			for _, v := range list(epData["data"]) {
+				ep := object(v)
+				title := str(ep["name_cn"])
+				if title == "" {
+					title = str(ep["name"])
+				}
+				eps = append(eps, Obj{"episodeId": str(ep["id"]), "title": title, "episodeNumber": str(ep["sort"]), "airDate": ep["airdate"]})
 			}
-			eps = append(eps, Obj{"episodeId": str(ep["id"]), "title": title, "episodeNumber": str(ep["sort"]), "airDate": ep["airdate"]})
 		}
+		r := <-resources
+		downloads, statuses = r.downloads, r.statuses
+	} else {
+		statuses = a.pendingResourceStatuses()
 	}
-	r := <-resources
-	downloads, statuses := r.downloads, r.statuses
 	tags := []any{}
 	for _, v := range list(o["tags"]) {
 		tags = append(tags, object(v)["name"])
 	}
-	return Obj{"anime": anime, "titles": []any{o["name"], o["name_cn"]}, "summary": o["summary"], "intro": o["summary"], "episodes": eps, "mikanKeyword": keyword, "downloads": downloads, "providerStatuses": statuses, "tags": tags, "rank": object(o["rating"])["rank"], "totalEpisodes": o["total_episodes"], "platforms": []Obj{{"id": "bangumi", "displayName": "Bangumi", "url": "https://bgm.tv/subject/" + id, "score": object(o["rating"])["score"], "scoreMax": 10}}, "platformFailures": []any{}}, nil
+	return Obj{"detailPending": basic, "anime": anime, "titles": []any{o["name"], o["name_cn"]}, "summary": o["summary"], "intro": o["summary"], "episodes": eps, "mikanKeyword": keyword, "downloads": downloads, "providerStatuses": statuses, "tags": tags, "rank": object(o["rating"])["rank"], "totalEpisodes": o["total_episodes"], "platforms": []Obj{{"id": "bangumi", "displayName": "Bangumi", "url": "https://bgm.tv/subject/" + id, "score": object(o["rating"])["score"], "scoreMax": 10}}, "platformFailures": []any{}}, nil
 }
 func (a *App) favorites() ([]Obj, error) {
 	favorites, e := a.Store.List("favorites")
@@ -211,7 +217,7 @@ func (a *App) discoveryRoutes() {
 		return e
 	})
 	a.handle("GET /api/discovery/anime/{id}", func(w http.ResponseWriter, r *http.Request) error {
-		o, e := a.animeDetail(r.Context(), r.PathValue("id"))
+		o, e := a.animeDetail(r.Context(), r.PathValue("id"), r.URL.Query().Get("view") == "summary")
 		if e == nil {
 			ok(w, o)
 		}
@@ -364,4 +370,12 @@ func (a *App) discoveryRoutes() {
 		ok(w, out)
 		return nil
 	})
+}
+
+func (a *App) pendingResourceStatuses() []Obj {
+	statuses := []Obj{}
+	for _, provider := range list(a.Settings()["enabledResourceProviders"]) {
+		statuses = append(statuses, Obj{"providerId": provider, "displayName": provider, "ok": true, "pending": true, "count": 0})
+	}
+	return statuses
 }
