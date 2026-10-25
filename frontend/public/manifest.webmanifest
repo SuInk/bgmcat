@@ -1,6 +1,6 @@
 {
-  "name": "Anime RSS",
-  "short_name": "Anime RSS",
+  "name": "猫追番 · Bangumi Cat",
+  "short_name": "猫追番",
   "description": "番剧 RSS 订阅与自动下载控制台",
   "lang": "zh-CN",
   "dir": "ltr",
