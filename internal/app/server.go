@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/SuInk/bgmcat/internal/version"
+	"golang.org/x/sync/singleflight"
 	"io"
 	"io/fs"
 	"log"
@@ -34,6 +35,7 @@ type Config struct {
 	Web                      fs.FS
 }
 type App struct {
+	discoveryGroup singleflight.Group
 	Store          *Store
 	cfg            Config
 	mux            *http.ServeMux
@@ -360,6 +362,9 @@ func (a *App) routes() {
 		if strings.HasSuffix(path, ".html") {
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
 			w.Header().Set("Cache-Control", "no-cache")
+		}
+		if strings.HasPrefix(path, "assets/") {
+			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 		}
 		http.ServeContent(w, r, path, time.Time{}, strings.NewReader(string(b)))
 	})

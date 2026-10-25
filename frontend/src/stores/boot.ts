@@ -9,7 +9,7 @@ import {
 } from "../api";
 import { t } from "../i18n";
 import { agentsLoaded, refreshAgents } from "./agents";
-import { isBusy, withBusy } from "./busy";
+import { withBusy } from "./busy";
 import {
   refreshHomepage,
   homepageAnime,
@@ -54,14 +54,8 @@ const LIVE_REFRESH_ACTIVE_MS = 3000;
 const LIVE_REFRESH_IDLE_MS = 10000;
 
 export const isLoading = ref(false);
-// 全屏同步遮罩只在初始加载、或用户正停留在首页且首页还没有数据时出现，
-// 避免后台静默同步把其他页面也盖住
-export const globalSyncOverlay = computed(
-  () =>
-    hasConsoleAccess.value &&
-    (isLoading.value ||
-      (activeTab.value === "home" && isBusy("discovery-home") && homepageAnime.value.length === 0))
-);
+// 外网日历加载只显示首页局部 loading，不锁住导航和本地功能。
+export const globalSyncOverlay = computed(() => hasConsoleAccess.value && isLoading.value);
 
 let liveRefreshTimer: number | null = null;
 let liveRefreshInFlight = false;
@@ -77,6 +71,8 @@ export async function loadDashboard(): Promise<void> {
     await Promise.all([refreshStatus(), refreshSettings()]);
     isAuthenticated.value = true;
     authChecked.value = true;
+    // Start the homepage request alongside local lists, not after them.
+    void refreshHomepage({ silent: true });
 
     // 日志和 MCP Agent 探测不在首屏拉取，进入对应页签时才加载
     const sections: Array<[string, Promise<unknown>]> = [
@@ -90,8 +86,6 @@ export async function loadDashboard(): Promise<void> {
       .map((result, index) => (result.status === "rejected" ? loadFailureMessage(sections[index][0], result.reason) : null))
       .filter((item): item is string => Boolean(item));
 
-    // Bangumi 首页数据量大且走外网，单独拉，失败只在首页提示
-    void refreshHomepage({ silent: true });
 
     if (failures.length) {
       updateFeedback(t("dashboard.partialLoadFailed", { details: failures.join("；") }), "error");

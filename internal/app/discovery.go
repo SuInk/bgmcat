@@ -43,28 +43,30 @@ func animeFromBangumi(o Obj, day int64) Obj {
 	return Obj{"animeId": id, "bangumiId": id, "title": title, "imageUrl": image, "searchKeyword": o["name"], "airDay": day % 7, "isOnAir": true, "isRestricted": flag(o["nsfw"]), "rating": object(o["rating"])["score"], "source": "bangumi", "mikanId": nil, "officialSite": nil, "externalIds": Obj{"bangumi": id}, "matchedPlatforms": []string{"bangumi"}}
 }
 func (a *App) homepage(ctx context.Context) ([]Obj, error) {
-	cache, _ := a.Store.Get("cache", "home")
-	if cache != nil && num(cache["expires"]) > time.Now().Unix() {
+	result, err := a.discoveryCached(ctx, "home", time.Hour, 7*24*time.Hour, func(ctx context.Context) (Obj, error) {
+		data, err := a.getAny(ctx, "https://api.bgm.tv/calendar")
+		if err != nil {
+			return nil, err
+		}
 		out := []Obj{}
-		for _, v := range list(cache["items"]) {
-			out = append(out, object(v))
+		for _, v := range list(data) {
+			day := object(v)
+			for _, item := range list(day["items"]) {
+				out = append(out, animeFromBangumi(object(item), num(object(day["weekday"])["id"])))
+			}
 		}
-		return out, nil
-	}
-	data, e := a.getAny(ctx, "https://api.bgm.tv/calendar")
-	if e != nil {
-		return nil, e
-	}
+		if len(out) == 0 {
+			return nil, errors.New("Bangumi 返回空日历")
+		}
+		return Obj{"items": out}, nil
+	})
 	out := []Obj{}
-	for _, v := range list(data) {
-		day := object(v)
-		for _, item := range list(day["items"]) {
-			out = append(out, animeFromBangumi(object(item), num(object(day["weekday"])["id"])))
-		}
+	for _, v := range list(result["items"]) {
+		out = append(out, object(v))
 	}
-	_ = a.Store.Put("cache", "home", Obj{"items": out, "expires": time.Now().Add(time.Hour).Unix()})
-	return out, nil
+	return out, err
 }
+
 func (a *App) bangumiSearch(ctx context.Context, keyword string) (Obj, error) {
 	o, e := a.requestJSON(ctx, "POST", "https://api.bgm.tv/v0/search/subjects?limit=30", Obj{"keyword": keyword, "filter": Obj{"type": []int{2}}}, nil)
 	if e != nil {
@@ -88,6 +90,20 @@ func (a *App) resourceURL(provider, keyword string) string {
 	return ""
 }
 func (a *App) searchResources(ctx context.Context, provider, keyword string) ([]Obj, error) {
+	result, err := a.discoveryCached(ctx, "resource:"+hash(a.resourceURL(provider, keyword)), 2*time.Minute, 10*time.Minute, func(ctx context.Context) (Obj, error) {
+		items, err := a.fetchResources(ctx, provider, keyword)
+		return Obj{"items": items}, err
+	})
+	items := []Obj{}
+	for _, v := range list(result["items"]) {
+		items = append(items, object(v))
+	}
+	if flag(result["cacheStale"]) {
+		err = errors.New(str(result["cacheError"]))
+	}
+	return items, err
+}
+func (a *App) fetchResources(ctx context.Context, provider, keyword string) ([]Obj, error) {
 	endpoint := a.resourceURL(provider, keyword)
 	if endpoint == "" {
 		return nil, errors.New("未知资源来源")
@@ -117,27 +133,24 @@ func (a *App) animeDetail(ctx context.Context, id string) (Obj, error) {
 		return a.externalDetail(ctx, id)
 	}
 	id = strings.TrimPrefix(id, "bangumi:")
-	o, e := a.requestJSON(ctx, "GET", "https://api.bgm.tv/v0/subjects/"+url.PathEscape(id), nil, nil)
+	o, e := a.discoveryCached(ctx, "subject:"+id, 6*time.Hour, 7*24*time.Hour, func(ctx context.Context) (Obj, error) {
+		return a.requestJSON(ctx, "GET", "https://api.bgm.tv/v0/subjects/"+url.PathEscape(id), nil, nil)
+	})
 	if e != nil {
 		return nil, e
 	}
 	anime := animeFromBangumi(o, 0)
 	keyword := str(anime["title"])
-	downloads := []Obj{}
-	statuses := []Obj{}
-	for _, v := range list(a.Settings()["enabledResourceProviders"]) {
-		provider := str(v)
-		start := time.Now()
-		items, e := a.searchResources(ctx, provider, keyword)
-		reason := ""
-		if e != nil {
-			reason = e.Error()
-		}
-		statuses = append(statuses, Obj{"providerId": provider, "displayName": provider, "ok": e == nil, "count": len(items), "error": reason, "reason": reason, "elapsedMs": time.Since(start).Milliseconds()})
-		downloads = append(downloads, items...)
-	}
+	type resourceResult struct{ downloads, statuses []Obj }
+	resources := make(chan resourceResult, 1)
+	go func() {
+		downloads, statuses := a.parallelResources(ctx, keyword)
+		resources <- resourceResult{downloads, statuses}
+	}()
 	eps := []Obj{}
-	epData, e := a.requestJSON(ctx, "GET", "https://api.bgm.tv/v0/episodes?subject_id="+url.QueryEscape(id)+"&type=0&limit=100", nil, nil)
+	epData, e := a.discoveryCached(ctx, "episodes:"+id, time.Hour, 7*24*time.Hour, func(ctx context.Context) (Obj, error) {
+		return a.requestJSON(ctx, "GET", "https://api.bgm.tv/v0/episodes?subject_id="+url.QueryEscape(id)+"&type=0&limit=100", nil, nil)
+	})
 	if e == nil {
 		for _, v := range list(epData["data"]) {
 			ep := object(v)
@@ -148,6 +161,8 @@ func (a *App) animeDetail(ctx context.Context, id string) (Obj, error) {
 			eps = append(eps, Obj{"episodeId": str(ep["id"]), "title": title, "episodeNumber": str(ep["sort"]), "airDate": ep["airdate"]})
 		}
 	}
+	r := <-resources
+	downloads, statuses := r.downloads, r.statuses
 	tags := []any{}
 	for _, v := range list(o["tags"]) {
 		tags = append(tags, object(v)["name"])
