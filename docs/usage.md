@@ -32,17 +32,24 @@ docker compose logs bgmcat
 
 ## Google Drive
 
-1. 在 Google Cloud 启用 Drive API，创建 **Web 应用** OAuth 客户端。
-2. 授权重定向 URI 添加 `http://127.0.0.1:3001/api/cloud/callback`，远程部署使用实际 HTTPS 地址。
-3. 设置 → 下载，填入 OAuth 客户端 ID、密钥、回调地址，点击“连接 Google Drive”。
-4. 选择目标文件夹 ID，再启用自动归档。默认不会删除本地文件。
-5. 确认后可打开“归档后清理本地文件”。只有全部文件云端大小及 MD5 验证成功、可读取、没有正在播放时才清理。
+打开「设置 → 下载」里的「让番剧有个家」向导；也可选择暂时使用本地存储，之后点击「配置向导」重新打开。
+
+1. 在 Google Cloud 启用 Drive API，配置 OAuth 同意屏幕并将自己的邮箱加入测试用户，创建 **Web application** OAuth 客户端。
+2. 将向导显示的回调地址添加到授权重定向 URI：当前网页预览是 `http://127.0.0.1:3001/api/cloud/callback`；桌面版是 `http://127.0.0.1:39123/api/cloud/callback`；远程部署使用实际 HTTPS 地址。必须与访问的服务一致。
+3. 下载 OAuth JSON 并导入向导，或手动填写 ID 和密钥。当前仅支持 Web application 凭据，不接受服务账号 / Desktop 类型 JSON。点击连接后在浏览器授权，向导会在十分钟内自动检查授权结果，也可手动检查。
+4. 浏览「我的云盘」的文件夹，选择当前目录，或新建 `Bangumi Cat`。分页目录可点击加载更多；共享云盘目录仍可通过高级设置手动填写 ID。
+5. 检测会创建临时文本文件、上传随机内容、读回校验并删除测试文件。失败会显示原因；清理失败会给出测试文件 ID，供手动删除。通过后才能在向导中完成并开启自动归档。
+6. 默认保留本地副本。可主动选择归档后清理，仅在全部文件云端大小及 MD5 校验通过、可读取且没有正在播放时删除。
+
+TLS / IP 扫描和手动配置收在「高级设置」。导入 JSON 不会改变网络模式；默认使用原始 TLS。当前仍需自行创建 Google OAuth 客户端，并非内置公共客户端的一键登录。
+
+API 实现依据 [Google files.list](https://developers.google.com/workspace/drive/api/reference/rest/v3/files/list) 与 [files.create](https://developers.google.com/workspace/drive/api/reference/rest/v3/files/create)。
 
 Go 直接使用 Google Drive API，以 8 MiB 分块断点上传；预先保存远端 ID，避免重试重复创建。凭据、会话地址仅保存在私有服务端 SQLite/备份中，不返回上传会话地址给网页。
 
 本应用不是云端 BT 离线下载服务：下载期间仍需临时本地空间，完成后上传并按设置清理。已归档视频按 HTTP Range 从云端读取，不需要挂载完整云盘。播放速度取决于网络、Drive 限制和视频编码，不能保证始终更快。转码按需生成最多三分钟窗口，限制同时两路，闲置缓存五分钟后清理。
 
-Google 测试模式的 OAuth 凭据可能需要重新授权；具体授权状态由 Google 决定。真实账号授权和上传需用户完成，自动测试使用模拟 Drive 服务。
+External / Testing 模式的 Drive OAuth refresh token 会在 7 天后过期，需要重新授权，见 [Google 授权说明](https://developers.google.com/identity/protocols/oauth2#expiration)。真实账号授权和上传需用户完成，自动测试使用模拟 Drive 服务。
 
 ## 数据迁移
 
@@ -57,7 +64,7 @@ Google 测试模式的 OAuth 凭据可能需要重新授权；具体授权状态
 
 ## 运行差异
 
-- 浏览器管理，关闭网页不停止 Go 服务；没有 Electron 托盘及桌面窗口。
+- 支持浏览器和 Electron 桌面窗口。关闭网页不停止独立 Go 服务；退出桌面版会停止它托管的服务。
 - Go 托管 aria2c HTTP/BT 下载，默认最多四个任务同时执行，下载完成后不持续做种。qBittorrent 可选，需要本机能访问相同下载目录。
 - RSS 关键词过滤、合集过滤、自动下载；订阅刷新去重、相同下载 URL 去重。同集按字幕组、清晰度偏好择优，已开始下载的版本不会被自动替换。
 - Bangumi 首页；Bangumi、AniList、MAL/Jikan、TMDB 搜索（TMDB 需 Key）；蜜柑、Nyaa、ACG.RIP 资源 RSS。

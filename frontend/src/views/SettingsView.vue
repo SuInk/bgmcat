@@ -22,6 +22,7 @@ import {
 } from "../api";
 import type { DriveNetworkStatus, MetadataPlatformInfo } from "../api";
 import type { BackupSummary, ResourceProviderSummary } from "@shared/index";
+import CloudSetup from "../components/settings/CloudSetup.vue";
 import AppNavIcon from "../components/layout/AppNavIcon.vue";
 import { formatBytes } from "../lib/format";
 import { copyText, openExternalLink } from "../lib/actions";
@@ -100,6 +101,7 @@ async function scanCloudNetwork() {
 }
 onMounted(() => { void refreshDriveNetwork(); });
 
+const cloudSetup = ref<InstanceType<typeof CloudSetup> | null>(null);
 const cloudConnected = ref(false);
 async function refreshCloud() {
   try { cloudConnected.value = (await getCloudStatus()).connected; } catch { /* login handles auth */ }
@@ -1156,14 +1158,17 @@ async function runClearPlaybackCache(): Promise<void> {
                 <input v-model="settingsForm.downloadDir" class="settings-input settings-input-wide" />
               </label>
 
+              <CloudSetup ref="cloudSetup" @connected="refreshCloud" />
               <label class="settings-item">
                 <span><span class="settings-title">自动归档到 Google Drive</span><span class="settings-desc">完整下载后上传全部选中文件；失败保留本地文件，每 5 分钟重试</span></span>
                 <input v-model="settingsForm.cloudArchiveEnabled" type="checkbox" class="settings-switch" />
               </label>
               <div class="settings-item">
-                <span><span class="settings-title">Google Drive 授权</span><span class="settings-desc">{{ cloudConnected ? '已连接，凭据仅保存在服务端' : '尚未连接。填写下面的 OAuth 配置后连接账号' }}</span></span>
-                <button class="settings-secondary-button" @click="authorizeCloud">{{ cloudConnected ? '断开连接' : '连接 Google Drive' }}</button>
+                <span><span class="settings-title">Google Drive 授权</span><span class="settings-desc">{{ cloudConnected ? '已连接，凭据仅保存在服务端' : '尚未连接，请使用上方配置向导' }}</span></span>
+                <button class="settings-secondary-button" @click="cloudConnected ? authorizeCloud() : cloudSetup?.start()">{{ cloudConnected ? '断开连接' : '连接 Google Drive' }}</button>
               </div>
+              <details class="settings-item-stacked p-4">
+                <summary class="settings-title cursor-pointer">高级设置：网络直连、TLS 与手动配置</summary>
               <div class="settings-item settings-item-stacked">
                 <label class="flex items-center justify-between gap-4">
                   <span><span class="settings-title">Google Drive IP 直连</span><span class="settings-desc">开启后，上传及云端播放使用最近 24 小时内探测最快的可用 IP；无可用地址时走系统网络。OAuth 授权仍走系统网络。</span></span>
@@ -1221,6 +1226,7 @@ async function runClearPlaybackCache(): Promise<void> {
                   <input v-model="settingsForm.cloudDeleteLocal" type="checkbox" class="settings-switch" />
                 </label>
               </template>
+              </details>
               <div class="settings-item">
                 <span>
                   <span class="settings-title">下载器</span>
