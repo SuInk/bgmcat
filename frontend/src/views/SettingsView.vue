@@ -6,6 +6,7 @@ import { DEFAULT_THEME_ACCENT } from "@shared/index";
 
 import {
   getCloudStatus, connectCloud, disconnectCloud,
+  getDriveNetwork, setDriveNetwork, scanDriveNetwork,
   clearPlaybackCache,
   createBackup,
   deleteBackup,
@@ -19,7 +20,7 @@ import {
   testMetadataPlatform,
   testResourceProvider
 } from "../api";
-import type { MetadataPlatformInfo } from "../api";
+import type { DriveNetworkStatus, MetadataPlatformInfo } from "../api";
 import type { BackupSummary, ResourceProviderSummary } from "@shared/index";
 import AppNavIcon from "../components/layout/AppNavIcon.vue";
 import { formatBytes } from "../lib/format";
@@ -60,6 +61,28 @@ import {
   status
 } from "../stores/session";
 import { selectTab } from "../stores/boot";
+
+const driveNetwork = ref<DriveNetworkStatus | null>(null);
+const driveCandidates = ref("");
+const driveScanning = ref(false);
+const driveNetworkSaving = ref(false);
+async function refreshDriveNetwork() {
+  try { driveNetwork.value = await getDriveNetwork(); } catch (error) { toastError(error, "读取云盘网络状态失败"); }
+}
+async function toggleDriveNetwork(event: Event) {
+  const input = event.target as HTMLInputElement;
+  driveNetworkSaving.value = true;
+  try { driveNetwork.value = await setDriveNetwork(input.checked); }
+  catch (error) { input.checked = driveNetwork.value?.enabled ?? false; toastError(error, "保存云盘网络设置失败"); }
+  finally { driveNetworkSaving.value = false; }
+}
+async function scanCloudNetwork() {
+  driveScanning.value = true;
+  try { driveNetwork.value = await scanDriveNetwork(driveCandidates.value); }
+  catch (error) { toastError(error, "云盘 IP 扫描失败"); }
+  finally { driveScanning.value = false; }
+}
+onMounted(() => { void refreshDriveNetwork(); });
 
 const cloudConnected = ref(false);
 async function refreshCloud() {
@@ -1124,6 +1147,29 @@ async function runClearPlaybackCache(): Promise<void> {
               <div class="settings-item">
                 <span><span class="settings-title">Google Drive 授权</span><span class="settings-desc">{{ cloudConnected ? '已连接，凭据仅保存在服务端' : '尚未连接。填写下面的 OAuth 配置后连接账号' }}</span></span>
                 <button class="settings-secondary-button" @click="authorizeCloud">{{ cloudConnected ? '断开连接' : '连接 Google Drive' }}</button>
+              </div>
+              <div class="settings-item settings-item-stacked">
+                <label class="flex items-center justify-between gap-4">
+                  <span><span class="settings-title">Google Drive IP 直连</span><span class="settings-desc">开启后，上传及云端播放使用最近 24 小时内探测最快的可用 IP；无可用地址时走系统网络。OAuth 授权仍走系统网络。</span></span>
+                  <input type="checkbox" class="settings-switch" :checked="driveNetwork?.enabled ?? false" :disabled="!driveNetwork || driveNetworkSaving" @change="toggleDriveNetwork" />
+                </label>
+                <label class="settings-title" for="drive-network-candidates">自定义候选 IP（可选）</label>
+                <textarea id="drive-network-candidates" v-model="driveCandidates" class="settings-input settings-input-wide" rows="3" placeholder="每行一个公网 IP，支持 # 注释。留空使用 DNS、历史记录和内置候选。最多 256 个。" />
+                <div class="flex items-center gap-3">
+                  <button class="settings-secondary-button" :disabled="driveScanning" @click="scanCloudNetwork">{{ driveScanning ? '正在探测，最长约 60 秒…' : '扫描可用 IP' }}</button>
+                  <span class="settings-desc">{{ driveNetwork?.enabled ? (driveNetwork.selectedIP ? `当前选择：${driveNetwork.selectedIP}` : '当前使用系统网络：没有有效候选') : '直连未启用，当前使用系统网络' }}</span>
+                </div>
+                <p class="settings-desc">扫描在运行 bgmcat 的机器上进行。这里测量响应时间，不代表实际下载带宽；不会生成浏览器直链。TUN 代理仍可能接管网络。</p>
+                <p v-if="driveNetwork?.scannedAt" class="settings-desc">最近扫描：{{ new Date(driveNetwork.scannedAt).toLocaleString() }}{{ driveNetwork.partial ? '（达到时间上限，部分候选未完成）' : '' }}</p>
+                <div v-if="driveNetwork?.results.length" class="max-h-56 overflow-auto">
+                  <table class="w-full text-left text-xs">
+                    <thead><tr><th class="p-2">IP</th><th class="p-2">探测耗时</th><th class="p-2">状态</th></tr></thead>
+                    <tbody><tr v-for="result in driveNetwork.results" :key="result.ip">
+                      <td class="p-2 font-mono">{{ result.ip }}</td><td class="p-2">{{ result.available ? `${result.latencyMs} ms` : '—' }}</td>
+                      <td class="p-2">{{ result.available ? (Date.now() / 1000 - result.verifiedAt >= 86400 ? '已过期，请重新扫描' : result.warning || 'API 与下载探测通过') : result.error }}</td>
+                    </tr></tbody>
+                  </table>
+                </div>
               </div>
               <template v-if="true">
                 <label class="settings-item settings-item-stacked">
