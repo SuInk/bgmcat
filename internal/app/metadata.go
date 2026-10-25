@@ -10,7 +10,7 @@ import (
 	"unicode"
 )
 
-var platformNames = map[string]string{"bangumi": "Bangumi", "anilist": "AniList", "mal": "MyAnimeList", "tmdb": "TMDB"}
+var platformNames = map[string]string{"bangumi": "Bangumi", "anilist": "AniList", "mal": "MyAnimeList (Jikan)", "tmdb": "TMDB"}
 
 func titleKey(s string) string {
 	return strings.Map(func(r rune) rune {
@@ -21,7 +21,7 @@ func titleKey(s string) string {
 	}, s)
 }
 func (a *App) platformSearch(ctx context.Context, id, q string) ([]Obj, error) {
-	ctx, cancel := context.WithTimeout(ctx, 12*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 6*time.Second)
 	defer cancel()
 	if id == "bangumi" {
 		o, e := a.bangumiSearch(ctx, q)
@@ -174,19 +174,35 @@ func (a *App) externalDetail(ctx context.Context, id string) (Obj, error) {
 	if d == nil {
 		return nil, errors.New("请重新搜索此番剧以加载信息")
 	}
-	downloads := []Obj{}
-	statuses := []Obj{}
-	for _, v := range list(a.Settings()["enabledResourceProviders"]) {
-		p := str(v)
-		items, e := a.searchResources(ctx, p, str(d["mikanKeyword"]))
-		var message any
-		if e != nil {
-			message = e.Error()
-		}
-		statuses = append(statuses, Obj{"providerId": p, "displayName": p, "ok": e == nil, "count": len(items), "error": message})
-		downloads = append(downloads, items...)
-	}
+	downloads, statuses := a.parallelResources(ctx, str(d["mikanKeyword"]))
 	d["downloads"] = downloads
 	d["providerStatuses"] = statuses
 	return d, nil
+}
+
+func (a *App) parallelResources(ctx context.Context, keyword string) ([]Obj, []Obj) {
+	providers := list(a.Settings()["enabledResourceProviders"])
+	results := make([][]Obj, len(providers))
+	statuses := make([]Obj, len(providers))
+	var wg sync.WaitGroup
+	for i, v := range providers {
+		wg.Add(1)
+		go func(i int, provider string) {
+			defer wg.Done()
+			start := time.Now()
+			items, err := a.searchResources(ctx, provider, keyword)
+			reason := ""
+			if err != nil {
+				reason = err.Error()
+			}
+			results[i] = items
+			statuses[i] = Obj{"providerId": provider, "displayName": provider, "ok": err == nil, "count": len(items), "error": reason, "reason": reason, "elapsedMs": time.Since(start).Milliseconds()}
+		}(i, str(v))
+	}
+	wg.Wait()
+	downloads := []Obj{}
+	for _, items := range results {
+		downloads = append(downloads, items...)
+	}
+	return downloads, statuses
 }

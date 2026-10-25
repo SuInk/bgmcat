@@ -6,7 +6,7 @@
 
 Go 服务 · 托管 aria2 HTTP / BitTorrent · Vue 控制台 · Diana / MCP
 
-[安装与部署](docs/install.md) · [云盘与使用说明](docs/usage.md) · [版本发布](docs/releasing.md) · [AGPL-3.0](LICENSE)
+[安装与部署](docs/install.md) · [云盘与使用说明](docs/usage.md) · [在线服务与故障处理](docs/online-services.md) · [版本发布](docs/releasing.md) · [AGPL-3.0](LICENSE)
 
 </div>
 
