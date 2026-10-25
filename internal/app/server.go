@@ -34,27 +34,31 @@ type Config struct {
 	Web                      fs.FS
 }
 type App struct {
-	Store         *Store
-	cfg           Config
-	mux           *http.ServeMux
-	ctx           context.Context
-	cancel        context.CancelFunc
-	wg            sync.WaitGroup
-	http          *http.Client
-	refreshMu     sync.Mutex
-	enqueueMu     sync.Mutex
-	jobsMu        sync.Mutex
-	jobs          map[string]context.CancelFunc
-	downloadSlots chan struct{}
-	driveMu       sync.Mutex
-	oauthMu       sync.Mutex
-	oauth         map[string]Obj
-	mcpMu         sync.Mutex
-	mcpSessions   map[string]chan Obj
-	tunnel        Tunnel
-	torrent       *TorrentEngine
-	media         *Media
-	start         time.Time
+	Store          *Store
+	cfg            Config
+	mux            *http.ServeMux
+	ctx            context.Context
+	cancel         context.CancelFunc
+	wg             sync.WaitGroup
+	http           *http.Client
+	refreshMu      sync.Mutex
+	enqueueMu      sync.Mutex
+	jobsMu         sync.Mutex
+	jobs           map[string]context.CancelFunc
+	downloadSlots  chan struct{}
+	driveNetworkMu sync.Mutex
+	driveScanMu    sync.Mutex
+	driveIP        string
+	driveIPHTTP    *http.Transport
+	driveMu        sync.Mutex
+	oauthMu        sync.Mutex
+	oauth          map[string]Obj
+	mcpMu          sync.Mutex
+	mcpSessions    map[string]chan Obj
+	tunnel         Tunnel
+	torrent        *TorrentEngine
+	media          *Media
+	start          time.Time
 }
 
 func New(cfg Config) (*App, error) {
@@ -252,6 +256,11 @@ func (a *App) Close() error {
 	a.wg.Wait()
 	a.media.Close()
 	a.torrent.Close()
+	a.driveNetworkMu.Lock()
+	if a.driveIPHTTP != nil {
+		a.driveIPHTTP.CloseIdleConnections()
+	}
+	a.driveNetworkMu.Unlock()
 	return a.Store.Close()
 }
 func (a *App) status() Obj {
@@ -316,6 +325,7 @@ func (a *App) routes() {
 	a.downloadRoutes()
 	a.discoveryRoutes()
 	a.cloudRoutes()
+	a.driveNetworkRoutes()
 	a.integrationRoutes()
 	a.backupRoutes()
 	a.authRoutes()

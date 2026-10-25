@@ -146,12 +146,17 @@ func (a *App) driveRequest(ctx context.Context, method, endpoint string, data []
 			req.Header.Set(k, v)
 		}
 		client := *a.http
+		transport, selectedIP := a.driveTransport()
+		client.Transport = transport
 		if strings.Contains(endpoint, "alt=media") {
 			client.Timeout = 0
 		}
 		client.CheckRedirect = func(req *http.Request, via []*http.Request) error { return http.ErrUseLastResponse }
 		res, e := client.Do(req)
 		if e != nil {
+			if selectedIP != "" && ctx.Err() == nil {
+				a.failDriveIP(selectedIP)
+			}
 			return nil, e
 		}
 		if res.StatusCode == 401 && attempt == 0 {

@@ -751,3 +751,15 @@ export async function openDataDir(): Promise<OpenDataDirResult> {
 export const getCloudStatus = () => request<{ connected: boolean; configured: boolean }>("/api/cloud/status");
 export const connectCloud = () => request<{ url: string }>("/api/cloud/connect", { method: "POST" });
 export const disconnectCloud = () => request<{ connected: boolean }>("/api/cloud/disconnect", { method: "POST" });
+
+export interface DriveNetworkStatus {
+  enabled: boolean;
+  selectedIP: string;
+  scannedAt?: string;
+  partial?: boolean;
+  candidateCount?: number;
+  results: Array<{ ip: string; available: boolean; latencyMs: number; verifiedAt: number; warning: string; error: string }>;
+}
+export const getDriveNetwork = () => request<DriveNetworkStatus>("/api/cloud/network");
+export const setDriveNetwork = (enabled: boolean) => request<DriveNetworkStatus>("/api/cloud/network", { method: "PATCH", body: JSON.stringify({ enabled }) });
+export const scanDriveNetwork = (candidates: string) => request<DriveNetworkStatus>("/api/cloud/network/scan", { method: "POST", body: JSON.stringify({ candidates }) }, 70000);
