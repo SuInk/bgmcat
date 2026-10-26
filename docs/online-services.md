@@ -10,7 +10,7 @@
 | [AniList API](https://github.com/AniList/ApiV2-GraphQL-Docs) · `graphql.anilist.co` | GraphQL 番剧搜索、封面、简介、评分 | 搜索开启 | 官方接口；失败单独列在搜索平台失败信息中，不使其他平台结果丢失。不是 Bangumi ID 的直接替换。 |
 | [Jikan](https://docs.api.jikan.moe/) · `api.jikan.moe` | 获取 MyAnimeList 搜索结果 | 默认关闭 | **第三方非官方 MAL 接口**，额外依赖 Jikan 和 MAL；作为可选补充，不能视为官方 MAL 的稳定性承诺。 |
 | [TMDB API](https://developer.themoviedb.org/docs/getting-started) · `api.themoviedb.org` | TV 搜索、简介与评分；封面 `image.tmdb.org` | 默认关闭，需 API key | 官方接口；配额和 429 限流仍可能发生。不配置不影响主功能。 |
-| 蜜柑 · 默认 `mikanime.tv` | `/RSS/Search?searchstr=...` 资源搜索与订阅 | 默认资源源，可修改地址 | 网站 RSS，并非有可用性承诺的服务；可能超时、域名变更或受地区网络影响。可在设置中测试、禁用或改用其他源。 |
+| 蜜柑 · 默认 `mikanani.me` | `/RSS/Search?searchstr=...` 资源搜索与订阅 | 默认资源源，可修改地址 | 网站 RSS，并非有可用性承诺的服务；可能超时、域名变更或受地区网络影响。可在设置中测试、禁用或改用其他源。旧镜像 `mikanime.tv` 现只 302 跳转到 `mikanani.me`，已保存的旧地址会直接按 `mikanani.me` 请求。 |
 | Nyaa · `nyaa.si` | RSS 搜索与订阅 | 默认关闭 | 可选资源源；独立失败，不阻止其他资源源返回。 |
 | Acg.Rip · `acg.rip` | `.xml?term=...` RSS 搜索与订阅 | 默认关闭 | 同上。 |
 | 用户填写的 RSS、种子和 HTTP 下载地址 | 订阅更新、下载实际文件 | 按用户配置 | 可用性由对应站点决定；BT 还依赖 tracker、DHT 和在线 peer，不能仅凭资源列表判断下载速度。 |

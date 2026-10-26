@@ -30,20 +30,41 @@ func (a *App) getAny(ctx context.Context, endpoint string) (any, error) {
 	e = json.NewDecoder(io.LimitReader(res.Body, 16<<20)).Decode(&v)
 	return v, e
 }
+
+// bangumiCover turns a Bangumi cover URL into the 400px-wide HTTPS rendition.
+// The calendar API hands out http:// originals (often 200-500 KB, plus a 301 to
+// HTTPS); cards and the detail thumbnail are at most ~180 CSS px wide, so the
+// lain.bgm.tv /r/400/ resize is about 1/8 the bytes with no visible loss.
+func bangumiCover(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if strings.HasPrefix(raw, "http://lain.bgm.tv/") {
+		raw = "https://" + strings.TrimPrefix(raw, "http://")
+	}
+	if rest, found := strings.CutPrefix(raw, "https://lain.bgm.tv/pic/"); found {
+		raw = "https://lain.bgm.tv/r/400/pic/" + rest
+	}
+	return raw
+}
+
 func animeFromBangumi(o Obj, day int64) Obj {
 	id := str(o["id"])
 	title := str(o["name_cn"])
 	if title == "" {
 		title = str(o["name"])
 	}
-	image := object(o["images"])["large"]
-	if image == nil {
-		image = object(o["images"])["common"]
+	images := object(o["images"])
+	var image any
+	for _, size := range []string{"large", "common", "medium"} {
+		if raw := str(images[size]); raw != "" {
+			image = bangumiCover(raw)
+			break
+		}
 	}
 	return Obj{"animeId": id, "bangumiId": id, "title": title, "imageUrl": image, "searchKeyword": o["name"], "airDay": day % 7, "isOnAir": true, "isRestricted": flag(o["nsfw"]), "rating": object(o["rating"])["score"], "source": "bangumi", "mikanId": nil, "officialSite": nil, "externalIds": Obj{"bangumi": id}, "matchedPlatforms": []string{"bangumi"}}
 }
 func (a *App) homepage(ctx context.Context) ([]Obj, error) {
-	result, err := a.discoveryCached(ctx, "home", time.Hour, 7*24*time.Hour, func(ctx context.Context) (Obj, error) {
+	// The key carries a version so a change to the cached item shape (e.g. cover URLs) takes effect immediately.
+	result, err := a.discoveryCached(ctx, "home:v2", time.Hour, 7*24*time.Hour, func(ctx context.Context) (Obj, error) {
 		data, err := a.getAny(ctx, "https://api.bgm.tv/calendar")
 		if err != nil {
 			return nil, err
@@ -78,10 +99,22 @@ func (a *App) bangumiSearch(ctx context.Context, keyword string) (Obj, error) {
 	}
 	return Obj{"items": items, "platformFailures": []any{}}, nil
 }
+
+// mikanBase returns the configured Mikan site. mikanime.tv used to be the
+// mainland-friendly mirror but now only 302s to mikanani.me, so old saved values
+// skip straight to the target instead of paying an extra TLS round trip.
+func (a *App) mikanBase() string {
+	base := strings.TrimRight(strings.TrimSpace(str(a.Settings()["mikanBaseUrl"])), "/")
+	if base == "" || base == "https://mikanime.tv" || base == "http://mikanime.tv" {
+		return "https://mikanani.me"
+	}
+	return base
+}
+
 func (a *App) resourceURL(provider, keyword string) string {
 	switch provider {
 	case "mikan":
-		return strings.TrimRight(str(a.Settings()["mikanBaseUrl"]), "/") + "/RSS/Search?searchstr=" + url.QueryEscape(keyword)
+		return a.mikanBase() + "/RSS/Search?searchstr=" + url.QueryEscape(keyword)
 	case "nyaa":
 		return "https://nyaa.si/?page=rss&c=1_2&f=0&q=" + url.QueryEscape(keyword)
 	case "acgrip":
@@ -182,6 +215,10 @@ func (a *App) favorites() ([]Obj, error) {
 	}
 	subs, _ := a.Store.List("subscriptions")
 	for _, f := range favorites {
+		// Favorites saved before covers were resized still hold the original URL.
+		if image := str(f["imageUrl"]); image != "" {
+			f["imageUrl"] = bangumiCover(image)
+		}
 		related := []Obj{}
 		f["subscriptionId"] = nil
 		f["rssUrl"] = nil
