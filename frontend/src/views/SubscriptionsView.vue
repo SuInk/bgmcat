@@ -10,6 +10,8 @@ import { computed, reactive, ref, watch } from "vue";
 import type { FeedItem, Subscription } from "@shared/index";
 
 import { copyText } from "../lib/actions";
+import AppDialog from "../components/common/AppDialog.vue";
+import SegmentedControl from "../components/common/SegmentedControl.vue";
 import AppNavIcon from "../components/layout/AppNavIcon.vue";
 import { formatDateTime } from "../lib/format";
 import { isBusy } from "../stores/busy";
@@ -37,6 +39,20 @@ const statusFilter = ref<StatusFilter>("all");
 const expandedIds = reactive(new Set<number>());
 const subscriptionDialogOpen = ref(false);
 const deleteCandidate = ref<Subscription | null>(null);
+
+const ENABLED_OPTIONS = [
+  { value: true, label: "自动刷新" },
+  { value: false, label: "暂停" }
+] as const;
+const AUTO_DOWNLOAD_OPTIONS = [
+  { value: true, label: "自动下载" },
+  { value: false, label: "仅收集" }
+] as const;
+// 合集 / BDBOX 动辄几十 GB，默认跳过
+const SKIP_BATCH_OPTIONS = [
+  { value: true, label: "跳过合集" },
+  { value: false, label: "一并下载" }
+] as const;
 
 const filterTabs = computed(() => [
   { key: "all" as const, label: "全部", count: subscriptions.value.length },
@@ -365,232 +381,172 @@ watch(editingSubscriptionId, (id) => {
 <template>
   <section class="h-full min-h-0 overflow-hidden">
     <!-- 新建 / 编辑弹窗 -->
-    <div
+    <AppDialog
       v-if="subscriptionDialogOpen"
-      class="fixed inset-0 z-50 grid place-items-center bg-black/55 p-4"
-      @click.self="subscriptionDialogOpen = false"
+      size="lg"
+      :title="editingSubscriptionId ? '编辑订阅' : '新建订阅'"
+      description="按包含、排除、分辨率和保存目录控制 RSS 自动入队。"
+      @close="subscriptionDialogOpen = false"
     >
-      <article class="grid max-h-[min(92vh,58rem)] w-full max-w-3xl content-start overflow-auto rounded-lg border border-[var(--line)] bg-[var(--card)] p-4 shadow-[var(--strong-shadow)]">
-        <div class="mb-4 flex items-center justify-between gap-3">
-          <div>
-            <h2 class="text-lg font-semibold text-[var(--ink)]">{{ editingSubscriptionId ? "编辑订阅" : "新建订阅" }}</h2>
-            <p class="mt-1 text-xs text-[var(--muted)]">按包含、排除、分辨率和保存目录控制 RSS 自动入队。</p>
+      <form id="subscription-form" class="grid gap-3" @submit.prevent="submitDialog">
+        <label class="grid gap-1.5">
+          <span class="text-sm font-semibold text-[var(--muted)]">名称</span>
+          <input v-model="subscriptionForm.name" class="input-base px-4 py-3" placeholder="例如：葬送的芙莉莲 1080p" />
+        </label>
+        <label class="grid gap-1.5">
+          <span class="text-sm font-semibold text-[var(--muted)]">RSS URL</span>
+          <input v-model="subscriptionForm.url" class="input-base px-4 py-3" placeholder="https://example.com/feed.xml" />
+        </label>
+
+        <div class="grid gap-3 md:grid-cols-2">
+          <div class="grid gap-1.5">
+            <span class="text-sm font-semibold text-[var(--muted)]">启用状态</span>
+            <SegmentedControl v-model="subscriptionForm.enabled" block :options="ENABLED_OPTIONS" aria-label="启用状态" />
           </div>
-          <button type="button" class="btn-ghost px-3 py-2 text-sm font-semibold" @click="subscriptionDialogOpen = false">关闭</button>
+          <div class="grid gap-1.5">
+            <span class="text-sm font-semibold text-[var(--muted)]">命中后动作</span>
+            <SegmentedControl v-model="subscriptionForm.autoDownload" block :options="AUTO_DOWNLOAD_OPTIONS" aria-label="命中后动作" />
+          </div>
+          <div class="grid gap-1.5">
+            <span class="text-sm font-semibold text-[var(--muted)]">合集资源</span>
+            <SegmentedControl v-model="subscriptionForm.skipBatch" block :options="SKIP_BATCH_OPTIONS" aria-label="合集资源" />
+          </div>
         </div>
 
-        <form class="grid gap-3" @submit.prevent="submitDialog">
-          <label class="grid gap-1.5">
-            <span class="text-sm font-semibold text-[var(--muted)]">名称</span>
-            <input v-model="subscriptionForm.name" class="input-base px-4 py-3" placeholder="例如：葬送的芙莉莲 1080p" />
-          </label>
-          <label class="grid gap-1.5">
-            <span class="text-sm font-semibold text-[var(--muted)]">RSS URL</span>
-            <input v-model="subscriptionForm.url" class="input-base px-4 py-3" placeholder="https://example.com/feed.xml" />
-          </label>
+        <label class="grid gap-1.5">
+          <span class="text-sm font-semibold text-[var(--muted)]">下载目录覆盖</span>
+          <input v-model="subscriptionForm.downloadDirOverride" class="input-base px-4 py-3" placeholder="可选；留空使用默认下载目录" />
+        </label>
 
-          <div class="grid gap-3 md:grid-cols-2">
-            <div class="grid gap-1.5">
-              <span class="text-sm font-semibold text-[var(--muted)]">启用状态</span>
-              <div class="grid grid-cols-2 gap-1 rounded-lg border border-[var(--line)] bg-[var(--input-bg)] p-1">
-                <button
-                  type="button"
-                  class="rounded-lg px-3 py-2.5 text-sm font-semibold transition"
-                  :class="subscriptionForm.enabled ? 'bg-[var(--accent)] text-[var(--accent-contrast)]' : 'text-[var(--muted)] hover:bg-[var(--tint-2)]'"
-                  @click="subscriptionForm.enabled = true"
-                >
-                  自动刷新
-                </button>
-                <button
-                  type="button"
-                  class="rounded-lg px-3 py-2.5 text-sm font-semibold transition"
-                  :class="!subscriptionForm.enabled ? 'bg-[var(--accent)] text-[var(--accent-contrast)]' : 'text-[var(--muted)] hover:bg-[var(--tint-2)]'"
-                  @click="subscriptionForm.enabled = false"
-                >
-                  暂停
-                </button>
-              </div>
-            </div>
-            <div class="grid gap-1.5">
-              <span class="text-sm font-semibold text-[var(--muted)]">命中后动作</span>
-              <div class="grid grid-cols-2 gap-1 rounded-lg border border-[var(--line)] bg-[var(--input-bg)] p-1">
-                <button
-                  type="button"
-                  class="rounded-lg px-3 py-2.5 text-sm font-semibold transition"
-                  :class="subscriptionForm.autoDownload ? 'bg-[var(--accent)] text-[var(--accent-contrast)]' : 'text-[var(--muted)] hover:bg-[var(--tint-2)]'"
-                  @click="subscriptionForm.autoDownload = true"
-                >
-                  自动下载
-                </button>
-                <button
-                  type="button"
-                  class="rounded-lg px-3 py-2.5 text-sm font-semibold transition"
-                  :class="!subscriptionForm.autoDownload ? 'bg-[var(--accent)] text-[var(--accent-contrast)]' : 'text-[var(--muted)] hover:bg-[var(--tint-2)]'"
-                  @click="subscriptionForm.autoDownload = false"
-                >
-                  仅收集
-                </button>
-              </div>
-            </div>
-            <div class="grid gap-1.5">
-              <span class="text-sm font-semibold text-[var(--muted)]">合集资源</span>
-              <div class="grid grid-cols-2 gap-1 rounded-lg border border-[var(--line)] bg-[var(--input-bg)] p-1">
-                <button
-                  type="button"
-                  class="rounded-lg px-3 py-2.5 text-sm font-semibold transition"
-                  :class="subscriptionForm.skipBatch ? 'bg-[var(--accent)] text-[var(--accent-contrast)]' : 'text-[var(--muted)] hover:bg-[var(--tint-2)]'"
-                  title="合集/BDBOX 动辄几十 GB，默认跳过"
-                  @click="subscriptionForm.skipBatch = true"
-                >
-                  跳过合集
-                </button>
-                <button
-                  type="button"
-                  class="rounded-lg px-3 py-2.5 text-sm font-semibold transition"
-                  :class="!subscriptionForm.skipBatch ? 'bg-[var(--accent)] text-[var(--accent-contrast)]' : 'text-[var(--muted)] hover:bg-[var(--tint-2)]'"
-                  @click="subscriptionForm.skipBatch = false"
-                >
-                  一并下载
-                </button>
-              </div>
-            </div>
+        <div class="grid gap-3 rounded-lg border border-[var(--line)] bg-[var(--tint-2)] p-3">
+          <label class="grid gap-1.5">
+            <span class="text-sm font-semibold text-[var(--muted)]">必须包含</span>
+            <input v-model="subscriptionForm.includeKeywords" class="input-base rounded-lg px-3 py-2.5" placeholder="番剧名, 字幕组" />
+          </label>
+          <div class="flex flex-wrap gap-2">
+            <button
+              v-for="keyword in ['简体', '繁体', 'CHS', 'CHT']"
+              :key="keyword"
+              type="button"
+              class="chip rounded-lg px-3 py-1.5 text-xs"
+              :class="{ 'chip-active': fieldContains('includeKeywords', keyword) }"
+              @click="toggleCsvValue('includeKeywords', keyword)"
+            >
+              {{ keyword }}
+            </button>
           </div>
 
           <label class="grid gap-1.5">
-            <span class="text-sm font-semibold text-[var(--muted)]">下载目录覆盖</span>
-            <input v-model="subscriptionForm.downloadDirOverride" class="input-base px-4 py-3" placeholder="可选；留空使用默认下载目录" />
+            <span class="text-sm font-semibold text-[var(--muted)]">排除关键词</span>
+            <input v-model="subscriptionForm.excludeKeywords" class="input-base rounded-lg px-3 py-2.5" placeholder="合集, NCOP, NCED, SP, PV" />
           </label>
-
-          <div class="grid gap-3 rounded-lg border border-[var(--line)] bg-[var(--tint-2)] p-3">
-            <label class="grid gap-1.5">
-              <span class="text-sm font-semibold text-[var(--muted)]">必须包含</span>
-              <input v-model="subscriptionForm.includeKeywords" class="input-base rounded-lg px-3 py-2.5" placeholder="番剧名, 字幕组" />
-            </label>
-            <div class="flex flex-wrap gap-2">
-              <button
-                v-for="keyword in ['简体', '繁体', 'CHS', 'CHT']"
-                :key="keyword"
-                type="button"
-                class="chip rounded-lg px-3 py-1.5 text-xs"
-                :class="{ 'chip-active': fieldContains('includeKeywords', keyword) }"
-                @click="toggleCsvValue('includeKeywords', keyword)"
-              >
-                {{ keyword }}
-              </button>
-            </div>
-
-            <label class="grid gap-1.5">
-              <span class="text-sm font-semibold text-[var(--muted)]">排除关键词</span>
-              <input v-model="subscriptionForm.excludeKeywords" class="input-base rounded-lg px-3 py-2.5" placeholder="合集, NCOP, NCED, SP, PV" />
-            </label>
-            <div class="flex flex-wrap gap-2">
-              <button
-                v-for="keyword in ['合集', 'NCOP', 'NCED', 'SP', 'PV']"
-                :key="keyword"
-                type="button"
-                class="chip rounded-lg px-3 py-1.5 text-xs"
-                :class="{ 'chip-active': fieldContains('excludeKeywords', keyword) }"
-                @click="toggleCsvValue('excludeKeywords', keyword)"
-              >
-                {{ keyword }}
-              </button>
-            </div>
-
-            <label class="grid gap-1.5">
-              <span class="text-sm font-semibold text-[var(--muted)]">分辨率偏好</span>
-              <input v-model="subscriptionForm.preferredResolutions" class="input-base rounded-lg px-3 py-2.5" placeholder="1080p, 2160p" />
-            </label>
-            <div class="flex flex-wrap gap-2">
-              <button
-                v-for="keyword in ['720p', '1080p', '2160p']"
-                :key="keyword"
-                type="button"
-                class="chip rounded-lg px-3 py-1.5 text-xs"
-                :class="{ 'chip-active': fieldContains('preferredResolutions', keyword) }"
-                @click="toggleCsvValue('preferredResolutions', keyword)"
-              >
-                {{ keyword }}
-              </button>
-            </div>
-
-            <!--
-              字幕组偏好是跨源同集择优的第一优先级（字幕组 > 分辨率 > 先到先得），
-              所以顺序本身有意义：越靠前越优先。用左右箭头调，别让用户回去改逗号分隔的字符串。
-            -->
-            <label class="grid gap-1.5">
-              <span class="text-sm font-semibold text-[var(--muted)]">字幕组偏好（有序，越靠前越优先）</span>
-              <input
-                v-model="subscriptionForm.preferredSubgroups"
-                class="input-base rounded-lg px-3 py-2.5"
-                placeholder="喵萌奶茶屋, 桜都字幕组"
-              />
-            </label>
-            <div v-if="preferredSubgroupList.length" class="flex flex-wrap items-center gap-2">
-              <span
-                v-for="(name, index) in preferredSubgroupList"
-                :key="name"
-                class="chip chip-active inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs"
-              >
-                <span class="font-semibold">{{ index + 1 }}. {{ name }}</span>
-                <button
-                  type="button"
-                  class="px-0.5 disabled:opacity-40"
-                  :disabled="index === 0"
-                  aria-label="上移"
-                  @click="moveSubgroupPreference(index, -1)"
-                >
-                  ←
-                </button>
-                <button
-                  type="button"
-                  class="px-0.5 disabled:opacity-40"
-                  :disabled="index === preferredSubgroupList.length - 1"
-                  aria-label="下移"
-                  @click="moveSubgroupPreference(index, 1)"
-                >
-                  →
-                </button>
-                <button type="button" class="px-0.5" aria-label="移除" @click="removeSubgroupPreference(index)">
-                  ×
-                </button>
-              </span>
-            </div>
-            <div v-if="knownSubgroups.length" class="flex flex-wrap gap-2">
-              <button
-                v-for="name in knownSubgroups"
-                :key="name"
-                type="button"
-                class="chip rounded-lg px-3 py-1.5 text-xs"
-                :class="{ 'chip-active': fieldContains('preferredSubgroups', name) }"
-                @click="toggleCsvValue('preferredSubgroups', name)"
-              >
-                {{ name }}
-              </button>
-            </div>
+          <div class="flex flex-wrap gap-2">
+            <button
+              v-for="keyword in ['合集', 'NCOP', 'NCED', 'SP', 'PV']"
+              :key="keyword"
+              type="button"
+              class="chip rounded-lg px-3 py-1.5 text-xs"
+              :class="{ 'chip-active': fieldContains('excludeKeywords', keyword) }"
+              @click="toggleCsvValue('excludeKeywords', keyword)"
+            >
+              {{ keyword }}
+            </button>
           </div>
 
-          <button type="submit" class="btn-primary rounded-lg px-5 py-3 text-sm font-semibold" :disabled="isBusy('subscription-form')">
-            {{ isBusy("subscription-form") ? "提交中…" : editingSubscriptionId ? "保存订阅" : "创建订阅（创建后自动抓取一次）" }}
-          </button>
-        </form>
-      </article>
-    </div>
+          <label class="grid gap-1.5">
+            <span class="text-sm font-semibold text-[var(--muted)]">分辨率偏好</span>
+            <input v-model="subscriptionForm.preferredResolutions" class="input-base rounded-lg px-3 py-2.5" placeholder="1080p, 2160p" />
+          </label>
+          <div class="flex flex-wrap gap-2">
+            <button
+              v-for="keyword in ['720p', '1080p', '2160p']"
+              :key="keyword"
+              type="button"
+              class="chip rounded-lg px-3 py-1.5 text-xs"
+              :class="{ 'chip-active': fieldContains('preferredResolutions', keyword) }"
+              @click="toggleCsvValue('preferredResolutions', keyword)"
+            >
+              {{ keyword }}
+            </button>
+          </div>
+
+          <!--
+            字幕组偏好是跨源同集择优的第一优先级（字幕组 > 分辨率 > 先到先得），
+            所以顺序本身有意义：越靠前越优先。用左右箭头调，别让用户回去改逗号分隔的字符串。
+          -->
+          <label class="grid gap-1.5">
+            <span class="text-sm font-semibold text-[var(--muted)]">字幕组偏好（有序，越靠前越优先）</span>
+            <input
+              v-model="subscriptionForm.preferredSubgroups"
+              class="input-base rounded-lg px-3 py-2.5"
+              placeholder="喵萌奶茶屋, 桜都字幕组"
+            />
+          </label>
+          <div v-if="preferredSubgroupList.length" class="flex flex-wrap items-center gap-2">
+            <span
+              v-for="(name, index) in preferredSubgroupList"
+              :key="name"
+              class="chip chip-active inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs"
+            >
+              <span class="font-semibold">{{ index + 1 }}. {{ name }}</span>
+              <button
+                type="button"
+                class="px-0.5 disabled:opacity-40"
+                :disabled="index === 0"
+                aria-label="上移"
+                @click="moveSubgroupPreference(index, -1)"
+              >
+                ←
+              </button>
+              <button
+                type="button"
+                class="px-0.5 disabled:opacity-40"
+                :disabled="index === preferredSubgroupList.length - 1"
+                aria-label="下移"
+                @click="moveSubgroupPreference(index, 1)"
+              >
+                →
+              </button>
+              <button type="button" class="px-0.5" aria-label="移除" @click="removeSubgroupPreference(index)">
+                ×
+              </button>
+            </span>
+          </div>
+          <div v-if="knownSubgroups.length" class="flex flex-wrap gap-2">
+            <button
+              v-for="name in knownSubgroups"
+              :key="name"
+              type="button"
+              class="chip rounded-lg px-3 py-1.5 text-xs"
+              :class="{ 'chip-active': fieldContains('preferredSubgroups', name) }"
+              @click="toggleCsvValue('preferredSubgroups', name)"
+            >
+              {{ name }}
+            </button>
+          </div>
+        </div>
+      </form>
+      <template #footer>
+        <button type="button" class="btn-ghost" @click="subscriptionDialogOpen = false">取消</button>
+        <button type="submit" form="subscription-form" class="btn-primary" :disabled="isBusy('subscription-form')">
+          {{ isBusy("subscription-form") ? "提交中…" : editingSubscriptionId ? "保存订阅" : "创建订阅（创建后自动抓取一次）" }}
+        </button>
+      </template>
+    </AppDialog>
 
     <!-- 删除确认弹窗 -->
-    <div v-if="deleteCandidate" class="fixed inset-0 z-50 grid place-items-center bg-black/55 p-4" @click.self="deleteCandidate = null">
-      <article class="grid w-full max-w-md gap-4 rounded-lg border border-[var(--line)] bg-[var(--card)] p-5 shadow-[var(--strong-shadow)]">
-        <div>
-          <h2 class="text-lg font-semibold text-[var(--ink)]">删除订阅「{{ deleteCandidate.name }}」？</h2>
-          <p class="mt-2 text-sm leading-6 text-[var(--muted)]">
-            该订阅抓取的 RSS 条目记录会一并删除；已创建的下载任务和本地文件不受影响。此操作无法撤销。
-          </p>
-        </div>
-        <div class="flex justify-end gap-2">
-          <button type="button" class="btn-ghost px-4 py-2 text-sm font-semibold" @click="deleteCandidate = null">取消</button>
-          <button type="button" class="btn-danger px-4 py-2 text-sm font-semibold" @click="confirmDelete">删除订阅</button>
-        </div>
-      </article>
-    </div>
+    <AppDialog
+      v-if="deleteCandidate"
+      size="sm"
+      :title="`删除订阅「${deleteCandidate.name}」？`"
+      description="该订阅抓取的 RSS 条目记录会一并删除；已创建的下载任务和本地文件不受影响。此操作无法撤销。"
+      @close="deleteCandidate = null"
+    >
+      <template #footer>
+        <button type="button" class="btn-ghost" @click="deleteCandidate = null">取消</button>
+        <button type="button" class="btn-danger" @click="confirmDelete">删除订阅</button>
+      </template>
+    </AppDialog>
 
     <div class="page-shell rounded-lg border border-[var(--line)] bg-[var(--table-bg)] shadow-[var(--soft-shadow)]">
       <div class="page-toolbar">

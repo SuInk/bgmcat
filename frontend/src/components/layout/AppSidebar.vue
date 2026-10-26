@@ -16,8 +16,10 @@ const hidden = computed(() => props.mobile ? !props.mobileOpen : props.collapsed
 const groups = computed(() => [
  { label: "追番", items: props.tabs.filter(t => ["home", "favorites"].includes(t.key)) },
  { label: "资源管理", items: props.tabs.filter(t => ["subscriptions", "downloads"].includes(t.key)) },
- { label: "工具", items: props.tabs.filter(t => ["logs", "integrations", "settings"].includes(t.key)) }
+ { label: "工具", items: props.tabs.filter(t => ["logs", "integrations"].includes(t.key)) }
 ]);
+// 与 Diana 一致：「设置」不占主导航，收在底部和主题、版本一排
+const settingsTab = computed(() => props.tabs.find(t => t.key === "settings"));
 const themeLabel = computed(() => themeMode.value === "system" ? "跟随系统" : themeMode.value === "light" ? "浅色" : "深色");
 const versionLabel = computed(() => status.value?.appVersion ? `v${status.value.appVersion.replace(/^v/, "")}` : "版本与更新");
 function cycleTheme() { setThemeMode(themeMode.value === "system" ? "light" : themeMode.value === "light" ? "dark" : "system"); }
@@ -49,6 +51,7 @@ function trapFocus(event: KeyboardEvent) {
    </div>
   </nav>
   <div class="nav-footer">
+   <button v-if="settingsTab" type="button" class="nav-action" :class="{ active: activeTab === 'settings' }" :aria-current="activeTab === 'settings' ? 'page' : undefined" :disabled="!hasConsoleAccess" @click="emit('select-tab', 'settings')"><AppNavIcon name="settings" /><span class="nav-label">{{ settingsTab.label }}</span></button>
    <button type="button" class="nav-action" :title="`外观：${themeLabel}（点击切换）`" @click="cycleTheme"><AppNavIcon :name="themeMode === 'dark' ? 'moon' : themeMode === 'light' ? 'sun' : 'theme'" /><span class="nav-label">{{ themeLabel }}</span></button>
    <button type="button" class="nav-action version-action" title="查看版本与更新" :disabled="!hasConsoleAccess" @click="emit('open-version')"><AppNavIcon name="tag" /><span class="version-label-text">{{ versionLabel }}</span><span v-if="updateAvailable" class="update-dot" aria-label="有新版本" /></button>
   </div>
@@ -56,14 +59,15 @@ function trapFocus(event: KeyboardEvent) {
 </template>
 
 <style scoped>
+/* 尺寸、字号对齐 Diana 控制台（frontend/src/styles/main.css 的 .app-sidebar / .nav-*） */
 .app-sidebar { display:flex; flex-direction:column; gap:4px; height:100dvh; width:236px; min-height:0; padding:20px 14px max(20px, env(safe-area-inset-bottom)); background:var(--sidebar-bg); border-right:1px solid var(--line); z-index:40; transition:transform .2s, opacity .2s; }
 .sidebar-hidden { transform:translateX(-100%); opacity:0; visibility:hidden; pointer-events:none; }.sidebar-drawer { position:fixed; inset:0 auto 0 0; width:min(82vw,280px); box-shadow:var(--strong-shadow); z-index:50; }
-.sidebar-head { display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:24px; padding:0 4px; }.brand { display:flex; align-items:center; gap:10px; min-width:0; }.brand img { border-radius:9px; }.brand strong { display:block; font-size:14px; font-weight:650; }.brand span { display:block; font-size:11px; color:var(--muted); margin-top:2px; }
-.sidebar-toggle { display:grid; place-items:center; width:32px; height:32px; border-radius:8px; color:var(--muted); flex-shrink:0; }.sidebar-toggle:hover { background:var(--panel); color:var(--ink); }.sidebar-toggle svg { width:18px; height:18px; }
-.nav-sections { display:flex; flex-direction:column; gap:20px; flex:1; min-height:0; overflow:auto; }.nav-section { display:flex; flex-direction:column; gap:2px; }.nav-group-title { padding:0 12px 6px; font-size:11px; font-weight:600; letter-spacing:.08em; color:var(--muted); }
-.nav-item { display:flex; align-items:center; gap:10px; width:100%; min-height:38px; padding:9px 12px; border-radius:12px; font-size:13.5px; text-align:left; color:var(--ink); background:transparent; transition:background .15s,color .15s; }.nav-item svg { width:17px; height:17px; flex-shrink:0; opacity:.8; }.nav-item:hover:not(:disabled) { background:var(--panel); }.nav-item.active { background:var(--accent-soft); color:var(--accent); font-weight:600; }.nav-item:disabled { opacity:.45; cursor:not-allowed; }.nav-label { flex:1; min-width:0; }.nav-count { border-radius:6px; padding:1px 5px; background:var(--accent-soft); color:var(--accent); font-size:11px; }.completed { background:var(--ok-soft); color:var(--ok); }
-.nav-footer { margin-top:auto; padding:12px 8px 0; border-top:1px solid var(--line); display:grid; gap:8px; }.sidebar-caption { padding:6px 12px 0; color:var(--muted); font-size:11px; }.update-dot { width:7px; height:7px; border-radius:50%; background:var(--warn); }
-.nav-action { display:flex; align-items:center; gap:10px; width:100%; padding:9px 12px; border-radius:12px; background:transparent; color:var(--ink); font-size:13px; text-align:left; }
-.nav-action svg { width:16px; height:16px; flex-shrink:0; }.nav-action:hover { background:var(--panel); }.nav-action.version-action { padding-inline:10px; font-family:ui-monospace,monospace; font-size:11px; color:var(--muted); }.nav-action.version-action:hover { color:var(--accent); }.version-label-text { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex:1; }.nav-action:disabled { opacity:.5; cursor:not-allowed; }
-@media(max-width:960px) { .nav-item { min-height:44px; } }
+/* 头部跟顶栏等高、抵掉侧栏上内边距，logo 和收起按钮就跟顶栏标题同一条中线 */
+.sidebar-head { display:flex; flex:none; align-items:center; justify-content:space-between; gap:8px; height:56px; margin:-20px 0 12px; padding:0 4px 0 8px; }.brand { display:flex; align-items:center; gap:10px; min-width:0; }.brand img { border-radius:9px; }.brand strong { display:block; font-size:14px; font-weight:650; line-height:1.3; }.brand span { display:block; font-size:11px; color:var(--muted); line-height:1.3; }
+.sidebar-toggle { display:grid; place-items:center; width:32px; height:32px; border-radius:8px; color:var(--ink-secondary); flex-shrink:0; }.sidebar-toggle:hover { background:var(--panel); color:var(--ink); }.sidebar-toggle svg { width:18px; height:18px; }
+.nav-sections { display:flex; flex-direction:column; gap:14px; flex:1 1 auto; min-height:0; overflow-y:auto; }.nav-section { display:flex; flex-direction:column; gap:2px; }.nav-group-title { padding:0 12px 4px; font-size:11px; font-weight:600; letter-spacing:.08em; color:var(--muted); }
+.nav-item { display:flex; align-items:center; gap:10px; width:100%; padding:9px 12px; border-radius:12px; font-size:14px; text-align:left; color:var(--ink-secondary); background:transparent; transition:background .15s,color .15s; }.nav-item svg { width:17px; height:17px; flex-shrink:0; }.nav-item:hover:not(:disabled) { background:var(--panel); color:var(--ink); }.nav-item.active { background:var(--accent-soft); color:var(--accent); font-weight:600; }.nav-item:disabled { opacity:.45; cursor:not-allowed; }.nav-label { flex:1; min-width:0; }.nav-count { border-radius:6px; padding:1px 5px; background:var(--accent-soft); color:var(--accent); font-size:11px; }.completed { background:var(--ok-soft); color:var(--ok); }
+.nav-footer { margin-top:auto; padding:12px 8px 0; border-top:1px solid var(--line); display:flex; flex-direction:column; gap:8px; }.update-dot { width:6px; height:6px; border-radius:50%; background:var(--warn); flex:none; }
+.nav-action { display:flex; align-items:center; gap:10px; width:100%; padding:9px 12px; border-radius:12px; background:transparent; color:var(--ink-secondary); font-size:13px; text-align:left; transition:background .15s,color .15s; }
+.nav-action svg { width:16px; height:16px; flex-shrink:0; }.nav-action:hover:not(:disabled) { background:var(--panel); color:var(--ink); }.nav-action.active { background:var(--accent-soft); color:var(--accent); font-weight:600; }.nav-action.version-action { padding-inline:10px; font-family:ui-monospace,monospace; font-size:11px; color:var(--muted); }.nav-action.version-action:hover { color:var(--accent); }.version-label-text { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex:1; }.nav-action:disabled { opacity:.5; cursor:not-allowed; }
 </style>

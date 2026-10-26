@@ -12,6 +12,7 @@ import {
   resolveDownloadArtworkUrl
 } from "../api";
 import { cloudArchiveLabel } from "../lib/cloudArchive";
+import AppDialog from "../components/common/AppDialog.vue";
 import PagerBar from "../components/common/PagerBar.vue";
 import AppNavIcon from "../components/layout/AppNavIcon.vue";
 import ArtPlayerPane from "../components/downloads/ArtPlayerPane.vue";
@@ -1150,127 +1151,90 @@ watch(
       </div>
     </div>
 
-    <div
+    <AppDialog
       v-if="manualComposerOpen"
-      class="fixed inset-0 z-50 grid place-items-center bg-black/55 p-4"
-      @click.self="manualComposerOpen = false"
+      title="添加下载链接"
+      description="支持磁力、.torrent 地址和普通 HTTP(S) 直链。"
+      @close="manualComposerOpen = false"
     >
-      <section class="grid max-h-[calc(100dvh-2rem)] overflow-y-auto w-full max-w-2xl gap-5 rounded-lg border border-[var(--line)] bg-[var(--card)] p-6 shadow-[var(--strong-shadow)]">
-        <div class="flex items-start justify-between gap-4">
-          <div class="grid gap-2">
-            <h3 class="text-lg font-semibold text-[var(--ink)]">添加下载链接</h3>
-            <p class="text-sm text-[var(--muted)]">支持磁力、.torrent 地址和普通 HTTP(S) 直链。</p>
-          </div>
-          <button type="button" class="btn-ghost shrink-0 whitespace-nowrap rounded-lg px-4 py-2 text-sm font-semibold" @click="manualComposerOpen = false">关闭</button>
-        </div>
-
-        <div class="grid gap-3">
-          <textarea
-            v-model="manualDownloadForm.url"
-            class="input-base min-h-32 w-full rounded-lg px-4 py-3"
-            placeholder="粘贴磁力、torrent URL 或直链后添加到队列"
-          ></textarea>
-          <div class="flex flex-wrap items-center gap-3">
-            <button
-              type="button"
-              class="rounded-full border border-[var(--line)] bg-[var(--tint-2)] px-3 py-2 text-sm font-semibold text-[var(--accent)] transition hover:border-[var(--accent)]"
-              @click="manualOptionsOpen = true"
-            >
-              下载选项 · {{ sourceTypeLabel(effectiveManualSourceType) }}
-            </button>
-            <span class="text-sm font-semibold text-[var(--muted)]">当前识别：{{ sourceTypeLabel(inferredManualSourceType) }}</span>
-          </div>
-        </div>
-
-        <div class="flex flex-wrap justify-end gap-3">
+      <div class="grid gap-3">
+        <textarea
+          v-model="manualDownloadForm.url"
+          class="input-base min-h-32 w-full rounded-lg px-4 py-3"
+          placeholder="粘贴磁力、torrent URL 或直链后添加到队列"
+        ></textarea>
+        <div class="flex flex-wrap items-center gap-3">
           <button
             type="button"
-            class="btn-ghost rounded-lg px-5 py-3 text-sm font-semibold"
-            @click="manualComposerOpen = false; manualDownloadForm.url = ''"
+            class="rounded-full border border-[var(--line)] bg-[var(--tint-2)] px-3 py-2 text-sm font-semibold text-[var(--accent)] transition hover:border-[var(--accent)]"
+            @click="manualOptionsOpen = true"
           >
-            取消
+            下载选项 · {{ sourceTypeLabel(effectiveManualSourceType) }}
           </button>
-          <button
-            type="button"
-            class="btn-primary rounded-lg px-5 py-3 text-sm font-semibold"
-            :disabled="isBusy('download:manual') || !manualDownloadForm.url.trim()"
-            @click="submitManual"
-          >
-            {{ isBusy("download:manual") ? "添加中…" : "确认添加" }}
-          </button>
+          <span class="text-sm font-semibold text-[var(--muted)]">当前识别：{{ sourceTypeLabel(inferredManualSourceType) }}</span>
         </div>
-      </section>
-    </div>
+      </div>
+      <template #footer>
+        <button type="button" class="btn-ghost" @click="manualComposerOpen = false; manualDownloadForm.url = ''">取消</button>
+        <button
+          type="button"
+          class="btn-primary"
+          :disabled="isBusy('download:manual') || !manualDownloadForm.url.trim()"
+          @click="submitManual"
+        >
+          {{ isBusy("download:manual") ? "添加中…" : "确认添加" }}
+        </button>
+      </template>
+    </AppDialog>
 
-    <div
+    <AppDialog
       v-if="manualOptionsOpen"
-      class="fixed inset-0 z-50 grid place-items-center bg-black/55 p-4"
-      @click.self="manualOptionsOpen = false"
+      title="更多下载选项"
+      :description="`当前识别：${sourceTypeLabel(inferredManualSourceType)}`"
+      @close="manualOptionsOpen = false"
     >
-      <section class="grid max-h-[calc(100dvh-2rem)] overflow-y-auto w-full max-w-xl gap-5 rounded-lg border border-[var(--line)] bg-[var(--card)] p-6 shadow-[var(--strong-shadow)]">
-        <div class="flex items-start justify-between gap-4">
-          <div class="grid gap-2">
-            <h3 class="text-lg font-semibold text-[var(--ink)]">更多下载选项</h3>
-            <p class="text-sm text-[var(--muted)]">当前识别：{{ sourceTypeLabel(inferredManualSourceType) }}</p>
+      <div class="grid gap-3">
+        <button
+          v-for="option in manualSourceOptions"
+          :key="option.label"
+          type="button"
+          class="grid gap-1 rounded-lg border px-4 py-3 text-left transition"
+          :class="manualDownloadForm.sourceTypeOverride === option.value ? 'border-[var(--accent)] bg-[var(--tint-2)]' : 'border-[var(--line)] bg-[var(--tint-2)] hover:border-[var(--accent)]'"
+          @click="manualDownloadForm.sourceTypeOverride = option.value"
+        >
+          <div class="flex items-center justify-between gap-3">
+            <span class="text-sm font-semibold text-[var(--ink)]">{{ option.label }}</span>
+            <span v-if="manualDownloadForm.sourceTypeOverride === option.value" class="rounded-full bg-[var(--accent)] px-2 py-0.5 text-[11px] font-semibold text-[var(--accent-contrast)]">
+              当前
+            </span>
           </div>
-          <button type="button" class="btn-ghost shrink-0 whitespace-nowrap rounded-lg px-4 py-2 text-sm font-semibold" @click="manualOptionsOpen = false">关闭</button>
-        </div>
+          <p class="text-xs font-semibold text-[var(--muted)]">{{ option.description }}</p>
+        </button>
+      </div>
+      <div class="mt-3 rounded-lg border border-[var(--line)] bg-[var(--tint-2)] px-4 py-3 text-xs font-semibold text-[var(--muted)]">
+        支持粘贴磁力链接、.torrent 地址和普通 HTTP(S) 直链。多数情况下保持自动识别即可，只有识别不准时再手动切换。
+      </div>
+    </AppDialog>
 
-        <div class="grid gap-3">
-          <button
-            v-for="option in manualSourceOptions"
-            :key="option.label"
-            type="button"
-            class="grid gap-1 rounded-lg border px-4 py-3 text-left transition"
-            :class="manualDownloadForm.sourceTypeOverride === option.value ? 'border-[var(--accent)] bg-[var(--tint-2)]' : 'border-[var(--line)] bg-[var(--tint-2)] hover:border-[var(--accent)]'"
-            @click="manualDownloadForm.sourceTypeOverride = option.value"
-          >
-            <div class="flex items-center justify-between gap-3">
-              <span class="text-sm font-semibold text-[var(--ink)]">{{ option.label }}</span>
-              <span v-if="manualDownloadForm.sourceTypeOverride === option.value" class="rounded-full bg-[var(--accent)] px-2 py-0.5 text-[11px] font-semibold text-[var(--accent-contrast)]">
-                当前
-              </span>
-            </div>
-            <p class="text-xs font-semibold text-[var(--muted)]">{{ option.description }}</p>
-          </button>
-        </div>
-
-        <div class="rounded-lg border border-[var(--line)] bg-[var(--tint-2)] px-4 py-3 text-xs font-semibold text-[var(--muted)]">
-          支持粘贴磁力链接、.torrent 地址和普通 HTTP(S) 直链。多数情况下保持自动识别即可，只有识别不准时再手动切换。
-        </div>
-      </section>
-    </div>
-
-    <div
+    <AppDialog
       v-if="deleteCandidate || batchDeleteCandidates.length"
-      class="fixed inset-0 z-50 grid place-items-center bg-black/55 p-4"
-      @click.self="closeDeleteDialog"
+      :title="batchDeleteCandidates.length ? `删除 ${batchDeleteCandidates.length} 个下载任务` : '删除下载任务'"
+      :description="deleteCandidate ? displayTitle(deleteCandidate) : '将删除当前选中的分组任务。'"
+      @close="closeDeleteDialog"
     >
-      <section class="grid max-h-[calc(100dvh-2rem)] overflow-y-auto w-full max-w-lg gap-5 rounded-lg border border-[var(--line)] bg-[var(--card)] p-6 shadow-[var(--strong-shadow)]">
-        <div class="grid gap-2">
-          <h3 class="break-words text-lg font-semibold text-[var(--ink)]">
-            {{ batchDeleteCandidates.length ? `删除 ${batchDeleteCandidates.length} 个下载任务` : "删除下载任务" }}
-          </h3>
-          <p class="break-words text-sm leading-6 text-[var(--muted)]">
-            {{ deleteCandidate ? displayTitle(deleteCandidate) : "将删除当前选中的分组任务。" }}
-          </p>
-        </div>
-
-        <label class="flex items-start gap-3 rounded-lg border border-[var(--line)] bg-[var(--tint-2)] p-4 text-sm text-[var(--ink)]">
-          <input v-model="deleteLocalFiles" type="checkbox" class="mt-1 size-5 accent-[var(--accent)]" />
-          <span class="grid gap-1">
-            <span class="font-semibold">同时删除本地文件</span>
-            <span class="text-[var(--muted)]">取消勾选则只删除任务记录，保留已下载的文件。</span>
-          </span>
-        </label>
-
-        <div class="flex flex-wrap justify-end gap-3">
-          <button type="button" class="btn-ghost rounded-lg px-5 py-3 text-sm font-semibold" @click="closeDeleteDialog">取消</button>
-          <button type="button" class="btn-danger rounded-lg px-5 py-3 text-sm font-semibold" @click="confirmDelete">
-            {{ deleteLocalFiles ? "删除任务和文件" : "仅删除任务" }}
-          </button>
-        </div>
-      </section>
-    </div>
+      <label class="flex items-start gap-3 rounded-lg border border-[var(--line)] bg-[var(--tint-2)] p-4 text-sm text-[var(--ink)]">
+        <input v-model="deleteLocalFiles" type="checkbox" class="mt-1 size-5 accent-[var(--accent)]" />
+        <span class="grid gap-1">
+          <span class="font-semibold">同时删除本地文件</span>
+          <span class="text-[var(--muted)]">取消勾选则只删除任务记录，保留已下载的文件。</span>
+        </span>
+      </label>
+      <template #footer>
+        <button type="button" class="btn-ghost" @click="closeDeleteDialog">取消</button>
+        <button type="button" class="btn-danger" @click="confirmDelete">
+          {{ deleteLocalFiles ? "删除任务和文件" : "仅删除任务" }}
+        </button>
+      </template>
+    </AppDialog>
   </section>
 </template>
