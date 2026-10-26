@@ -102,7 +102,7 @@ const sourceLinks = computed(() => {
     links.push({ label: "Bangumi", url: `https://bgm.tv/subject/${detail.anime.bangumiId}` });
   }
   if (detail.anime.mikanId) {
-    const base = (settings.value?.mikanBaseUrl || "https://mikanime.tv").replace(/\/+$/, "");
+    const base = (settings.value?.mikanBaseUrl || "https://mikanani.me").replace(/\/+$/, "").replace(/^https?:\/\/mikanime\.tv$/, "https://mikanani.me");
     links.push({ label: "蜜柑", url: `${base}/Home/Bangumi/${detail.anime.mikanId}` });
   }
   if (detail.anime.officialSite) {

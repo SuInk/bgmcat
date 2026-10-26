@@ -122,8 +122,8 @@ onMounted(async () => {
 
   <SettingsSection id="mikan" title="蜜柑计划">
     <div class="settings-group">
-      <SettingsItem stacked title="蜜柑计划地址" desc="大陆网络建议使用 mikanime.tv；mikanani.me 可能超时">
-        <input v-model="settingsForm.mikanBaseUrl" class="settings-input settings-input-wide" placeholder="https://mikanime.tv 或 https://mikanani.me" />
+      <SettingsItem stacked title="蜜柑计划地址" desc="默认 mikanani.me。旧镜像 mikanime.tv 现在只会跳转到 mikanani.me，填它会被直接当作 mikanani.me">
+        <input v-model="settingsForm.mikanBaseUrl" class="settings-input settings-input-wide" placeholder="https://mikanani.me" />
       </SettingsItem>
     </div>
   </SettingsSection>

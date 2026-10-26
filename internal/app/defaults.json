@@ -25,7 +25,7 @@
   "qbittorrentUsername": "admin",
   "qbittorrentPassword": "adminadmin",
   "qbittorrentEnabled": false,
-  "mikanBaseUrl": "https://mikanime.tv",
+  "mikanBaseUrl": "https://mikanani.me",
   "mikanDirectAccessMode": "prefer",
   "mikanDirectAccessEnabled": true,
   "mikanResolverIps": [],

@@ -139,3 +139,53 @@ func TestDetailSummaryDoesNotWaitForEpisodesOrResources(t *testing.T) {
 		t.Fatal("external summary blocked on resources", w.Body.String())
 	}
 }
+
+func TestBangumiCoverUsesResizedHTTPS(t *testing.T) {
+	cases := map[string]string{
+		"http://lain.bgm.tv/pic/cover/l/1c/b4/390200_Z9jPp.jpg":        "https://lain.bgm.tv/r/400/pic/cover/l/1c/b4/390200_Z9jPp.jpg",
+		"https://lain.bgm.tv/pic/cover/l/a6/39/485936_y0bX8.jpg":       "https://lain.bgm.tv/r/400/pic/cover/l/a6/39/485936_y0bX8.jpg",
+		"https://lain.bgm.tv/r/400/pic/cover/l/a6/39/485936_y0bX8.jpg": "https://lain.bgm.tv/r/400/pic/cover/l/a6/39/485936_y0bX8.jpg",
+		"https://cdn.myanimelist.net/images/anime/1015/138006l.jpg":    "https://cdn.myanimelist.net/images/anime/1015/138006l.jpg",
+		"": "",
+	}
+	for in, want := range cases {
+		if got := bangumiCover(in); got != want {
+			t.Errorf("bangumiCover(%q) = %q, want %q", in, got, want)
+		}
+	}
+	anime := animeFromBangumi(Obj{"id": 1, "images": Obj{"large": "http://lain.bgm.tv/pic/cover/l/x.jpg"}}, 0)
+	if anime["imageUrl"] != "https://lain.bgm.tv/r/400/pic/cover/l/x.jpg" {
+		t.Fatalf("animeFromBangumi imageUrl = %v", anime["imageUrl"])
+	}
+	if image := animeFromBangumi(Obj{"id": 2}, 0)["imageUrl"]; image != nil {
+		t.Fatalf("missing images should stay nil, got %v", image)
+	}
+}
+
+func TestMikanBaseSkipsRedirectingMirror(t *testing.T) {
+	a := testApp(t)
+	for saved, want := range map[string]string{
+		"https://mikanime.tv":   "https://mikanani.me",
+		"http://mikanime.tv/":   "https://mikanani.me",
+		"":                      "https://mikanani.me",
+		"https://mikanani.me/":  "https://mikanani.me",
+		"https://mikan.example": "https://mikan.example",
+	} {
+		s := a.Settings()
+		s["mikanBaseUrl"] = saved
+		if e := a.Store.Put("config", "settings", s); e != nil {
+			t.Fatal(e)
+		}
+		if got := a.mikanBase(); got != want {
+			t.Errorf("mikanBase() with %q = %q, want %q", saved, got, want)
+		}
+	}
+	s := a.Settings()
+	s["mikanBaseUrl"] = "https://mikan.example"
+	if e := a.Store.Put("config", "settings", s); e != nil {
+		t.Fatal(e)
+	}
+	if got := a.resourceURL("mikan", "葬送"); !strings.HasPrefix(got, "https://mikan.example/RSS/Search?searchstr=") {
+		t.Errorf("resourceURL = %q", got)
+	}
+}
