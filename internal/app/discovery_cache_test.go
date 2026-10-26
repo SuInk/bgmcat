@@ -189,3 +189,19 @@ func TestMikanBaseSkipsRedirectingMirror(t *testing.T) {
 		t.Errorf("resourceURL = %q", got)
 	}
 }
+
+func TestSubgroupOfLeadingTag(t *testing.T) {
+	cases := map[string]any{
+		"[LoliHouse] 暗机 DARK MACHINE - 02 [WebRip 1080p HEVC-10bit AAC]": "LoliHouse",
+		"【喵萌奶茶屋】★10月新番★[葬送的芙莉莲][01][1080p]":                              "喵萌奶茶屋",
+		" [ANi] DARK MACHINE - 01 [1080P][Baha]":                         "ANi",
+		"[1080p] Some Show - 01":                                         nil,
+		"[01] Some Show":                                                 nil,
+		"Some Show - 01 [1080p]":                                         nil,
+	}
+	for title, want := range cases {
+		if got := subgroupOf(title); got != want {
+			t.Errorf("subgroupOf(%q) = %v, want %v", title, got, want)
+		}
+	}
+}
