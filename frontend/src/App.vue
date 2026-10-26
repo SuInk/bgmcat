@@ -165,7 +165,7 @@ onUnmounted(() => {
             v-if="isMobileViewport || sidebarCollapsed"
             ref="menuButton"
             type="button"
-            class="icon-btn size-9 shrink-0"
+            class="topbar-btn topbar-menu"
             :aria-expanded="isMobileViewport ? mobileSidebarOpen : !sidebarCollapsed"
             aria-controls="app-sidebar"
             aria-label="打开侧栏"
@@ -174,30 +174,48 @@ onUnmounted(() => {
             <AppNavIcon name="panel-left" />
           </button>
 
-          <div class="min-w-0 flex-1">
-            <h1 class="topbar-title">{{ activeTabMeta.label }}</h1>
+          <h1 class="topbar-title">{{ activeTabMeta.label }}</h1>
+          <span class="flex-1" />
 
-          </div>
+          <span
+            v-if="status?.restartRequired"
+            class="topbar-badge warn hidden sm:inline-flex"
+            title="监听地址或端口已修改，重启应用后生效"
+          >
+            需重启生效
+          </span>
+          <span
+            v-if="downloadClientOnline !== null"
+            class="topbar-badge"
+            :class="downloadClientOnline ? 'ok' : 'err'"
+            :title="`${downloadClientLabel} ${downloadClientOnline ? '在线' : '离线，请检查设置'}`"
+          >
+            <span class="status-dot" aria-hidden="true" />
+            <span class="download-client-label">{{ downloadClientLabel }}</span>{{ downloadClientOnline ? "在线" : "离线" }}
+          </span>
 
-          <div class="flex shrink-0 items-center gap-2">
-            <span
-              v-if="status?.restartRequired"
-              class="hidden items-center gap-1.5 rounded-full border border-[var(--warn-soft)] bg-[var(--warn-soft)] px-3 py-1.5 text-xs font-semibold text-[var(--warn)] sm:inline-flex dark:text-[var(--warn)]"
-              title="监听地址或端口已修改，重启应用后生效"
+          <!-- GitHub / 刷新 / 退出登录收成一组，间距比顶栏本身更紧，和左边的状态信息拉开 -->
+          <div class="topbar-actions">
+            <button
+              type="button"
+              class="topbar-btn topbar-repo"
+              title="GitHub 源码仓库"
+              aria-label="GitHub 源码仓库"
+              @click="openExternalLink('https://github.com/SuInk/bgmcat')"
             >
-              需重启生效
-            </span>
-            <span v-if="downloadClientOnline !== null" class="download-status" :class="downloadClientOnline ? 'online' : 'offline'" :title="`${downloadClientLabel} ${downloadClientOnline ? '在线' : '离线，请检查设置'}`">
-              <span class="connection-dot" aria-hidden="true" />
-              <span class="download-client-label">{{ downloadClientLabel }}</span>{{ downloadClientOnline ? '在线' : '离线' }}
-            </span>
-
-            <button type="button" class="icon-btn topbar-repo" title="GitHub 源码仓库" aria-label="GitHub 源码仓库" @click="openExternalLink('https://github.com/SuInk/bgmcat')"><AppNavIcon name="external" /></button>
-            <button type="button" class="icon-btn" title="刷新数据" :disabled="refreshing" @click="refreshCurrentView">
+              <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true">
+                <path
+                  fill="currentColor"
+                  d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"
+                />
+              </svg>
+            </button>
+            <button type="button" class="topbar-btn" title="刷新数据" aria-label="刷新数据" :disabled="refreshing" @click="refreshCurrentView">
               <AppNavIcon name="refresh" :class="{ 'animate-spin': refreshing }" />
             </button>
-            <button v-if="!isDesktopShell" type="button" class="icon-btn" title="退出登录" @click="logout">
+            <button v-if="!isDesktopShell" type="button" class="topbar-btn topbar-logout" title="退出登录" @click="logout">
               <AppNavIcon name="logout" />
+              <span class="topbar-logout-text">退出登录</span>
             </button>
           </div>
         </header>
@@ -287,12 +305,23 @@ onUnmounted(() => {
 
 <style scoped>
 .app-shell { transition:grid-template-columns .2s ease; }
+/* 顶栏尺寸、字号对齐 Diana 控制台（.app-topbar / .badge / .btn.ghost.small.icon-only） */
 .app-topbar { position:relative; z-index:30; display:flex; align-items:center; gap:12px; height:56px; padding:0 24px; border-bottom:1px solid var(--line); background:color-mix(in srgb,var(--shell-bg) 82%,transparent); backdrop-filter:blur(10px); }
-.download-status { display:inline-flex; align-items:center; gap:6px; padding:4px 8px; border-radius:8px; font-size:11px; white-space:nowrap; }.download-status.online { color:var(--ok); background:var(--ok-soft); }.download-status.offline { color:var(--err); background:var(--err-soft); }.connection-dot { width:6px; height:6px; border-radius:50%; background:currentColor; }
-.topbar-title { font-size:16px; font-weight:650; color:var(--ink); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-.app-topbar .icon-btn { border:none; background:transparent; box-shadow:none; width:32px; height:32px; border-radius:8px; }
-.app-topbar .icon-btn:hover { background:var(--panel); }
-.app-content { padding:18px clamp(16px, 2vw, 32px) 20px; }
+.topbar-title { min-width:0; overflow:hidden; color:var(--ink); font-size:16px; font-weight:650; text-overflow:ellipsis; white-space:nowrap; }
+.topbar-badge { display:inline-flex; flex:none; align-items:center; gap:5px; padding:2px 9px; border-radius:999px; background:var(--panel); color:var(--ink-secondary); font-size:11.5px; font-weight:600; white-space:nowrap; }
+.topbar-badge.ok { background:var(--ok-soft); color:var(--ok); }.topbar-badge.warn { background:var(--warn-soft); color:var(--warn); }.topbar-badge.err { background:var(--err-soft); color:var(--err); }
+.status-dot { width:8px; height:8px; flex-shrink:0; border-radius:50%; background:currentColor; }
+.topbar-actions { display:flex; flex:none; align-items:center; gap:6px; }
+.topbar-btn { display:inline-flex; align-items:center; justify-content:center; gap:7px; min-width:34px; height:34px; padding:8px; border:1px solid transparent; border-radius:8px; background:transparent; color:var(--ink-secondary); font-size:12.5px; font-weight:550; white-space:nowrap; transition:background .15s, border-color .15s, color .15s; }
+.topbar-btn:hover:not(:disabled) { background:var(--panel); color:var(--ink); }.topbar-btn:disabled { opacity:.55; cursor:not-allowed; }
+.topbar-btn :deep(svg) { width:16px; height:16px; flex-shrink:0; }
+.topbar-btn svg[width="15"] { width:15px; height:15px; }
+.topbar-repo:hover:not(:disabled) { border-color:var(--accent); color:var(--accent); }
+.topbar-logout { height:31px; padding:5px 10px; }.topbar-logout:hover:not(:disabled) { border-color:var(--err); color:var(--err); }
+.topbar-menu { width:32px; min-width:32px; height:32px; padding:6px; }.topbar-menu :deep(svg) { width:18px; height:18px; }
+.app-content { width:100%; max-width:1240px; margin:0 auto; padding:14px clamp(16px, 3vw, 32px) 20px; }
+@media(max-width:960px) { .app-topbar { padding:0 14px; } }
+@media(max-width:700px) { .topbar-logout-text { display:none; } .topbar-logout { width:34px; height:34px; padding:8px; } }
 @media(max-width:640px) { .app-topbar { padding:0 12px; gap:8px; }.app-content { padding:12px 10px; }.topbar-repo, .download-client-label { display:none; } }
 
 .sync-overlay-enter-active,
