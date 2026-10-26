@@ -79,8 +79,9 @@ export const WEEKDAY_TABS = [
 ];
 
 export const animePage = ref(1);
-export const animePageSize = ref(18);
-export const ANIME_PAGE_SIZE_OPTIONS = [12, 18, 24, 36];
+// 海报卡一行 5~7 张，24 / 36 正好凑满整行
+export const animePageSize = ref(24);
+export const ANIME_PAGE_SIZE_OPTIONS = [12, 24, 36, 48];
 
 // —— 番剧详情侧栏（首页 / 收藏 / 下载三个页面共用） ——
 export const animeDetail = ref<AnimeDetail | null>(null);

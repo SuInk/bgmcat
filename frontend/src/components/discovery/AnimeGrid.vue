@@ -4,7 +4,6 @@ import { computed, ref } from "vue";
 import type { HomepageAnime } from "@shared/index";
 
 import CuteLoader from "../common/CuteLoader.vue";
-import { isMobileViewport } from "../../stores/ui";
 import AnimeCard from "./AnimeCard.vue";
 
 const props = defineProps<{
@@ -29,12 +28,9 @@ defineExpose({ rootEl });
 <template>
   <div
     ref="rootEl"
-    class="grid h-full auto-rows-max grid-cols-[repeat(auto-fill,minmax(11.5rem,1fr))] content-start items-start gap-4 overflow-auto px-4 pb-4 pt-1"
+    class="grid h-full auto-rows-max grid-cols-[repeat(auto-fill,minmax(8rem,1fr))] content-start items-start gap-3 overflow-auto px-4 pb-4 pt-1"
   >
-    <!--
-      9.5rem 是常驻详情栏还在时定的:那会儿卡片区只有 400 多像素,只能靠压小卡片换列数。
-      详情栏去掉后内容区宽了一倍,卡片可以回到能看清标题的尺寸(1440px 下约 6 列)。
-    -->
+    <!-- 竖版海报卡 8rem 起：1070px 窗口一行 5 张，1440px 下 8 列；卡片窄，蜜柑编号一律省略 -->
     <template v-if="showLoader">
       <div
         class="col-span-full grid min-h-[18rem] place-items-center rounded-lg border border-dashed border-[var(--line)] bg-[var(--card)] p-6"
@@ -60,7 +56,7 @@ defineExpose({ rootEl });
         :key="anime.animeId"
         :anime="anime"
         :selected="selectedAnimeId === anime.animeId"
-        :compact-meta="isMobileViewport"
+        :compact-meta="true"
         @open="emit('select', anime)"
       />
     </template>
