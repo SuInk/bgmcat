@@ -138,7 +138,7 @@ onUnmounted(() => {
                 :key="weekday.key"
                 type="button"
                 :data-weekday="weekday.key"
-                class="chip shrink-0 rounded-md px-3 py-1.5 text-sm"
+                class="chip shrink-0 rounded-md px-2.5 py-1 text-[13px]"
                 :class="{ 'chip-active': weekday.key === discoveryForm.weekday }"
                 :aria-pressed="weekday.key === discoveryForm.weekday"
                 :aria-label="weekday.key === todayWeekdayKey ? `${weekday.label}（今日）` : weekday.label"
@@ -156,11 +156,11 @@ onUnmounted(() => {
 
           <div class="flex min-w-0 items-center gap-2">
             <div ref="searchBoxRef" class="relative flex min-w-0 flex-1 items-center gap-2">
-              <div class="input-base flex min-w-0 flex-1 items-center gap-2 rounded-md px-3 py-1.5">
+              <div class="input-base flex min-w-0 flex-1 items-center gap-2 rounded-md px-3 py-1">
                 <AppNavIcon name="search" class="size-4 shrink-0 text-[var(--muted)]" aria-hidden="true" />
                 <input
                   v-model="discoveryForm.search"
-                  class="min-w-0 flex-1 bg-transparent text-sm outline-none"
+                  class="min-w-0 flex-1 bg-transparent text-[13px] outline-none"
                   aria-label="搜索番剧，回车搜索 Bangumi 全库"
                   :placeholder="isMobileViewport ? '搜索番剧' : '搜索番剧（回车搜索 Bangumi 全库）'"
                   @focus="searchHistoryVisible = true"
@@ -170,7 +170,7 @@ onUnmounted(() => {
               </div>
               <button
                 type="button"
-                class="shrink-0 rounded-md px-3 py-1.5 text-sm font-semibold transition"
+                class="shrink-0 rounded-md px-3 py-1 text-[13px] font-semibold transition"
                 :class="discoveryForm.search.trim() ? 'btn-primary' : 'chip'"
                 @click="runSearch"
               >
@@ -217,7 +217,7 @@ onUnmounted(() => {
             >
               <button
                 type="button"
-                class="rounded-[0.3rem] px-2.5 py-1 text-sm font-semibold transition"
+                class="rounded-[0.3rem] px-2.5 py-0.5 text-[13px] font-semibold transition"
                 :class="animeSortMode === 'default' ? 'bg-[var(--card)] text-[var(--ink)] shadow-[var(--soft-shadow)]' : 'text-[var(--muted)]'"
                 :aria-pressed="animeSortMode === 'default'"
                 @click="setSortMode('default')"
@@ -226,7 +226,7 @@ onUnmounted(() => {
               </button>
               <button
                 type="button"
-                class="rounded-[0.3rem] px-2.5 py-1 text-sm font-semibold transition"
+                class="rounded-[0.3rem] px-2.5 py-0.5 text-[13px] font-semibold transition"
                 :class="animeSortMode === 'rating' ? 'bg-[var(--card)] text-[var(--ink)] shadow-[var(--soft-shadow)]' : 'text-[var(--muted)]'"
                 :aria-pressed="animeSortMode === 'rating'"
                 @click="setSortMode('rating')"

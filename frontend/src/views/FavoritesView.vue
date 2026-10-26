@@ -139,7 +139,7 @@ const visibleFavorites = computed(() => {
           </p>
 
           <!-- 与首页 AnimeGrid 同一个最小列宽，两页卡片大小一致 -->
-          <div v-else class="grid grid-cols-[repeat(auto-fill,minmax(11.5rem,1fr))] content-start items-start gap-4">
+          <div v-else class="grid grid-cols-[repeat(auto-fill,minmax(10rem,1fr))] content-start items-start gap-3">
             <AnimeCard
               v-for="favorite in visibleFavorites"
               :key="favorite.animeId"

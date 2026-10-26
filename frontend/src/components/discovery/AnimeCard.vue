@@ -92,9 +92,14 @@ const openLabel = computed(() => {
         : 'border-[var(--line)] bg-[var(--card)] shadow-[var(--soft-shadow)] hover:border-[var(--accent)]'
     "
   >
+    <!--
+      海报卡：Bangumi 的封面本来就是竖版海报，以前裁成 8.2rem 高的横条，人物头都被切掉，
+      卡片还得 11.5rem 宽才放得下，800px 宽的窗口一行只有 3 张。改成 3:4 竖版后卡片能窄到
+      8rem，同样宽度一行 5 张；文字压成两行，评分并进元信息那一行。
+    -->
     <button
       type="button"
-      class="grid grid-rows-[8.2rem_minmax(0,1fr)] text-left focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-[var(--accent)]"
+      class="grid grid-rows-[auto_minmax(0,1fr)] text-left focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-[var(--accent)]"
       :aria-label="openLabel"
       @click="emit('open')"
       @mouseenter="schedulePrefetch"
@@ -102,7 +107,7 @@ const openLabel = computed(() => {
       @focus="schedulePrefetch"
       @blur="cancelPrefetch"
     >
-      <span class="grid min-h-0 place-items-center overflow-hidden bg-[var(--panel)] text-3xl font-semibold text-[var(--muted)]">
+      <span class="grid aspect-[3/4] min-h-0 place-items-center overflow-hidden bg-[var(--panel)] text-2xl font-semibold text-[var(--muted)]">
         <img
           v-if="anime.imageUrl && !imageFailed"
           :src="anime.imageUrl"
@@ -115,14 +120,16 @@ const openLabel = computed(() => {
         <span v-else aria-hidden="true">{{ anime.title.slice(0, 1) || "番" }}</span>
       </span>
 
-      <span class="grid min-h-0 content-start gap-1 px-3 py-2.5">
-        <strong class="truncate text-sm font-bold text-[var(--ink)]" :title="anime.title">{{ anime.title }}</strong>
-        <span class="truncate text-xs font-semibold text-[var(--muted)]">{{ metaParts.join(" · ") }}</span>
-        <span v-if="ratingLabel" class="text-xs font-semibold text-[var(--accent-vivid)]">★ {{ ratingLabel }}</span>
+      <span class="grid min-h-0 content-start gap-0.5 px-2.5 py-2">
+        <strong class="truncate text-[13px] font-semibold leading-snug text-[var(--ink)]" :title="anime.title">{{ anime.title }}</strong>
+        <span class="flex min-w-0 items-center gap-1.5 text-[11px] font-medium text-[var(--muted)]">
+          <span class="min-w-0 flex-1 truncate">{{ metaParts.join(" · ") }}</span>
+          <span v-if="ratingLabel" class="shrink-0 font-semibold text-[var(--accent-vivid)]">★ {{ ratingLabel }}</span>
+        </span>
 
         <span
           v-if="platformBadges.length"
-          class="flex flex-wrap gap-1"
+          class="mt-0.5 flex flex-wrap gap-1"
           :title="`命中平台：${platformBadges.map((badge) => badge.label).join('、')}`"
         >
           <span
@@ -134,7 +141,7 @@ const openLabel = computed(() => {
       </span>
     </button>
 
-    <div v-if="$slots.footer" class="grid content-start gap-2 border-t border-[var(--line)] px-3 py-2.5">
+    <div v-if="$slots.footer" class="grid content-start gap-2 border-t border-[var(--line)] px-2.5 py-2">
       <slot name="footer" />
     </div>
   </article>

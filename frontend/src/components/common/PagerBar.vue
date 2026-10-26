@@ -24,20 +24,20 @@ const emit = defineEmits<{
 </script>
 
 <template>
-  <div class="z-10 shrink-0 flex flex-col items-center justify-center gap-3 border-t border-[var(--line)] bg-[var(--table-panel)] px-4 py-3 text-sm text-[var(--muted)] sm:flex-row sm:flex-wrap sm:gap-4">
+  <div class="z-10 shrink-0 flex flex-col items-center justify-center gap-3 border-t border-[var(--line)] bg-[var(--table-panel)] px-4 py-2 text-[13px] text-[var(--muted)] sm:flex-row sm:flex-wrap sm:gap-4">
     <div class="flex w-full items-center justify-center gap-2 sm:w-auto">
       <span class="text-xs font-medium text-[var(--muted)]">{{ props.rowLabel }}</span>
       <select
         v-if="!props.readonlyCount && props.rowCountOptions.length"
         :value="props.rowCount"
-        class="min-w-16 rounded-lg border border-[var(--line)] bg-[var(--input-bg)] px-3 py-2 text-sm font-semibold text-[var(--ink)] outline-none transition focus:border-[var(--accent)]"
+        class="min-w-16 rounded-lg border border-[var(--line)] bg-[var(--input-bg)] px-2.5 py-1 text-[13px] font-semibold text-[var(--ink)] outline-none transition focus:border-[var(--accent)]"
         @change="emit('update:rowCount', Number(($event.target as HTMLSelectElement).value))"
       >
         <option v-for="size in props.rowCountOptions" :key="size" :value="size">{{ size }}</option>
       </select>
       <div
         v-else
-        class="min-w-14 rounded-lg border border-[var(--line)] bg-[var(--card)] px-3 py-2 text-center text-sm font-semibold text-[var(--ink)]"
+        class="min-w-12 rounded-lg border border-[var(--line)] bg-[var(--card)] px-2.5 py-1 text-center text-[13px] font-semibold text-[var(--ink)]"
       >
         {{ props.rowCount }}
       </div>
@@ -45,7 +45,7 @@ const emit = defineEmits<{
 
     <div class="flex w-full flex-wrap items-center justify-center gap-2 sm:w-auto">
       <button
-        class="rounded-lg border border-[var(--line)] bg-[var(--card)] px-3 py-2 text-sm font-semibold text-[var(--ink)] transition hover:border-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-40"
+        class="rounded-lg border border-[var(--line)] bg-[var(--card)] px-3 py-1 text-[13px] font-semibold text-[var(--ink)] transition hover:border-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-40"
         :disabled="props.currentPage <= 1"
         @click="emit('update:page', props.currentPage - 1)"
       >
@@ -57,7 +57,7 @@ const emit = defineEmits<{
           <span v-if="item === 'ellipsis'" class="px-1 text-xs text-[var(--muted)]">...</span>
           <button
             v-else
-            class="min-w-10 rounded-lg border px-3 py-2 text-sm font-semibold transition"
+            class="min-w-8 rounded-lg border px-2.5 py-1 text-[13px] font-semibold transition"
             :class="
               props.currentPage === item
                 ? 'border-[var(--accent)] bg-[var(--accent)] text-[var(--accent-contrast)] shadow-[var(--soft-shadow)]'
@@ -71,7 +71,7 @@ const emit = defineEmits<{
       </div>
 
       <button
-        class="rounded-lg border border-[var(--line)] bg-[var(--card)] px-3 py-2 text-sm font-semibold text-[var(--ink)] transition hover:border-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-40"
+        class="rounded-lg border border-[var(--line)] bg-[var(--card)] px-3 py-1 text-[13px] font-semibold text-[var(--ink)] transition hover:border-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-40"
         :disabled="props.currentPage >= props.totalPages"
         @click="emit('update:page', props.currentPage + 1)"
       >
