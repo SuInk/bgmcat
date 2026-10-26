@@ -131,6 +131,29 @@ const platformRows = computed(() =>
   }))
 );
 
+/** 头部大号评分：第一个有分的平台（通常是 Bangumi），其余平台在下面一行小字列出 */
+const primaryScore = computed(() => {
+  const platform = (props.animeDetail?.platforms ?? []).find(
+    (item) => typeof item.score === "number" && Number.isFinite(item.score) && item.score > 0
+  );
+  if (platform) {
+    const max = platform.scoreMax ?? 10;
+    return {
+      label: metadataPlatformLabel(platform.id) || platform.displayName,
+      value: max === 100 ? String(Math.round(platform.score as number)) : (platform.score as number).toFixed(1),
+      max,
+      rank: typeof platform.rank === "number" && platform.rank > 0 ? platform.rank : props.animeDetail?.rank ?? null,
+      id: platform.id
+    };
+  }
+  const rating = props.animeDetail?.anime.rating;
+  if (typeof rating === "number" && rating > 0) {
+    return { label: "Bangumi", value: rating.toFixed(1), max: 10, rank: props.animeDetail?.rank ?? null, id: "bangumi" };
+  }
+  return null;
+});
+const secondaryPlatformRows = computed(() => platformRows.value.filter((row) => row.id !== primaryScore.value?.id));
+
 /** 这一轮没响应的信息平台。结果照出，只在展开区浅色提一句。 */
 const platformFailureNotice = computed(() => {
   const failures = props.animeDetail?.platformFailures ?? [];
@@ -245,16 +268,11 @@ function toggleSubscribeProvider(providerId: string): void {
     : [...subscribeProviders.value, providerId];
 }
 
-/** 只有蜜柑能建订阅时才需要 bangumiId；别的源按关键词搜，没有 id 也能订。 */
-const canSubscribe = computed(() => {
-  if (props.subscriptionId) {
-    return false;
-  }
-  if (subscribeProviders.value.length === 0) {
-    return false;
-  }
-  return subscribeProviders.value.some((id) => id !== "mikan") || Boolean(props.animeDetail?.anime.mikanId);
-});
+/**
+ * Go 后端对所有源（含蜜柑）都按关键词建搜索 RSS，不需要蜜柑番剧 ID。
+ * 以前这里要求蜜柑必须有 mikanId，而后端从不填它，默认只开蜜柑时订阅按钮永远是灰的。
+ */
+const canSubscribe = computed(() => !props.subscriptionId && subscribeProviders.value.length > 0);
 const showSubscribeProviders = computed(() => !props.subscriptionId && subscribeProviderOptions.value.length > 1);
 
 const providerNames = computed<Record<string, string>>(() =>
@@ -351,7 +369,7 @@ watch(
                 <button type="button" class="icon-btn shrink-0" aria-label="返回列表" title="返回列表" @click="emit('close')">
                   <AppNavIcon name="chevron-left" />
                 </button>
-                <div class="h-20 w-14 shrink-0 rounded bg-[var(--line)]/60 skeleton-pulse"></div>
+                <div class="detail-poster shrink-0 skeleton-pulse"></div>
                 <div class="grid flex-1 content-start gap-2 pt-1">
                   <div class="h-5 w-4/5 rounded-full bg-[var(--line)]/70 skeleton-pulse"></div>
                   <div class="h-3 w-3/5 rounded-full bg-[var(--line)]/55 skeleton-pulse"></div>
@@ -396,41 +414,68 @@ watch(
           <div ref="detailScrollRef" class="detail-split">
             <!-- 左栏：头部 + 剧集。窄屏在资源视图时收起 -->
             <div class="detail-side" :class="{ 'narrow-hidden': narrowView === 'resources' }">
-              <!-- 头部：返回、封面、标题、一行元信息、主操作。返回按钮就在这里，不再单独占一条栏 -->
-              <header class="grid shrink-0 gap-2.5 rounded-lg border border-[var(--line)] bg-[var(--card)] p-3 shadow-[var(--soft-shadow)]">
-                <!-- 左栏只有 19~23rem 宽：标题独占一行（返回按钮在它左边），封面与元信息在下一行，
-                     别让返回按钮、封面、文字三列硬挤，文字列只剩 150px、每行都折。 -->
-                <div class="flex items-start gap-2">
-                  <button type="button" class="icon-btn shrink-0" aria-label="返回列表" title="返回列表" @click="emit('close')">
-                    <AppNavIcon name="chevron-left" />
-                  </button>
-                  <h2 class="line-clamp-2 min-w-0 flex-1 pt-1.5 text-base font-semibold leading-snug text-[var(--ink)]" :title="animeDetail.anime.title">
-                    {{ animeDetail.anime.title }}
-                  </h2>
-                </div>
+              <!--
+                头部：封面放大做主角，背后铺一层同图的模糊底，评分用大号数字。
+                以前封面只有 56×80、简介默认收起，整块看着像一张表单。
+              -->
+              <header class="detail-hero shrink-0">
+                <div
+                  v-if="animeDetail.anime.imageUrl"
+                  class="detail-hero-backdrop"
+                  :style="{ backgroundImage: `url(${animeDetail.anime.imageUrl})` }"
+                  aria-hidden="true"
+                ></div>
 
-                <div class="grid grid-cols-[3.5rem_minmax(0,1fr)] items-start gap-3">
-                  <div class="grid h-20 w-14 place-items-center overflow-hidden rounded bg-[var(--panel)] text-lg font-semibold text-[var(--muted)]">
-                    <img
-                      v-if="animeDetail.anime.imageUrl"
-                      :src="animeDetail.anime.imageUrl"
-                      :alt="animeDetail.anime.title"
-                      class="block h-full w-full object-cover object-top"
-                    />
-                    <span v-else>番</span>
+                <div class="relative grid gap-3 p-3 sm:p-4">
+                  <div class="flex items-start gap-2">
+                    <button type="button" class="icon-btn shrink-0" aria-label="返回列表" title="返回列表" @click="emit('close')">
+                      <AppNavIcon name="chevron-left" />
+                    </button>
+                    <h2 class="line-clamp-2 min-w-0 flex-1 pt-1 text-[17px] font-bold leading-snug text-[var(--ink)]" :title="animeDetail.anime.title">
+                      {{ animeDetail.anime.title }}
+                    </h2>
                   </div>
-                  <div class="grid min-w-0 content-start gap-1">
-                    <p v-if="animeAliases.length" class="truncate text-xs text-[var(--muted)]" :title="animeAliases.join(' / ')">
-                      {{ animeAliases[0] }}
-                    </p>
-                    <p v-if="metaParts.length" class="text-xs text-[var(--muted)]" :title="animeBroadcastLabel ? '放送时间为本地时间' : undefined">
-                      {{ metaParts.join(" · ") }}
-                    </p>
-                    <!-- 各平台评分连同各自满分并排，点开去对应平台 -->
-                    <div class="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs">
-                      <template v-if="platformRows.length">
+
+                  <div class="grid grid-cols-[auto_minmax(0,1fr)] items-start gap-3 sm:gap-4">
+                    <div class="detail-poster">
+                      <img
+                        v-if="animeDetail.anime.imageUrl"
+                        :src="animeDetail.anime.imageUrl"
+                        :alt="animeDetail.anime.title"
+                        class="block size-full object-cover"
+                      />
+                      <span v-else>番</span>
+                    </div>
+
+                    <div class="grid min-w-0 content-start gap-2">
+                      <p v-if="animeAliases.length" class="line-clamp-2 text-xs leading-snug text-[var(--muted)]" :title="animeAliases.join(' / ')">
+                        {{ animeAliases[0] }}
+                      </p>
+
+                      <div v-if="metaParts.length" class="flex flex-wrap gap-1" :title="animeBroadcastLabel ? '放送时间为本地时间' : undefined">
+                        <span v-for="part in metaParts" :key="part" class="detail-chip">{{ part }}</span>
+                      </div>
+
+                      <button
+                        v-if="primaryScore"
+                        type="button"
+                        class="grid justify-items-start gap-0.5 text-left"
+                        :title="`在浏览器打开 ${primaryScore.label}`"
+                        @click="platformRows.find((row) => row.id === primaryScore?.id) && emit('open-link', platformRows.find((row) => row.id === primaryScore?.id)!.url)"
+                      >
+                        <span class="flex items-baseline gap-1">
+                          <strong class="text-2xl font-bold leading-none tabular-nums text-[var(--accent-vivid)]">{{ primaryScore.value }}</strong>
+                          <span class="text-xs font-semibold text-[var(--muted)]">/ {{ primaryScore.max }}</span>
+                        </span>
+                        <span class="text-[11px] font-medium text-[var(--muted)]">
+                          {{ primaryScore.label }}<template v-if="primaryScore.rank"> · 排名 #{{ primaryScore.rank }}</template>
+                        </span>
+                      </button>
+                      <span v-else class="text-xs text-[var(--muted)]">暂无评分</span>
+
+                      <div v-if="secondaryPlatformRows.length" class="flex flex-wrap gap-x-3 gap-y-0.5 text-[11px]">
                         <button
-                          v-for="row in platformRows"
+                          v-for="row in secondaryPlatformRows"
                           :key="row.id"
                           type="button"
                           class="inline-flex items-center gap-1 text-[var(--muted)] transition hover:text-[var(--ink)]"
@@ -439,74 +484,86 @@ watch(
                           @click="emit('open-link', row.url)"
                         >
                           {{ row.label }}
-                          <strong v-if="row.score" class="font-semibold text-accent">{{ row.score }}</strong>
-                          <span v-else>暂无评分</span>
-                          <span v-if="row.rank">#{{ row.rank }}</span>
+                          <strong v-if="row.score" class="font-semibold text-[var(--ink)]">{{ row.score }}</strong>
+                          <span v-else>暂无</span>
                         </button>
-                      </template>
-                      <span v-else-if="animeDetail.anime.rating" class="text-[var(--muted)]">
-                        <strong class="font-semibold text-accent">★ {{ animeDetail.anime.rating.toFixed(1) }}</strong>
-                        <template v-if="animeDetail.rank"> · Bangumi #{{ animeDetail.rank }}</template>
-                      </span>
+                      </div>
                     </div>
                   </div>
-                </div>
 
-                <!-- 订阅是这页真正的主操作（自动追更），收藏只是记一笔，两者不同权重 -->
-                <div class="grid grid-cols-[auto_minmax(0,1fr)] gap-2">
+                  <!-- 简介默认露三行：番剧讲什么是打开详情最想先看到的，不该藏在折叠里 -->
+                  <div v-if="animeSummary || animeTags.length" class="grid gap-2">
+                    <p
+                      v-if="animeSummary"
+                      class="whitespace-pre-line text-xs leading-5 text-[var(--ink-secondary)]"
+                      :class="{ 'line-clamp-3': !infoExpanded }"
+                    >{{ animeSummary }}</p>
+                    <div v-if="infoExpanded && animeTags.length" class="flex flex-wrap gap-1">
+                      <span v-for="tag in animeTags" :key="tag" class="detail-chip">{{ tag }}</span>
+                    </div>
+                    <div v-if="infoExpanded" class="grid gap-1.5">
+                      <p v-if="animeAliases.length > 1" class="text-[11px] text-[var(--muted)]">别名：{{ animeAliases.join(" / ") }}</p>
+                      <div v-if="sourceLinks.length" class="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+                        <button
+                          v-for="link in sourceLinks"
+                          :key="link.label"
+                          type="button"
+                          class="inline-flex items-center gap-1 font-semibold text-[var(--accent-vivid)] hover:underline"
+                          :title="link.url"
+                          :aria-label="`在浏览器打开 ${link.label}`"
+                          @click="emit('open-link', link.url)"
+                        >
+                          {{ link.label }}
+                          <AppNavIcon name="external" class="size-3" aria-hidden="true" />
+                        </button>
+                      </div>
+                      <p v-if="platformFailureNotice" class="text-[11px] text-[var(--muted)]" role="status">{{ platformFailureNotice }}</p>
+                    </div>
+                    <button
+                      v-if="hasExtraInfo"
+                      type="button"
+                      class="inline-flex items-center gap-1 justify-self-start text-xs font-semibold text-[var(--muted)] transition hover:text-[var(--ink)]"
+                      :aria-expanded="infoExpanded"
+                      @click="infoExpanded = !infoExpanded"
+                    >
+                      {{ infoExpanded ? "收起" : "展开简介与标签" }}
+                      <AppNavIcon name="chevron-right" class="size-3.5 transition-transform" :class="infoExpanded ? '-rotate-90' : 'rotate-90'" aria-hidden="true" />
+                    </button>
+                  </div>
+
+                  <!-- 订阅是这页真正的主操作（自动追更），收藏只是记一笔，两者不同权重 -->
+                  <div class="grid grid-cols-[auto_minmax(0,1fr)] gap-2">
                     <button
                       v-if="!isFavorite"
                       type="button"
-                      class="btn-ghost inline-flex min-h-9 items-center justify-center gap-1.5 whitespace-nowrap px-3 text-xs font-semibold"
+                      class="btn-ghost inline-flex h-9 items-center justify-center gap-1.5 whitespace-nowrap px-3 text-[13px] font-semibold"
                       @click="emit('favorite', { anime: animeDetail.anime, mikanKeyword: animeDetail.mikanKeyword })"
                     >
-                      <AppNavIcon name="favorites" aria-hidden="true" />
+                      <AppNavIcon name="favorites" class="size-4" aria-hidden="true" />
                       收藏
                     </button>
                     <button
                       v-else
                       type="button"
-                      class="inline-flex min-h-9 items-center justify-center gap-1.5 whitespace-nowrap rounded-md border border-[var(--accent)] bg-[var(--tint-2)] px-3 text-xs font-semibold text-[var(--accent)] transition"
+                      class="inline-flex h-9 items-center justify-center gap-1.5 whitespace-nowrap rounded-lg border border-[var(--accent)] bg-[var(--accent-soft)] px-3 text-[13px] font-semibold text-[var(--accent-vivid)] transition"
                       :aria-label="`取消收藏 ${animeDetail.anime.title}`"
                       @click="emit('remove-favorite', animeDetail.anime.animeId)"
                     >
-                      <AppNavIcon name="favorites" aria-hidden="true" />
+                      <AppNavIcon name="favorites" class="size-4" aria-hidden="true" />
                       已收藏
                     </button>
                     <button
                       type="button"
-                      class="inline-flex min-h-9 items-center justify-center gap-1.5 whitespace-nowrap px-3 text-xs font-semibold"
+                      class="inline-flex h-9 items-center justify-center gap-1.5 whitespace-nowrap px-3 text-[13px] font-semibold"
                       :class="subscriptionId ? 'btn-ghost' : 'btn-primary'"
                       :disabled="!canSubscribe"
                       :title="subscriptionId ? '已在追更：新集数会自动加入下载队列，可在订阅页调整规则' : '订阅后持续抓取该番 RSS，新集数自动加入下载队列'"
                       @click="emit('subscribe', { anime: animeDetail.anime, mikanKeyword: animeDetail.mikanKeyword, providerIds: subscribeProviders })"
                     >
-                      <AppNavIcon name="subscriptions" aria-hidden="true" />
+                      <AppNavIcon name="subscriptions" class="size-4" aria-hidden="true" />
                       {{ subscriptionId ? "已订阅" : "订阅并自动追更" }}
                     </button>
-                </div>
-
-                <!-- 次要一行：左边展开简介，右边选订阅挂哪些源。两样都没有就不占这一行 -->
-                <div
-                  v-if="hasExtraInfo || showSubscribeProviders"
-                  class="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-t border-[var(--line)] pt-2"
-                >
-                  <button
-                    v-if="hasExtraInfo"
-                    type="button"
-                    class="inline-flex items-center gap-1 text-xs font-semibold text-[var(--muted)] transition hover:text-[var(--ink)]"
-                    :aria-expanded="infoExpanded"
-                    @click="infoExpanded = !infoExpanded"
-                  >
-                    <AppNavIcon
-                      name="chevron-right"
-                      class="size-3.5 transition-transform"
-                      :class="{ 'rotate-90': infoExpanded }"
-                      aria-hidden="true"
-                    />
-                    简介与标签
-                  </button>
-                  <span v-else></span>
+                  </div>
 
                   <!-- 一次可以挂多个源：勾上的每个源各建一条订阅，新集数跨源择优只下一个 -->
                   <div v-if="showSubscribeProviders" class="flex flex-wrap items-center gap-1.5">
@@ -526,45 +583,12 @@ watch(
                     </button>
                   </div>
                 </div>
-
-                <div v-if="infoExpanded" class="grid gap-2.5">
-                  <p v-if="animeSummary" class="whitespace-pre-line text-xs leading-5 text-[var(--muted)]">{{ animeSummary }}</p>
-                  <p v-if="animeAliases.length > 1" class="text-xs text-[var(--muted)]">
-                    别名：{{ animeAliases.join(" / ") }}
-                  </p>
-                  <div v-if="animeTags.length" class="flex flex-wrap gap-1.5">
-                    <span
-                      v-for="tag in animeTags"
-                      :key="tag"
-                      class="rounded bg-[var(--tint-2)] px-1.5 py-0.5 text-[11px] font-semibold text-[var(--muted)]"
-                    >
-                      {{ tag }}
-                    </span>
-                  </div>
-                  <div v-if="sourceLinks.length" class="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
-                    <button
-                      v-for="link in sourceLinks"
-                      :key="link.label"
-                      type="button"
-                      class="inline-flex items-center gap-1 font-semibold text-[var(--accent)] hover:underline"
-                      :title="link.url"
-                      :aria-label="`在浏览器打开 ${link.label}`"
-                      @click="emit('open-link', link.url)"
-                    >
-                      {{ link.label }}
-                      <AppNavIcon name="external" class="size-3" aria-hidden="true" />
-                    </button>
-                  </div>
-                  <p v-if="platformFailureNotice" class="text-[11px] text-[var(--muted)]" role="status">
-                    {{ platformFailureNotice }}
-                  </p>
-                </div>
               </header>
 
               <!-- 宽屏时头部不动、只有剧集列表自己滚，标题行始终看得见 -->
               <section class="episode-panel overflow-hidden rounded-lg border border-[var(--line)] bg-[var(--card)] shadow-[var(--soft-shadow)]">
                 <div class="flex shrink-0 items-center justify-between gap-3 border-b border-[var(--line)] px-3 py-2">
-                  <h3 class="text-sm font-semibold text-[var(--ink)]">剧集</h3>
+                  <h3 class="text-sm font-semibold text-[var(--ink)]">剧集 <span class="ml-1 text-[11px] font-medium text-[var(--muted)]">右侧数字为资源数</span></h3>
                   <span v-if="animeDetail.totalEpisodes || episodes.length" class="text-xs font-semibold text-[var(--muted)]">
                     全 {{ animeDetail.totalEpisodes || episodes.length }} 集
                   </span>
@@ -579,11 +603,11 @@ watch(
                       :aria-current="selectedDownloadGroupKey === null"
                       @click="selectDownloadGroup(null)"
                     >
-                      <span class="grid min-w-0 gap-0.5">
-                        <strong class="truncate text-[13px] font-semibold text-[var(--ink)]">全部 RSS</strong>
-                        <span class="text-[11px] text-[var(--muted)]">不限剧集</span>
+                      <span class="flex min-w-0 items-baseline gap-2">
+                        <strong class="truncate text-[13px] font-semibold text-[var(--ink)]">全部资源</strong>
+                        <span class="shrink-0 text-[11px] text-[var(--muted)]">不限剧集</span>
                       </span>
-                      <span class="episode-count text-[var(--accent-vivid)]">{{ animeDetail.downloads.length }} 个资源</span>
+                      <span class="episode-count episode-count-on">{{ animeDetail.downloads.length }}</span>
                     </button>
                   </li>
                   <li v-for="episode in episodes" :key="episode.episodeId">
@@ -601,18 +625,13 @@ watch(
                       :title="episodeTitleOf(episode) ?? undefined"
                       @click="selectDownloadGroup(`episode:${episode.episodeId}`)"
                     >
-                      <span class="grid min-w-0 gap-0.5">
-                        <span class="truncate text-[13px] text-[var(--ink)]">
-                          <strong class="font-semibold">{{ episode.episodeNumber ? `第 ${episode.episodeNumber} 集` : "SP" }}</strong>
-                          <template v-if="episodeTitleOf(episode)"> · {{ episodeTitleOf(episode) }}</template>
-                        </span>
-                        <span class="text-[11px] tabular-nums text-[var(--muted)]">{{ episode.airDate ?? "未定档" }}</span>
+                      <span class="flex min-w-0 items-baseline gap-2">
+                        <strong class="shrink-0 text-[13px] font-semibold tabular-nums text-[var(--ink)]">{{ episode.episodeNumber ? `第 ${episode.episodeNumber} 集` : "SP" }}</strong>
+                        <span v-if="episodeTitleOf(episode)" class="min-w-0 truncate text-xs text-[var(--ink-secondary)]">{{ episodeTitleOf(episode) }}</span>
+                        <span class="ml-auto shrink-0 text-[11px] tabular-nums text-[var(--muted)]">{{ episode.airDate ?? "未定档" }}</span>
                       </span>
-                      <span
-                        class="episode-count"
-                        :class="getEpisodeDownloadCount(episode) > 0 ? 'text-[var(--accent-vivid)]' : 'text-[var(--muted)]'"
-                      >
-                        {{ getEpisodeDownloadCount(episode) > 0 ? `${getEpisodeDownloadCount(episode)} 个资源` : "暂无" }}
+                      <span class="episode-count" :class="getEpisodeDownloadCount(episode) > 0 ? 'episode-count-on' : ''" :title="getEpisodeDownloadCount(episode) > 0 ? `${getEpisodeDownloadCount(episode)} 个资源` : '暂无资源'">
+                        {{ getEpisodeDownloadCount(episode) > 0 ? getEpisodeDownloadCount(episode) : "—" }}
                       </span>
                     </button>
                   </li>
@@ -624,11 +643,11 @@ watch(
                       :aria-current="selectedDownloadGroupKey === 'unmatched'"
                       @click="selectDownloadGroup('unmatched')"
                     >
-                      <span class="grid min-w-0 gap-0.5">
-                        <strong class="truncate text-[13px] font-semibold text-[var(--ink)]">未匹配剧集</strong>
-                        <span class="text-[11px] text-[var(--muted)]">没有匹配到 Bangumi 集数的资源</span>
+                      <span class="flex min-w-0 items-baseline gap-2">
+                        <strong class="shrink-0 text-[13px] font-semibold text-[var(--ink)]">未匹配剧集</strong>
+                        <span class="min-w-0 truncate text-[11px] text-[var(--muted)]">没对上 Bangumi 集数</span>
                       </span>
-                      <span class="episode-count text-[var(--accent-vivid)]">{{ unmatchedDownloadGroup.downloads.length }} 个资源</span>
+                      <span class="episode-count episode-count-on">{{ unmatchedDownloadGroup.downloads.length }}</span>
                     </button>
                   </li>
                 </ul>
@@ -760,13 +779,79 @@ watch(
   }
 }
 
+/* 头部：封面做主角，背后同图模糊铺底，像海报墙那样带出这部番的配色 */
+.detail-hero {
+  position: relative;
+  overflow: hidden;
+  border-radius: 0.75rem;
+  border: 1px solid var(--line);
+  background: var(--card);
+  box-shadow: var(--soft-shadow);
+}
+
+.detail-hero-backdrop {
+  position: absolute;
+  inset: -2rem;
+  background-position: center;
+  background-size: cover;
+  filter: blur(36px) saturate(1.3);
+  opacity: 0.28;
+  pointer-events: none;
+}
+
+.detail-hero-backdrop::after {
+  position: absolute;
+  inset: 0;
+  content: "";
+  background: linear-gradient(to bottom, transparent 0%, var(--card) 85%);
+}
+
+.detail-poster {
+  display: grid;
+  place-items: center;
+  width: 7rem;
+  aspect-ratio: 3 / 4;
+  overflow: hidden;
+  border-radius: 0.625rem;
+  background: var(--panel);
+  box-shadow: 0 8px 24px -10px rgb(0 0 0 / 0.55), 0 0 0 1px var(--line);
+  color: var(--muted);
+  font-size: 1.5rem;
+  font-weight: 600;
+}
+
+/* 窄屏单栏时横向空间足，封面再大一号 */
+@media (min-width: 640px) and (max-width: 1023.98px) {
+  .detail-poster {
+    width: 9rem;
+  }
+}
+
+@media (min-width: 1280px) {
+  .detail-poster {
+    width: 7.5rem;
+  }
+}
+
+.detail-chip {
+  border-radius: 999px;
+  background: var(--tint-3);
+  padding: 0.0625rem 0.5rem;
+  color: var(--ink-secondary);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.25rem;
+  white-space: nowrap;
+}
+
 .episode-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: 0.75rem;
   width: 100%;
-  padding: 0.5rem 0.75rem;
+  min-height: 2.375rem;
+  padding: 0.375rem 0.75rem;
   text-align: left;
   transition: background-color 120ms;
 }
@@ -776,10 +861,22 @@ watch(
   box-shadow: inset 3px 0 0 var(--accent);
 }
 
+/* 资源数：有资源的是主色小药丸，没有的只留一条淡横线 */
 .episode-count {
+  min-width: 1.75rem;
+  border-radius: 999px;
+  padding: 0 0.4375rem;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.25rem;
+  text-align: center;
   white-space: nowrap;
-  font-size: 0.75rem;
-  font-weight: 600;
+}
+
+.episode-count-on {
+  background: var(--accent-soft);
+  color: var(--accent-vivid);
 }
 
 .skeleton-pulse {

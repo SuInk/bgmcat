@@ -26,6 +26,23 @@ func httpURL(s string) bool {
 var episodeRE = regexp.MustCompile(`(?i)(?:\s-\s|\[|第|EP?\s*)(\d{1,4})(?:[\]话話集\s.]|$)`)
 var resolutionRE = regexp.MustCompile(`(?i)\b(2160p|1080p|720p|480p|4k)\b`)
 
+// subgroupRE grabs the fansub tag that release names lead with: [LoliHouse] …, 【喵萌奶茶屋】★10月新番★ ….
+var subgroupRE = regexp.MustCompile(`^\s*[\[【]([^\]】]{1,40})[\]】]`)
+
+// subgroupOf returns the leading bracketed group, or nil when the title opens
+// with something that is clearly not a group name (a resolution or episode tag).
+func subgroupOf(title string) any {
+	m := subgroupRE.FindStringSubmatch(title)
+	if len(m) < 2 {
+		return nil
+	}
+	name := strings.TrimSpace(m[1])
+	if name == "" || resolutionRE.MatchString(name) || strings.Trim(name, "0123456789") == "" {
+		return nil
+	}
+	return name
+}
+
 func episode(title string) any {
 	m := episodeRE.FindStringSubmatch(title)
 	if len(m) > 1 {
@@ -250,7 +267,7 @@ func (a *App) refreshSubscription(ctx context.Context, s Obj) (Obj, error) {
 			image = item.Image.URL
 		}
 		published := item.Published
-		f := Obj{"id": id, "subscriptionId": s["id"], "title": item.Title, "imageUrl": image, "guid": identity, "link": item.Link, "publishedAt": published, "sourceType": kind, "sourceUrl": source, "infoHash": nil, "normalizedTitle": strings.ToLower(item.Title), "dedupeKey": key, "matched": matched, "matchReason": reason, "downloadStatus": status, "createdAt": now(), "episodeNumber": episode(item.Title), "isBatch": strings.Contains(strings.ToLower(item.Title), "batch"), "subgroup": nil, "resolution": resolutionRE.FindString(item.Title), "resourceKey": hash(source)}
+		f := Obj{"id": id, "subscriptionId": s["id"], "title": item.Title, "imageUrl": image, "guid": identity, "link": item.Link, "publishedAt": published, "sourceType": kind, "sourceUrl": source, "infoHash": nil, "normalizedTitle": strings.ToLower(item.Title), "dedupeKey": key, "matched": matched, "matchReason": reason, "downloadStatus": status, "createdAt": now(), "episodeNumber": episode(item.Title), "isBatch": strings.Contains(strings.ToLower(item.Title), "batch"), "subgroup": subgroupOf(item.Title), "resolution": resolutionRE.FindString(item.Title), "resourceKey": hash(source)}
 		if e = a.Store.Put("feed", str(id), f); e != nil {
 			return nil, e
 		}
