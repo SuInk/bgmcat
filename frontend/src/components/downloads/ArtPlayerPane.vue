@@ -22,12 +22,10 @@ const props = defineProps<{
   /** 字幕轨列表；ass/ssa 走原始字节直出，其余走 WebVTT */
   subtitleTracks?: PlaybackSubtitleTrack[];
   subtitleUrlFor?: (track: PlaybackSubtitleTrack) => string;
-  episodes?: PlayerEpisodeOption[];
-  activeEpisodeKey?: string | null;
 }>();
 
+// 选集不在播放器里了：播放页右侧（窄屏在下方）有 B 站式的选集格子
 const emit = defineEmits<{
-  (event: "select-episode", option: PlayerEpisodeOption): void;
   (event: "ended"): void;
 }>();
 
@@ -42,7 +40,6 @@ type PlaybackHistory = Record<string, { currentTime: number; duration: number; u
 type ArtPlayerInstance = InstanceType<typeof import("artplayer").default>;
 
 const containerRef = ref<HTMLDivElement | null>(null);
-const episodePanelOpen = ref(false);
 const resumePrompt = ref<{ seconds: number } | null>(null);
 const streamError = ref<string | null>(null);
 const bufferedSeconds = ref<number | null>(null);
@@ -64,7 +61,6 @@ let restoredForKey: string | null = null;
 let progressTimer: number | null = null;
 
 const subtitleOptions = computed(() => props.subtitleTracks ?? []);
-const hasEpisodePanel = computed(() => (props.episodes?.length ?? 0) > 1);
 
 function formatPlaybackTime(seconds: number): string {
   const safeSeconds = Math.max(0, Math.floor(seconds));
@@ -278,7 +274,7 @@ async function pollProgressOnce(): Promise<void> {
   }
   try {
     const progress = await getDownloadPlaybackProgress(props.gid);
-    bufferedSeconds.value = progress.bufferedSeconds;
+    bufferedSeconds.value = Number.isFinite(progress.bufferedSeconds) ? progress.bufferedSeconds : null;
     if (progress.error) {
       streamError.value = `转码失败：${progress.error}`;
     }
@@ -511,17 +507,18 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="grid min-h-0 gap-2">
-    <div class="relative min-h-0 rounded-lg border border-[var(--line)] bg-black/20 p-3">
-      <div ref="containerRef" class="art-host h-full min-h-[360px] overflow-hidden rounded-lg"></div>
+    <!-- 播放器本体：16:9 黑底、无边框，像视频站那样让画面做主角 -->
+    <div class="relative aspect-video w-full overflow-hidden rounded-xl bg-black">
+      <div ref="containerRef" class="art-host size-full"></div>
 
       <!-- 转码是边转边播的，黑屏期至少要让用户知道进度在动 -->
       <div
         v-if="waitingForStream && !streamError"
-        class="pointer-events-none absolute inset-3 z-20 grid place-items-center rounded-lg bg-black/55 text-center"
+        class="pointer-events-none absolute inset-0 z-20 grid place-items-center bg-black/55 text-center"
       >
         <div class="grid gap-1 px-6 text-sm font-semibold text-white">
           <span>正在本机转码，准备播放…</span>
-          <span v-if="bufferedSeconds !== null" class="text-xs font-medium text-white/75 tabular-nums">
+          <span v-if="bufferedSeconds !== null && Number.isFinite(bufferedSeconds)" class="text-xs font-medium text-white/75 tabular-nums">
             已缓冲到 {{ formatPlaybackTime(bufferedSeconds) }}
           </span>
         </div>
@@ -529,7 +526,7 @@ onBeforeUnmount(() => {
 
       <div
         v-if="streamError"
-        class="absolute inset-x-3 bottom-3 z-20 rounded-lg border border-[var(--err-soft)] bg-[var(--card)] px-4 py-3 text-sm font-semibold text-[var(--err)]"
+        class="absolute inset-x-3 bottom-14 z-20 rounded-lg border border-[var(--err-soft)] bg-[var(--card)] px-4 py-3 text-sm font-semibold text-[var(--err)]"
       >
         {{ streamError }}
       </div>
@@ -549,52 +546,25 @@ onBeforeUnmount(() => {
       </div>
     </div>
 
-    <div v-if="subtitleOptions.length > 1 || hasEpisodePanel" class="flex flex-wrap items-center gap-2">
-      <template v-if="subtitleOptions.length > 1">
-        <span class="text-xs font-semibold text-[var(--muted)]">字幕</span>
-        <button
-          v-for="track in subtitleOptions"
-          :key="track.id"
-          type="button"
-          class="chip h-8 rounded-md px-3 text-xs font-semibold"
-          :class="{ 'chip-active': activeSubtitleId === track.id }"
-          @click="applySubtitleTrack(track)"
-        >
-          {{ track.label }}
-        </button>
-        <button
-          type="button"
-          class="chip h-8 rounded-md px-3 text-xs font-semibold"
-          :class="{ 'chip-active': activeSubtitleId === null }"
-          @click="applySubtitleTrack(null)"
-        >
-          关闭
-        </button>
-      </template>
-
+    <div v-if="subtitleOptions.length > 1" class="flex flex-wrap items-center gap-2">
+      <span class="text-xs font-semibold text-[var(--muted)]">字幕</span>
       <button
-        v-if="hasEpisodePanel"
+        v-for="track in subtitleOptions"
+        :key="track.id"
         type="button"
-        class="chip ml-auto h-8 rounded-md px-3 text-xs font-semibold"
-        :class="{ 'chip-active': episodePanelOpen }"
-        @click="episodePanelOpen = !episodePanelOpen"
+        class="chip h-8 rounded-md px-3 text-xs font-semibold"
+        :class="{ 'chip-active': activeSubtitleId === track.id }"
+        @click="applySubtitleTrack(track)"
       >
-        选集（{{ episodes?.length }}）
+        {{ track.label }}
       </button>
-    </div>
-
-    <div v-if="hasEpisodePanel && episodePanelOpen" class="grid gap-1 rounded-lg border border-[var(--line)] bg-[var(--card)] p-2">
       <button
-        v-for="episode in episodes"
-        :key="episode.key"
         type="button"
-        class="flex items-center gap-3 rounded-md px-3 py-2 text-left text-sm font-semibold transition disabled:opacity-40"
-        :class="activeEpisodeKey === episode.key ? 'bg-[var(--accent-soft)] text-[var(--accent)]' : 'text-[var(--ink)] hover:bg-[var(--tint-2)]'"
-        :disabled="!episode.playable"
-        @click="emit('select-episode', episode)"
+        class="chip h-8 rounded-md px-3 text-xs font-semibold"
+        :class="{ 'chip-active': activeSubtitleId === null }"
+        @click="applySubtitleTrack(null)"
       >
-        <span class="min-w-0 flex-1 truncate">{{ episode.label }}</span>
-        <span class="shrink-0 text-xs font-medium text-[var(--muted)]">{{ episode.statusLabel }}</span>
+        关闭
       </button>
     </div>
   </div>
