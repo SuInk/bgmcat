@@ -171,7 +171,7 @@ onUnmounted(() => {
             aria-label="打开侧栏"
             @click="handleSidebarToggle"
           >
-            <AppNavIcon name="panel-left" />
+            <AppNavIcon name="panel-left-open" />
           </button>
 
           <h1 class="topbar-title">{{ activeTabMeta.label }}</h1>
