@@ -57,6 +57,7 @@
   "launchAtLogin": false,
   "minimizeToTray": true,
   "btTrackers": [],
+  "defaultSaveTo": "local",
   "enabledResourceProviders": [
     "mikan"
   ],

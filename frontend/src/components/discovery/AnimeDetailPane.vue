@@ -657,7 +657,7 @@ watch(
               <div class="episode-chips" role="group" aria-label="按剧集筛选资源">
                 <button
                   type="button"
-                  class="episode-chip"
+                  class="episode-chip episode-chip-wide"
                   :class="{ 'is-active': selectedDownloadGroupKey === null }"
                   :aria-pressed="selectedDownloadGroupKey === null"
                   @click="selectDownloadGroup(null)"
@@ -672,16 +672,16 @@ watch(
                   :class="{ 'is-active': selectedDownloadGroupKey === `episode:${episode.episodeId}` }"
                   :aria-pressed="selectedDownloadGroupKey === `episode:${episode.episodeId}`"
                   :disabled="getEpisodeDownloadCount(episode) === 0"
-                  :title="episodeTitleOf(episode) ?? undefined"
+                  :title="`${episode.episodeNumber ? `第 ${episode.episodeNumber} 集` : 'SP'}${episodeTitleOf(episode) ? ` · ${episodeTitleOf(episode)}` : ''} · ${getEpisodeDownloadCount(episode) ? `${getEpisodeDownloadCount(episode)} 个资源` : '暂无资源'}`"
+                  :aria-label="`${episode.episodeNumber ? `第 ${episode.episodeNumber} 集` : 'SP'}，${getEpisodeDownloadCount(episode) ? `${getEpisodeDownloadCount(episode)} 个资源` : '暂无资源'}`"
                   @click="selectDownloadGroup(`episode:${episode.episodeId}`)"
                 >
-                  {{ episode.episodeNumber ? `第 ${episode.episodeNumber} 集` : "SP" }}
-                  <span v-if="getEpisodeDownloadCount(episode) > 0" class="tabular-nums opacity-70">{{ getEpisodeDownloadCount(episode) }}</span>
+                  {{ episode.episodeNumber ?? "SP" }}
                 </button>
                 <button
                   v-if="unmatchedDownloadGroup"
                   type="button"
-                  class="episode-chip"
+                  class="episode-chip episode-chip-wide"
                   :class="{ 'is-active': selectedDownloadGroupKey === 'unmatched' }"
                   :aria-pressed="selectedDownloadGroupKey === 'unmatched'"
                   @click="selectDownloadGroup('unmatched')"
@@ -771,25 +771,23 @@ watch(
   }
 }
 
+/*
+ * 选集面板：像视频站那样一格一个集数、自动换行，一屏看到全部剧集。
+ * 以前是横向滚动的「第 N 集 n」胶囊，手机上一次只露出三集。资源数放进 title / aria-label。
+ */
 .episode-chips {
-  display: flex;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(2.75rem, 1fr));
   gap: 6px;
-  overflow-x: auto;
-  padding-bottom: 2px;
-  scrollbar-width: none;
-  mask-image: linear-gradient(to right, #000 calc(100% - 1.5rem), transparent);
-}
-.episode-chips::-webkit-scrollbar {
-  display: none;
 }
 .episode-chip {
   display: inline-flex;
-  flex: none;
   align-items: center;
-  gap: 5px;
-  height: 30px;
-  padding: 0 11px;
-  border-radius: 999px;
+  justify-content: center;
+  gap: 4px;
+  height: 34px;
+  padding: 0 6px;
+  border-radius: 8px;
   background: var(--panel);
   color: var(--ink-secondary);
   font-size: 12.5px;
@@ -806,7 +804,11 @@ watch(
 }
 .episode-chip:disabled {
   cursor: not-allowed;
-  opacity: 0.45;
+  opacity: 0.4;
+}
+/* 「全部 N」「未匹配 N」比集数格子宽，占两格 */
+.episode-chip-wide {
+  grid-column: span 2;
 }
 
 @media (min-width: 1024px) {

@@ -64,6 +64,10 @@ func (a *App) enqueue(o Obj) (Obj, error) {
 	if kind == "" {
 		kind = inferSource(source)
 	}
+	saveTo, err := a.resolveSaveTo(str(o["saveTo"]))
+	if err != nil {
+		return nil, err
+	}
 	dir := str(a.Settings()["downloadDir"])
 	if feed != nil && feed["subscriptionId"] != nil {
 		sub, _ := a.Store.Get("subscriptions", str(feed["subscriptionId"]))
@@ -71,11 +75,17 @@ func (a *App) enqueue(o Obj) (Obj, error) {
 			dir = str(sub["downloadDirOverride"])
 		}
 	}
+	if custom := strings.TrimSpace(str(o["directory"])); custom != "" {
+		if !filepath.IsAbs(custom) {
+			return nil, errors.New("保存目录必须是绝对路径")
+		}
+		dir = custom
+	}
 	dir = filepath.Join(dir, gid)
 	if e = os.MkdirAll(dir, 0700); e != nil {
 		return nil, e
 	}
-	job := Obj{"id": id, "gid": gid, "feedItemId": o["feedItemId"], "feedItemTitle": title, "feedItemImageUrl": o["imageUrl"], "feedItemSubscriptionId": nil, "feedItemSourceUrl": source, "sourceUrl": source, "sourceType": kind, "status": "queued", "totalLength": 0, "completedLength": 0, "downloadSpeed": 0, "uploadSpeed": 0, "errorMessage": nil, "createdAt": now(), "updatedAt": now(), "directory": dir, "files": []any{}, "cloudArchive": nil}
+	job := Obj{"id": id, "gid": gid, "feedItemId": o["feedItemId"], "feedItemTitle": title, "feedItemImageUrl": o["imageUrl"], "feedItemSubscriptionId": nil, "feedItemSourceUrl": source, "sourceUrl": source, "sourceType": kind, "status": "queued", "totalLength": 0, "completedLength": 0, "downloadSpeed": 0, "uploadSpeed": 0, "errorMessage": nil, "createdAt": now(), "updatedAt": now(), "directory": dir, "files": []any{}, "cloudArchive": nil, "saveTo": saveTo}
 	if feed != nil {
 		job["feedItemSubscriptionId"] = feed["subscriptionId"]
 		job["feedItemImageUrl"] = feed["imageUrl"]
@@ -89,6 +99,29 @@ func (a *App) enqueue(o Obj) (Obj, error) {
 	a.startJob(gid)
 	return job, nil
 }
+
+// resolveSaveTo picks where a new task ends up. An explicit request for Google
+// Drive fails fast when Drive is not connected; the default setting (used by
+// subscriptions and one-click downloads) quietly falls back to local instead,
+// so automatic downloads never stop because of a missing authorization.
+func (a *App) resolveSaveTo(requested string) (string, error) {
+	switch requested {
+	case "local":
+		return "local", nil
+	case "cloud":
+		if !a.driveConnected() {
+			return "", errors.New("请先在「设置 → 云盘归档」连接 Google Drive")
+		}
+		return "cloud", nil
+	case "":
+		if str(a.Settings()["defaultSaveTo"]) == "cloud" && a.driveConnected() {
+			return "cloud", nil
+		}
+		return "local", nil
+	}
+	return "", errors.New("保存位置只能是本机或 Google Drive")
+}
+
 func (a *App) startJob(gid string) {
 	a.jobsMu.Lock()
 	if _, exists := a.jobs[gid]; exists || a.ctx.Err() != nil {

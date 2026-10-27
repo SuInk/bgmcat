@@ -59,6 +59,7 @@ export const settingsForm = reactive<AppSettings>({
   aria2Enabled: true,
   aria2SeedEnabled: false,
   btTrackers: [],
+  defaultSaveTo: "local",
   qbittorrentBaseUrl: "http://127.0.0.1:8080",
   qbittorrentUsername: "admin",
   qbittorrentPassword: "",
@@ -358,7 +359,7 @@ export function changedSettingKeys(keys: ReadonlyArray<keyof AppSettings>): Arra
     const formValue = settingsForm[key];
     const savedValue = saved[key];
     if (Array.isArray(formValue) && Array.isArray(savedValue)) {
-      return formValue.join(" ") !== savedValue.join(" ");
+      return formValue.join("\u0000") !== savedValue.join("\u0000");
     }
     return formValue !== savedValue;
   });

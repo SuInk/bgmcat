@@ -5,6 +5,9 @@ import type { DownloadJob, PlaybackSubtitleTrack } from "@shared/index";
 import { sourceTypeLabel, type SourceType } from "@shared/index";
 
 import {
+  canPickDesktopDirectory,
+  getCloudStatus,
+  pickDesktopDirectory,
   getDownloadAssSubtitleUrl,
   getDownloadHlsPlaylistUrl,
   getDownloadStreamUrl,
@@ -13,6 +16,7 @@ import {
 } from "../api";
 import { cloudArchiveLabel } from "../lib/cloudArchive";
 import AppDialog from "../components/common/AppDialog.vue";
+import SegmentedControl from "../components/common/SegmentedControl.vue";
 import PagerBar from "../components/common/PagerBar.vue";
 import AppNavIcon from "../components/layout/AppNavIcon.vue";
 import ArtPlayerPane from "../components/downloads/ArtPlayerPane.vue";
@@ -46,6 +50,8 @@ import {
 } from "../stores/downloads";
 import { subscriptions } from "../stores/subscriptions";
 import { selectTab } from "../stores/boot";
+import { settingsForm } from "../stores/session";
+import { viewportWidth } from "../stores/ui";
 
 type DownloadFilterKey = "all" | "active" | "waiting" | "paused" | "complete" | "issues";
 type DownloadSortMode = "status" | "updated" | "progress";
@@ -92,6 +98,38 @@ const activeGroupAnchorGid = ref<string | null>(null);
 const selectedGroupKeys = ref<Set<string>>(new Set());
 const manualOptionsOpen = ref(false);
 const manualComposerOpen = ref(false);
+
+// —— 添加任务：保存位置 ——
+const SAVE_TO_OPTIONS = [
+  { value: "local", label: "本机" },
+  { value: "cloud", label: "Google Drive" }
+] as const;
+const cloudConnected = ref(false);
+const canPickDirectory = canPickDesktopDirectory();
+
+/** 每次打开对话框按设置里的默认位置起步；云盘没连上就先落本机 */
+watch(manualComposerOpen, async (open) => {
+  if (!open) {
+    return;
+  }
+  manualDownloadForm.directory = "";
+  manualDownloadForm.saveTo = "local";
+  try {
+    cloudConnected.value = (await getCloudStatus()).connected;
+  } catch {
+    cloudConnected.value = false;
+  }
+  if (settingsForm.defaultSaveTo === "cloud" && cloudConnected.value) {
+    manualDownloadForm.saveTo = "cloud";
+  }
+});
+
+async function pickManualDirectory(): Promise<void> {
+  const picked = await pickDesktopDirectory();
+  if (picked) {
+    manualDownloadForm.directory = picked;
+  }
+}
 
 const detailLoading = computed(() => isBusyMatching((key) => key.startsWith("download-detail:")));
 
@@ -698,6 +736,17 @@ function toggleDownloadGroup(key: string): void {
   }
 }
 
+/**
+ * 手机宽度：点任务进一个全屏详情页（顶上带返回），不在列表里就地展开。
+ * 就地展开在窄屏上是缩进套缩进、竖线套竖线，一屏只剩半个面板。
+ */
+const narrowDownloads = computed(() => viewportWidth.value <= 640);
+const narrowDetailGroup = computed(() =>
+  narrowDownloads.value && activeDownloadGroupKey.value
+    ? groupedDownloads.value.find((group) => group.key === activeDownloadGroupKey.value) ?? null
+    : null
+);
+
 function collapseDownloadGroup(): void {
   activeDownloadGroupKey.value = null;
   activeGroupAnchorGid.value = null;
@@ -815,6 +864,49 @@ watch(
           </button>
         </div>
       </div>
+    </div>
+
+    <div v-else-if="narrowDetailGroup" class="grid min-h-0 content-start gap-4 overflow-auto p-3">
+      <button type="button" class="btn-ghost inline-flex w-fit items-center gap-1 px-2.5 py-1.5 text-sm font-semibold" @click="collapseDownloadGroup">
+        <AppNavIcon name="chevron-left" class="size-4" aria-hidden="true" />
+        下载管理
+      </button>
+      <header class="flex min-w-0 items-center gap-3">
+        <div class="relative size-14 shrink-0 overflow-hidden rounded-lg" :style="coverStyle(primaryDownloadForGroup(narrowDetailGroup).gid)">
+          <img
+            v-if="resolveDownloadArtworkUrl(primaryDownloadForGroup(narrowDetailGroup))"
+            :src="resolveDownloadArtworkUrl(primaryDownloadForGroup(narrowDetailGroup)) ?? ''"
+            alt=""
+            class="absolute inset-0 size-full object-cover"
+          />
+          <div v-else class="absolute inset-0 grid place-items-center text-sm font-semibold text-white/90">{{ coverLabel(narrowDetailGroup.title) }}</div>
+        </div>
+        <div class="min-w-0">
+          <h2 class="line-clamp-2 text-[15px] font-semibold leading-snug text-[var(--ink)]">{{ narrowDetailGroup.title }}</h2>
+          <p class="mt-0.5 truncate text-xs text-[var(--muted)]">
+            {{ narrowDetailGroup.episodes.length }} 集 · {{ narrowDetailGroup.downloads.length }} 个版本<template v-if="primaryDownloadForGroup(narrowDetailGroup).saveTo === 'cloud' && !primaryDownloadForGroup(narrowDetailGroup).cloudArchive"> · 完成后存到云盘</template>
+          </p>
+        </div>
+      </header>
+      <DownloadVersionPane
+        flat
+        :downloads="narrowDetailGroup.downloads"
+        :episodes="narrowDetailGroup.episodes"
+        :format-bytes="formatBytes"
+        :download-display-title="displayTitle"
+        :progress-percent="progressPercent"
+        :download-raw-error="downloadRawError"
+        :is-download-row-busy="isDownloadRowBusy"
+        :anime-detail="animeDetail"
+        :detail-belongs-to-group="narrowDetailGroup.downloads.some((item) => item.gid === selectedDownloadDetailGid)"
+        :detail-error="animeDetailError"
+        :detail-loading="detailLoading"
+        @conflict="handleDownloadConflict($event.gid, $event.strategy)"
+        @playback="openPlayback"
+        @pause="updateDownloadState('pause', $event)"
+        @resume="updateDownloadState('resume', $event)"
+        @remove="requestDelete"
+      />
     </div>
 
     <div v-else class="grid min-h-0 grid-rows-[auto_minmax(0,1fr)_auto] overflow-hidden">
@@ -992,7 +1084,7 @@ watch(
               <div class="min-w-0 flex-1">
                 <strong class="block truncate text-sm font-semibold text-[var(--ink)]" :title="group.title">{{ group.title }}</strong>
                 <p class="mt-0.5 truncate text-xs text-[var(--muted)]">
-                  {{ group.episodes.length }} 集 · {{ group.downloads.length }} 个版本 · {{ currentEpisodeLabel(group) }}<template v-if="resolutionLabel(primaryDownloadForGroup(group))"> · {{ resolutionLabel(primaryDownloadForGroup(group)) }}</template><template v-if="subgroupLabel(primaryDownloadForGroup(group))"> · {{ subgroupLabel(primaryDownloadForGroup(group)) }}</template>
+                  {{ group.episodes.length }} 集 · {{ group.downloads.length }} 个版本 · {{ currentEpisodeLabel(group) }}<template v-if="resolutionLabel(primaryDownloadForGroup(group))"> · {{ resolutionLabel(primaryDownloadForGroup(group)) }}</template><template v-if="subgroupLabel(primaryDownloadForGroup(group))"> · {{ subgroupLabel(primaryDownloadForGroup(group)) }}</template><template v-if="primaryDownloadForGroup(group).saveTo === 'cloud' && !primaryDownloadForGroup(group).cloudArchive"> · 完成后存到云盘</template>
                 </p>
                 <p
                   v-if="downloadRawError(primaryDownloadForGroup(group))"
@@ -1009,7 +1101,11 @@ watch(
                 <!-- 窄屏内联进度 -->
                 <div class="mt-1.5 flex items-center gap-2 @min-[640px]:hidden">
                   <div class="h-1.5 flex-1 overflow-hidden rounded-full bg-[var(--tint-4)]">
-                    <div class="h-full rounded-full bg-[var(--accent-vivid)] transition-[width] duration-300" :style="{ width: `${groupProgress(group)}%` }"></div>
+                    <div
+                      class="h-full rounded-full transition-[width] duration-300"
+                      :class="groupStatus(group) === 'complete' ? 'bg-[var(--ok)]' : 'bg-[var(--accent-vivid)]'"
+                      :style="{ width: `${groupProgress(group)}%` }"
+                    ></div>
                   </div>
                   <span class="shrink-0 text-xs text-[var(--muted)]">{{ groupProgress(group) }}%</span>
                 </div>
@@ -1090,7 +1186,7 @@ watch(
 
           <!-- 就地展开：分集/版本/日志直接长在这一行下面，拿整行全宽 -->
           <DownloadVersionPane
-            v-if="activeDownloadGroupKey === group.key"
+            v-if="activeDownloadGroupKey === group.key && !narrowDownloads"
             :downloads="group.downloads"
             :episodes="group.episodes"
             :format-bytes="formatBytes"
@@ -1173,13 +1269,42 @@ watch(
           </button>
           <span class="text-sm font-semibold text-[var(--muted)]">当前识别：{{ sourceTypeLabel(inferredManualSourceType) }}</span>
         </div>
+
+        <div class="grid gap-2 border-t border-[var(--line)] pt-3">
+          <div class="flex flex-wrap items-center justify-between gap-2">
+            <span class="text-sm font-semibold text-[var(--ink)]">保存到</span>
+            <SegmentedControl v-model="manualDownloadForm.saveTo" :options="SAVE_TO_OPTIONS" aria-label="保存位置" />
+          </div>
+          <template v-if="manualDownloadForm.saveTo === 'local'">
+            <div class="flex min-w-0 gap-2">
+              <input
+                v-model="manualDownloadForm.directory"
+                class="input-base min-w-0 flex-1 rounded-lg px-3 py-2 text-sm"
+                :placeholder="settingsForm.downloadDir || '下载目录'"
+                aria-label="本机保存目录"
+                spellcheck="false"
+              />
+              <button v-if="canPickDirectory" type="button" class="btn-ghost shrink-0 px-3 text-sm" @click="pickManualDirectory">选择…</button>
+            </div>
+            <p class="text-xs text-[var(--muted)]">留空存到设置里的下载目录；填写需为运行 Bangumi Cat 那台机器上的绝对路径。</p>
+          </template>
+          <template v-else>
+            <p v-if="cloudConnected" class="text-xs leading-5 text-[var(--muted)]">
+              先下载到本机，完成后上传到 Google Drive「{{ settingsForm.cloudDriveFolderId === "root" || !settingsForm.cloudDriveFolderId ? "我的云盘" : settingsForm.cloudDriveFolderId }}」；云端大小和 MD5 校验通过后删除本机副本。
+            </p>
+            <p v-else class="text-xs leading-5 text-[var(--warn)]">
+              还没连接 Google Drive。
+              <button type="button" class="font-semibold underline" @click="manualComposerOpen = false; selectTab('settings')">去设置 → 云盘归档</button>
+            </p>
+          </template>
+        </div>
       </div>
       <template #footer>
         <button type="button" class="btn-ghost" @click="manualComposerOpen = false; manualDownloadForm.url = ''">取消</button>
         <button
           type="button"
           class="btn-primary"
-          :disabled="isBusy('download:manual') || !manualDownloadForm.url.trim()"
+          :disabled="isBusy('download:manual') || !manualDownloadForm.url.trim() || (manualDownloadForm.saveTo === 'cloud' && !cloudConnected)"
           @click="submitManual"
         >
           {{ isBusy("download:manual") ? "添加中…" : "确认添加" }}

@@ -193,6 +193,7 @@ const IMMEDIATE_KEYS = [
   "minimizeToTray",
   "launchAtLogin",
   "downloadClient",
+  "defaultSaveTo",
   "aria2Enabled",
   "aria2SeedEnabled",
   "cloudArchiveEnabled",

@@ -24,6 +24,14 @@ if (!app.requestSingleInstanceLock()) { app.quit(); } else {
   });
 }
 
+// Native folder picker for choosing where a download is saved. Same owner check
+// as the credential channel: only our own main frame on the local page.
+ipcMain.handle('bgmcat:pick-directory', async event => {
+  if (!window || event.sender !== window.webContents || event.senderFrame !== window.webContents.mainFrame || !isLocalPage(event.senderFrame.url, origin)) return null;
+  const result = await dialog.showOpenDialog(window, { title: '选择保存位置', properties: ['openDirectory', 'createDirectory'] });
+  return result.canceled || !result.filePaths[0] ? null : result.filePaths[0];
+});
+
 ipcMain.on('bgmcat:credential', event => {
   event.returnValue = window && event.sender === window.webContents &&
     event.senderFrame === window.webContents.mainFrame && isLocalPage(event.senderFrame.url, origin) ? token : '';

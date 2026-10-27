@@ -447,6 +447,9 @@ func (a *App) updateSettings(w http.ResponseWriter, r *http.Request) error {
 		if k == "pollIntervalMinutes" && (num(v) < 1 || num(v) > 1440) {
 			return errors.New("轮询间隔为 1–1440 分钟")
 		}
+		if k == "defaultSaveTo" && str(v) != "local" && str(v) != "cloud" {
+			return errors.New("保存位置只能是本机或 Google Drive")
+		}
 		if k == "downloadDir" && !filepath.IsAbs(str(v)) {
 			return errors.New("下载目录必须是绝对路径")
 		}

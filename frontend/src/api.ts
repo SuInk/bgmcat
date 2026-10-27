@@ -73,6 +73,17 @@ interface DesktopShellBridge {
   platform?: string;
 }
 
+/** 桌面版原生「选择文件夹」对话框；网页里返回 null（没有这个能力），取消也返回 null。 */
+export async function pickDesktopDirectory(): Promise<string | null> {
+  const bridge = (window as unknown as { animeRssShell?: { pickDirectory?: () => Promise<string | null> } }).animeRssShell;
+  return bridge?.pickDirectory ? bridge.pickDirectory() : null;
+}
+
+export function canPickDesktopDirectory(): boolean {
+  const bridge = (window as unknown as { animeRssShell?: { pickDirectory?: unknown } }).animeRssShell;
+  return typeof bridge?.pickDirectory === "function";
+}
+
 /** The desktop shell's OS, e.g. "darwin"; empty in a normal browser. */
 export function readDesktopShellPlatform(): string {
   const bridge = (window as unknown as { animeRssShell?: DesktopShellBridge }).animeRssShell;
@@ -425,6 +436,10 @@ export async function createDownload(payload: {
   animeId?: string;
   pageUrl?: string;
   sourceType?: "direct" | "magnet" | "torrent-url";
+  /** 不传则按设置里的 defaultSaveTo */
+  saveTo?: "local" | "cloud";
+  /** 本机保存目录（绝对路径）；不传用设置里的下载目录 */
+  directory?: string;
 }): Promise<DownloadJob> {
   return request<DownloadJob>("/api/downloads", {
     method: "POST",

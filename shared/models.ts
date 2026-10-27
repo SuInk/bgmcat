@@ -33,6 +33,8 @@ export interface AppSettings {
   aria2SeedEnabled: boolean;
   /** 额外的公共 Tracker，下载磁力 / 种子时附加给 aria2（与种子自带的并用） */
   btTrackers: string[];
+  /** 新任务默认保存到本机还是 Google Drive（订阅自动下载、详情页一键下载用） */
+  defaultSaveTo: "local" | "cloud";
   qbittorrentBaseUrl: string;
   qbittorrentUsername: string;
   qbittorrentPassword: string;
@@ -322,6 +324,8 @@ export interface DownloadJob {
   issueMessage?: string | null;
   canResolveConflict?: boolean;
   canPlayExistingFile?: boolean;
+  /** 保存位置：cloud 表示下载完成后上传 Google Drive，校验通过后删掉本机副本 */
+  saveTo?: "local" | "cloud";
   /** 任务的文件清单；云盘归档时每个文件记着已上传的字节数 */
   files?: Array<{ path?: string; size?: number; uploadedBytes?: number; verified?: boolean }>;
   createdAt: string;
