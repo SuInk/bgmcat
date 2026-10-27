@@ -21,6 +21,7 @@ import {
   Info,
   KeyRound,
   LayoutGrid,
+  List,
   LogOut,
   Menu,
   Moon,
@@ -79,7 +80,9 @@ const ICONS: Record<string, Component> = {
   refresh: RefreshCw,
   external: ExternalLink,
   copy: Copy,
-  inbox: Inbox
+  inbox: Inbox,
+  grid: LayoutGrid,
+  list: List
 };
 
 const props = defineProps<{

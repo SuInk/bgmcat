@@ -8,12 +8,15 @@ const props = withDefaults(
     rowCountOptions?: number[];
     rowLabel?: string;
     readonlyCount?: boolean;
+    /** 不要顶部分隔线和底色：跟在内容后面，而不是钉在面板底部 */
+    plain?: boolean;
   }>(),
   {
     rowCount: undefined,
     rowCountOptions: () => [],
     rowLabel: "每页行数",
-    readonlyCount: false
+    readonlyCount: false,
+    plain: false
   }
 );
 
@@ -24,7 +27,10 @@ const emit = defineEmits<{
 </script>
 
 <template>
-  <div class="z-10 shrink-0 flex flex-col items-center justify-center gap-3 border-t border-[var(--line)] bg-[var(--table-panel)] px-4 py-2 text-[13px] text-[var(--muted)] sm:flex-row sm:flex-wrap sm:gap-4">
+  <div
+    class="z-10 shrink-0 flex flex-col items-center justify-center gap-3 px-4 py-2 text-[13px] text-[var(--muted)] sm:flex-row sm:flex-wrap sm:gap-4"
+    :class="props.plain ? '' : 'border-t border-[var(--line)] bg-[var(--table-panel)]'"
+  >
     <div class="flex w-full items-center justify-center gap-2 sm:w-auto">
       <span class="text-xs font-medium text-[var(--muted)]">{{ props.rowLabel }}</span>
       <select
