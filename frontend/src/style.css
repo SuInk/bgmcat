@@ -603,3 +603,83 @@ button:disabled {
   background: color-mix(in srgb, var(--ink) 28%, transparent);
   background-clip: padding-box;
 }
+
+/* ---------- macOS 桌面版：红绿灯在顶栏那一行里（desktop/main.cjs 的 trafficLightPosition） ---------- */
+/* 侧栏头和顶栏充当标题栏可拖动窗口，里面能点的东西要排除在拖拽区外 */
+html[data-shell="mac"] .sidebar-head,
+html[data-shell="mac"] .app-topbar {
+  -webkit-app-region: drag;
+}
+html[data-shell="mac"] .sidebar-head :is(button, a, input, select),
+html[data-shell="mac"] .app-topbar :is(button, a, input, select) {
+  -webkit-app-region: no-drag;
+}
+/* 红绿灯占到 x≈78px（侧栏内边距 14 + 72）：品牌文字右移，小 logo 让位（Dock 图标已经说明是谁） */
+html[data-shell="mac"] .sidebar-head {
+  padding-left: 72px;
+}
+html[data-shell="mac"] .sidebar-head .brand img {
+  display: none;
+}
+/* 侧栏收起时红绿灯落在顶栏上，展开按钮和标题往右让 */
+html[data-shell="mac"] .app-shell:has(.sidebar-hidden) .app-topbar {
+  padding-left: 84px;
+}
+
+/* ---------- iOS Safari / 添加到主屏幕 ---------- */
+/*
+ * viewport-fit=cover + black-translucent 状态栏：页面会画到刘海和底部横条下面，
+ * 顶栏、侧栏、内容底部都要让出 safe-area，否则标题被刘海压住、最后一行被横条挡住。
+ * 选择器带 html 前缀，压过 App.vue / AppSidebar.vue 里 scoped 的同名规则。
+ */
+html .app-topbar {
+  height: calc(56px + env(safe-area-inset-top));
+  padding-top: env(safe-area-inset-top);
+  padding-left: max(12px, env(safe-area-inset-left));
+  padding-right: max(12px, env(safe-area-inset-right));
+}
+@media (min-width: 641px) {
+  html .app-topbar {
+    padding-left: max(14px, env(safe-area-inset-left));
+    padding-right: max(14px, env(safe-area-inset-right));
+  }
+}
+@media (min-width: 961px) {
+  html .app-topbar {
+    padding-left: max(24px, env(safe-area-inset-left));
+    padding-right: max(24px, env(safe-area-inset-right));
+  }
+}
+html .app-sidebar {
+  padding-top: calc(20px + env(safe-area-inset-top));
+  padding-left: max(14px, env(safe-area-inset-left));
+}
+html .app-content {
+  padding-bottom: max(20px, env(safe-area-inset-bottom));
+  padding-left: max(10px, env(safe-area-inset-left));
+  padding-right: max(10px, env(safe-area-inset-right));
+}
+@media (min-width: 641px) {
+  html .app-content {
+    padding-left: max(clamp(16px, 3vw, 32px), env(safe-area-inset-left));
+    padding-right: max(clamp(16px, 3vw, 32px), env(safe-area-inset-right));
+  }
+}
+
+/* 输入框字号小于 16px 时，iOS Safari 一聚焦就把整页放大，还不会自己缩回去 */
+@media (pointer: coarse) {
+  input,
+  select,
+  textarea {
+    font-size: 16px !important;
+  }
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+}
+body {
+  /* 点按时不要整块闪灰；滚到头不要把整个外壳一起拖动 */
+  -webkit-tap-highlight-color: transparent;
+  overscroll-behavior: none;
+}

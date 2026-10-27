@@ -69,6 +69,9 @@ async function start() {
   window = new BrowserWindow({
     title: '猫追番 · Bangumi Cat', width: 1280, height: 840, minWidth: 360, minHeight: 480,
     show: false, backgroundColor: '#f7f5f1',
+    // macOS: no grey system title bar; the traffic lights sit in the app's own
+    // 56px header row (the page reserves room for them via data-shell="mac").
+    ...(process.platform === 'darwin' ? { titleBarStyle: 'hidden', trafficLightPosition: { x: 18, y: 21 } } : {}),
     webPreferences: { preload: join(__dirname, 'preload.cjs'), contextIsolation: true,
       sandbox: true, nodeIntegration: false, webSecurity: true, partition: 'persist:bgmcat-desktop' }
   });
