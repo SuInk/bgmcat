@@ -1277,7 +1277,8 @@ watch(
             取消选择
           </button>
         </template>
-        <div class="ml-auto">
+        <!-- 没选中任务时分页器居中；选中后左边是批量操作，分页器靠右 -->
+        <div :class="selectedGroupKeys.size > 0 ? 'ml-auto' : 'mx-auto'">
           <PagerBar
             plain
             class="!px-0"
