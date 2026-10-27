@@ -1,13 +1,14 @@
 <script setup lang="ts">
 /**
- * 番剧详情：接管整个内容区，沿用 main 分支那版的左右分栏。
+ * 番剧详情：接管整个内容区，任何宽度都是一栏从上往下：
  *
- * - 左栏：紧凑头部（返回 / 封面 / 标题 / 元信息 / 收藏与订阅）+ 竖向剧集列表
- * - 右栏：当前选中剧集（默认「全部」）的资源
+ * - 头部：返回 / 封面 / 标题 / 元信息 / 简介 / 收藏与订阅
+ * - 选集格子：「全部」+ 每集一格，没资源的集变灰
+ * - 资源：当前选中剧集（默认「全部」）的资源
  *
- * 宽屏（≥1024px）两栏并排，点剧集只换右栏范围；窄屏放不下两栏，
- * 退回「剧集列表 → 点集看资源 → 返回」的逐层进入。
- * 简介 / 标签 / 别名 / 外链收进「简介与标签」默认折叠，别把剧集列表挤到折叠线以下。
+ * 以前宽屏是左右两栏：左栏 20rem 塞头部和竖排剧集列表，右栏放资源。
+ * 资源少时右边是一大块空框，左边又挤，所以改成和窄屏同一套。
+ * 简介 / 标签 / 别名 / 外链收进「简介与标签」默认折叠。
  */
 import { computed, ref, watch } from "vue";
 
@@ -527,7 +528,8 @@ watch(
                   </div>
 
                   <!-- 订阅是这页真正的主操作（自动追更），收藏只是记一笔，两者不同权重 -->
-                  <div class="grid grid-cols-[auto_minmax(0,1fr)] gap-2">
+                  <!-- 宽屏不让主按钮横贯整页：一千多像素宽的按钮读起来像横幅，不像按钮 -->
+                  <div class="grid grid-cols-[auto_minmax(0,1fr)] gap-2 sm:max-w-md">
                     <button
                       v-if="!isFavorite"
                       type="button"
@@ -580,73 +582,6 @@ watch(
                 </div>
               </header>
 
-              <!-- 宽屏时头部不动、只有剧集列表自己滚，标题行始终看得见 -->
-              <section class="episode-panel overflow-hidden rounded-lg border border-[var(--line)] bg-[var(--card)] shadow-[var(--soft-shadow)]">
-                <div class="flex shrink-0 items-center justify-between gap-3 border-b border-[var(--line)] px-3 py-2">
-                  <h3 class="text-sm font-semibold text-[var(--ink)]">剧集 <span class="ml-1 text-[11px] font-medium text-[var(--muted)]">右侧数字为资源数</span></h3>
-                  <span v-if="animeDetail.totalEpisodes || episodes.length" class="text-xs font-semibold text-[var(--muted)]">
-                    全 {{ animeDetail.totalEpisodes || episodes.length }} 集
-                  </span>
-                </div>
-
-                <ul class="episode-list divide-y divide-[var(--line)]">
-                  <li>
-                    <button
-                      type="button"
-                      class="episode-row"
-                      :class="selectedDownloadGroupKey === null ? 'episode-row-active' : 'hover:bg-[var(--tint-2)]'"
-                      :aria-current="selectedDownloadGroupKey === null"
-                      @click="selectDownloadGroup(null)"
-                    >
-                      <span class="flex min-w-0 items-baseline gap-2">
-                        <strong class="truncate text-[13px] font-semibold text-[var(--ink)]">全部资源</strong>
-                        <span class="shrink-0 text-[11px] text-[var(--muted)]">不限剧集</span>
-                      </span>
-                      <span class="episode-count episode-count-on">{{ animeDetail.downloads.length }}</span>
-                    </button>
-                  </li>
-                  <li v-for="episode in episodes" :key="episode.episodeId">
-                    <button
-                      type="button"
-                      class="episode-row"
-                      :class="[
-                        selectedDownloadGroupKey === `episode:${episode.episodeId}` ? 'episode-row-active' : '',
-                        getEpisodeDownloadCount(episode) > 0
-                          ? (selectedDownloadGroupKey === `episode:${episode.episodeId}` ? '' : 'hover:bg-[var(--tint-2)]')
-                          : 'cursor-not-allowed opacity-55'
-                      ]"
-                      :aria-current="selectedDownloadGroupKey === `episode:${episode.episodeId}`"
-                      :disabled="getEpisodeDownloadCount(episode) === 0"
-                      :title="episodeTitleOf(episode) ?? undefined"
-                      @click="selectDownloadGroup(`episode:${episode.episodeId}`)"
-                    >
-                      <span class="flex min-w-0 items-baseline gap-2">
-                        <strong class="shrink-0 text-[13px] font-semibold tabular-nums text-[var(--ink)]">{{ episode.episodeNumber ? `第 ${episode.episodeNumber} 集` : "SP" }}</strong>
-                        <span v-if="episodeTitleOf(episode)" class="min-w-0 truncate text-xs text-[var(--ink-secondary)]">{{ episodeTitleOf(episode) }}</span>
-                        <span class="ml-auto shrink-0 text-[11px] tabular-nums text-[var(--muted)]">{{ episode.airDate ?? "未定档" }}</span>
-                      </span>
-                      <span class="episode-count" :class="getEpisodeDownloadCount(episode) > 0 ? 'episode-count-on' : ''" :title="getEpisodeDownloadCount(episode) > 0 ? `${getEpisodeDownloadCount(episode)} 个资源` : '暂无资源'">
-                        {{ getEpisodeDownloadCount(episode) > 0 ? getEpisodeDownloadCount(episode) : "—" }}
-                      </span>
-                    </button>
-                  </li>
-                  <li v-if="unmatchedDownloadGroup">
-                    <button
-                      type="button"
-                      class="episode-row"
-                      :class="selectedDownloadGroupKey === 'unmatched' ? 'episode-row-active' : 'hover:bg-[var(--tint-2)]'"
-                      :aria-current="selectedDownloadGroupKey === 'unmatched'"
-                      @click="selectDownloadGroup('unmatched')"
-                    >
-                      <span class="flex min-w-0 items-baseline gap-2">
-                        <strong class="shrink-0 text-[13px] font-semibold text-[var(--ink)]">未匹配剧集</strong>
-                        <span class="min-w-0 truncate text-[11px] text-[var(--muted)]">没对上 Bangumi 集数</span>
-                      </span>
-                      <span class="episode-count episode-count-on">{{ unmatchedDownloadGroup.downloads.length }}</span>
-                    </button>
-                  </li>
-                </ul>
-              </section>
             </div>
 
             <!--
@@ -730,8 +665,7 @@ watch(
 
 <style scoped>
 /**
- * 宽屏（≥1024px）：左栏固定宽度自己滚，右栏资源吃掉剩余宽高、在内部滚动（筛选头固定在上面）。
- * 窄屏：一次只显示一栏，整页一起滚——否则资源只剩一两行可视高度。
+ * 一栏整页滚动：头部、选集、资源依次往下排。
  */
 .detail-split {
   display: grid;
@@ -752,23 +686,8 @@ watch(
   min-width: 0;
 }
 
-.detail-resources,
-.episode-panel {
+.detail-resources {
   flex: 0 0 auto;
-}
-
-/* 窄屏：剧集列表收成资源上方的横向切换条（.episode-chips），竖排列表不再占一整屏 */
-@media (max-width: 1023.98px) {
-  .episode-panel {
-    display: none;
-  }
-}
-
-/* 宽屏左栏有完整剧集列表，横向切换条就不出（scoped 的 display:flex 压得过 lg:hidden，只能写在这） */
-@media (min-width: 1024px) {
-  .episode-chips {
-    display: none !important;
-  }
 }
 
 /*
@@ -809,44 +728,6 @@ watch(
 /* 「全部 N」「未匹配 N」比集数格子宽，占两格 */
 .episode-chip-wide {
   grid-column: span 2;
-}
-
-@media (min-width: 1024px) {
-  .detail-split {
-    /* 左栏随窗口伸缩：1024px 窗口里给右栏多留出一百多像素，宽屏也不超过 23rem */
-    grid-template-columns: clamp(19rem, 34%, 23rem) minmax(0, 1fr);
-    align-content: stretch;
-    overflow: hidden;
-  }
-
-  .detail-side {
-    min-height: 0;
-    overflow: auto;
-    scrollbar-width: thin;
-  }
-
-  .detail-main {
-    min-height: 0;
-  }
-
-  .episode-panel {
-    display: flex;
-    flex: 1 1 auto;
-    flex-direction: column;
-    /* 展开简介后头部很高：剧集至少留几行，剩下交给左栏整体滚动 */
-    min-height: 14rem;
-  }
-
-  .episode-list {
-    min-height: 0;
-    overflow: auto;
-    scrollbar-width: thin;
-  }
-
-  .detail-resources {
-    flex: 1 1 auto;
-    min-height: 0;
-  }
 }
 
 /* 头部：封面做主角，背后同图模糊铺底，像海报墙那样带出这部番的配色 */
@@ -912,41 +793,6 @@ watch(
   font-weight: 600;
   line-height: 1.25rem;
   white-space: nowrap;
-}
-
-.episode-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 0.75rem;
-  width: 100%;
-  min-height: 2.375rem;
-  padding: 0.375rem 0.75rem;
-  text-align: left;
-  transition: background-color 120ms;
-}
-
-.episode-row-active {
-  background: var(--accent-soft);
-  box-shadow: inset 3px 0 0 var(--accent);
-}
-
-/* 资源数：有资源的是主色小药丸，没有的只留一条淡横线 */
-.episode-count {
-  min-width: 1.75rem;
-  border-radius: 999px;
-  padding: 0 0.4375rem;
-  color: var(--muted);
-  font-size: 11px;
-  font-weight: 700;
-  line-height: 1.25rem;
-  text-align: center;
-  white-space: nowrap;
-}
-
-.episode-count-on {
-  background: var(--accent-soft);
-  color: var(--accent-vivid);
 }
 
 .skeleton-pulse {
