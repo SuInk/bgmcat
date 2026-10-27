@@ -123,7 +123,11 @@ func (a *App) startJob(gid string) {
 		}
 		status := "complete"
 		var message any
-		if ctx.Err() != nil {
+		if a.ctx.Err() != nil {
+			// The app is shutting down, not the user pausing: leave the task queued
+			// so resumeJobs picks it up on the next start.
+			status = "queued"
+		} else if ctx.Err() != nil {
 			status = "paused"
 		} else if e != nil {
 			status = "error"

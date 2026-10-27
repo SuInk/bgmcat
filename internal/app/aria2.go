@@ -18,6 +18,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/anacrolix/torrent/metainfo"
 )
 
 // One private subprocess per App. Its RPC secret is in a mode-0600 config,
@@ -257,6 +259,24 @@ func btTrackerOption(value any) string {
 	return strings.Join(out, ",")
 }
 
+// applyTrackers replaces the task's announce list with the torrent's own
+// trackers plus the user's extra ones, ordered so trackers that report peers
+// come first (see orderTrackers). Extra trackers are a per-task option, so
+// editing the list applies to the next download without restarting aria2.
+func (e *Aria2Engine) applyTrackers(ctx context.Context, options Obj, hash metainfo.Hash, own []string) {
+	extra := strings.Split(btTrackerOption(e.app.Settings()["btTrackers"]), ",")
+	all := orderTrackers(own, extra, nil)
+	if len(all) == 0 {
+		return
+	}
+	ordered := orderTrackers(all, nil, scrapeTrackers(ctx, e.app.http, all, hash))
+	options["bt-exclude-tracker"] = "*"
+	options["bt-tracker"] = strings.Join(ordered, ",")
+	// A dead tracker otherwise holds the queue for aria2's 60 s defaults.
+	options["bt-tracker-connect-timeout"] = "10"
+	options["bt-tracker-timeout"] = "20"
+}
+
 func (e *Aria2Engine) download(ctx context.Context, j Obj) error {
 	endpoint, secret, err := e.ensure(ctx)
 	if err != nil {
@@ -272,13 +292,6 @@ func (e *Aria2Engine) download(ctx context.Context, j Obj) error {
 	options := Obj{"dir": dir, "continue": "true", "auto-file-renaming": "false", "allow-overwrite": "false", "file-allocation": "none", "split": "8", "max-connection-per-server": "8", "min-split-size": "1M", "seed-time": "0", "max-tries": "3", "retry-wait": "1", "connect-timeout": "10", "timeout": "30", "follow-torrent": "false", "follow-metalink": "false", "bt-save-metadata": "true", "check-integrity": "true"}
 	source := str(j["sourceUrl"])
 	kind := str(j["sourceType"])
-	// Extra trackers are a per-task option so editing the list applies to the next
-	// download without restarting aria2; they are added alongside the torrent's own.
-	if kind == "magnet" || kind == "torrent-url" {
-		if trackers := btTrackerOption(e.app.Settings()["btTrackers"]); trackers != "" {
-			options["bt-tracker"] = trackers
-		}
-	}
 	method := "addUri"
 	params := []any{[]string{source}, options}
 	if kind == "torrent-url" {
@@ -300,7 +313,14 @@ func (e *Aria2Engine) download(ctx context.Context, j Obj) error {
 		}
 		method = "addTorrent"
 		params = []any{base64.StdEncoding.EncodeToString(data), []string{}, options}
-	} else if kind != "magnet" {
+		if hash, own, parseErr := torrentTrackers(data); parseErr == nil {
+			e.applyTrackers(ctx, options, hash, own)
+		}
+	} else if kind == "magnet" {
+		if hash, own, parseErr := magnetTrackers(source); parseErr == nil {
+			e.applyTrackers(ctx, options, hash, own)
+		}
+	} else {
 		u, err := url.Parse(source)
 		if err != nil {
 			return err

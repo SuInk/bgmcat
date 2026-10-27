@@ -2,10 +2,13 @@ package app
 
 import (
 	"io/fs"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
 	"testing/fstest"
+	"time"
 )
 
 func TestBTTrackerOption(t *testing.T) {
@@ -111,5 +114,54 @@ func TestDeleteKeepsFolderWithUserFiles(t *testing.T) {
 	removeAria2Leftovers(filepath.Dir(dir), "abc")
 	if _, e := os.Stat(dir); e != nil {
 		t.Fatal("folder not named after the gid must be left alone")
+	}
+}
+
+// Quitting the app must not turn running downloads into user pauses; they
+// have to come back as queued so the next start resumes them.
+func TestShutdownKeepsDownloadsQueuedButPauseSticks(t *testing.T) {
+	started := make(chan struct{}, 4)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Length", "1000000")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("x"))
+		w.(http.Flusher).Flush()
+		started <- struct{}{}
+		<-r.Context().Done()
+	}))
+	defer server.Close()
+
+	a := testApp(t)
+	put := func(gid string) {
+		dir := filepath.Join(a.cfg.DataDir, "downloads", gid)
+		_ = a.Store.Put("downloads", gid, Obj{"gid": gid, "directory": dir, "sourceUrl": server.URL + "/" + gid + ".mp4", "sourceType": "direct", "status": "queued"})
+		a.startJob(gid)
+		select {
+		case <-started:
+		case <-time.After(5 * time.Second):
+			t.Fatalf("%s never started", gid)
+		}
+	}
+	put("paused-by-user")
+	put("running")
+
+	if e := a.stopJob("paused-by-user"); e != nil {
+		t.Fatal(e)
+	}
+	if j, _ := a.Store.Get("downloads", "paused-by-user"); str(j["status"]) != "paused" {
+		t.Fatalf("user pause stored as %q", str(j["status"]))
+	}
+
+	a.Close()
+	b, e := New(Config{DataDir: a.cfg.DataDir, Web: a.cfg.Web})
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer b.Close()
+	if j, _ := b.Store.Get("downloads", "paused-by-user"); str(j["status"]) != "paused" {
+		t.Fatalf("user pause after restart = %q", str(j["status"]))
+	}
+	if j, _ := b.Store.Get("downloads", "running"); str(j["status"]) == "paused" || str(j["status"]) == "error" {
+		t.Fatalf("download interrupted by shutdown came back as %q", str(j["status"]))
 	}
 }

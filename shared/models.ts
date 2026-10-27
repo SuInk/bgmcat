@@ -322,6 +322,8 @@ export interface DownloadJob {
   issueMessage?: string | null;
   canResolveConflict?: boolean;
   canPlayExistingFile?: boolean;
+  /** 任务的文件清单；云盘归档时每个文件记着已上传的字节数 */
+  files?: Array<{ path?: string; size?: number; uploadedBytes?: number; verified?: boolean }>;
   createdAt: string;
   updatedAt: string;
 }

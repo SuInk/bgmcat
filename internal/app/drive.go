@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html"
 	"io"
 	"net/http"
 	"net/url"
@@ -49,32 +50,14 @@ func (a *App) cloudRoutes() {
 		return nil
 	})
 	a.handle("GET /api/cloud/callback", func(w http.ResponseWriter, r *http.Request) error {
-		state := r.URL.Query().Get("state")
-		a.oauthMu.Lock()
-		pending := a.oauth[state]
-		delete(a.oauth, state)
-		a.oauthMu.Unlock()
-		if pending == nil || num(pending["expires"]) < time.Now().Unix() {
-			return errors.New("登录请求已失效，请重新连接")
+		// Google sends the user's browser here, so failures get a page a person can
+		// read instead of the API's JSON error body.
+		if e := a.driveCallback(w, r); e != nil {
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = io.WriteString(w, `<!doctype html><meta charset="utf-8"><title>Google Drive 连接失败</title><h1>Google Drive 连接失败</h1><p>`+html.EscapeString(e.Error())+`</p><p>回到 Bangumi Cat 的「设置 → 云盘归档」重新点「连接 Google」。</p>`)
 		}
-		if r.URL.Query().Get("error") != "" {
-			return errors.New("Google 授权被取消")
-		}
-		s := a.Settings()
-		token, e := a.oauthExchange(r.Context(), url.Values{"client_id": {str(s["googleClientId"])}, "client_secret": {str(s["googleClientSecret"])}, "code": {r.URL.Query().Get("code")}, "code_verifier": {str(pending["verifier"])}, "redirect_uri": {str(pending["redirect"])}, "grant_type": {"authorization_code"}})
-		if e != nil {
-			return e
-		}
-		if str(token["refresh_token"]) == "" {
-			return errors.New("未取得可刷新凭据，请重新授权")
-		}
-		token["expires_at"] = time.Now().Add(time.Duration(num(token["expires_in"])) * time.Second).Unix()
-		if e = a.Store.Put("secrets", "google", token); e != nil {
-			return e
-		}
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		_, e = io.WriteString(w, `<!doctype html><meta charset="utf-8"><title>Google Drive 已连接</title><h1>Google Drive 已连接</h1><p>可以关闭此窗口，回到 Bangumi Cat 开启自动归档。</p>`)
-		return e
+		return nil
 	})
 	a.handle("POST /api/cloud/disconnect", func(w http.ResponseWriter, r *http.Request) error {
 		e := a.Store.Delete("secrets", "google")
@@ -84,6 +67,34 @@ func (a *App) cloudRoutes() {
 		}
 		return e
 	})
+}
+func (a *App) driveCallback(w http.ResponseWriter, r *http.Request) error {
+	state := r.URL.Query().Get("state")
+	a.oauthMu.Lock()
+	pending := a.oauth[state]
+	delete(a.oauth, state)
+	a.oauthMu.Unlock()
+	if pending == nil || num(pending["expires"]) < time.Now().Unix() {
+		return errors.New("登录请求已失效，请重新连接")
+	}
+	if r.URL.Query().Get("error") != "" {
+		return errors.New("Google 授权被取消")
+	}
+	s := a.Settings()
+	token, e := a.oauthExchange(r.Context(), url.Values{"client_id": {str(s["googleClientId"])}, "client_secret": {str(s["googleClientSecret"])}, "code": {r.URL.Query().Get("code")}, "code_verifier": {str(pending["verifier"])}, "redirect_uri": {str(pending["redirect"])}, "grant_type": {"authorization_code"}})
+	if e != nil {
+		return e
+	}
+	if str(token["refresh_token"]) == "" {
+		return errors.New("未取得可刷新凭据，请重新授权")
+	}
+	token["expires_at"] = time.Now().Add(time.Duration(num(token["expires_in"])) * time.Second).Unix()
+	if e = a.Store.Put("secrets", "google", token); e != nil {
+		return e
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_, e = io.WriteString(w, `<!doctype html><meta charset="utf-8"><title>Google Drive 已连接</title><h1>Google Drive 已连接</h1><p>可以关闭此窗口，回到 Bangumi Cat 的「设置 → 云盘归档」选择保存目录。</p>`)
+	return e
 }
 func (a *App) oauthExchange(ctx context.Context, values url.Values) (Obj, error) {
 	req, e := http.NewRequestWithContext(ctx, "POST", "https://oauth2.googleapis.com/token", strings.NewReader(values.Encode()))
@@ -138,28 +149,39 @@ func (a *App) driveRequest(ctx context.Context, method, endpoint string, data []
 		if e != nil {
 			return nil, e
 		}
-		req, e := http.NewRequestWithContext(ctx, method, endpoint, bytes.NewReader(data))
+		reqCtx, cancelReq := context.WithCancel(ctx)
+		client := *a.http
+		transport, selectedIP := a.driveTransport()
+		client.Transport = transport
+		if strings.Contains(endpoint, "alt=media") {
+			client.Timeout = 0
+		} else if method == "PUT" && strings.HasPrefix(u.Path, "/upload/") {
+			// An 8 MiB chunk on a slow uplink easily outlasts the 45 s API timeout,
+			// which used to kill every chunk so uploads never advanced. Give the
+			// chunk a deadline that scales with its size instead.
+			client.Timeout = 0
+			cancelReq()
+			reqCtx, cancelReq = context.WithTimeout(ctx, uploadChunkTimeout(len(data)))
+		}
+		req, e := http.NewRequestWithContext(reqCtx, method, endpoint, bytes.NewReader(data))
 		if e != nil {
+			cancelReq()
 			return nil, e
 		}
 		req.Header.Set("Authorization", "Bearer "+token)
 		for k, v := range headers {
 			req.Header.Set(k, v)
 		}
-		client := *a.http
-		transport, selectedIP := a.driveTransport()
-		client.Transport = transport
-		if strings.Contains(endpoint, "alt=media") {
-			client.Timeout = 0
-		}
 		client.CheckRedirect = func(req *http.Request, via []*http.Request) error { return http.ErrUseLastResponse }
 		res, e := client.Do(req)
 		if e != nil {
+			cancelReq()
 			if selectedIP != "" && ctx.Err() == nil {
 				a.failDriveIP(selectedIP)
 			}
 			return nil, e
 		}
+		res.Body = cancelOnClose{res.Body, cancelReq}
 		if res.StatusCode == 401 && attempt == 0 {
 			res.Body.Close()
 			continue
@@ -168,6 +190,26 @@ func (a *App) driveRequest(ctx context.Context, method, endpoint string, data []
 	}
 	return nil, errors.New("Google 认证失败")
 }
+
+// uploadChunkTimeout allows a chunk to crawl at ~16 KiB/s before giving up,
+// but never less than two minutes (small final chunks, slow TLS handshakes).
+func uploadChunkTimeout(size int) time.Duration {
+	return max(2*time.Minute, time.Duration(size/(16<<10))*time.Second)
+}
+
+// cancelOnClose releases a per-request context once the caller is done with
+// the response body.
+type cancelOnClose struct {
+	io.ReadCloser
+	cancel context.CancelFunc
+}
+
+func (c cancelOnClose) Close() error {
+	err := c.ReadCloser.Close()
+	c.cancel()
+	return err
+}
+
 func (a *App) driveJSON(ctx context.Context, method, endpoint string, payload any) (Obj, int, error) {
 	var data []byte
 	var e error
