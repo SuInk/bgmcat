@@ -70,6 +70,13 @@ export class ApiRequestError extends Error {
 
 interface DesktopShellBridge {
   apiToken?: string;
+  platform?: string;
+}
+
+/** The desktop shell's OS, e.g. "darwin"; empty in a normal browser. */
+export function readDesktopShellPlatform(): string {
+  const bridge = (window as unknown as { animeRssShell?: DesktopShellBridge }).animeRssShell;
+  return typeof bridge?.platform === "string" ? bridge.platform : "";
 }
 
 /** The Electron shell injects the token through its preload bridge (see electron/preload.cjs). */

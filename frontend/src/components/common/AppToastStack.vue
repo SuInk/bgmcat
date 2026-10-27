@@ -29,7 +29,7 @@ function toneClass(tone: ToastTone): string {
   <TransitionGroup
     name="toast"
     tag="div"
-    class="pointer-events-none fixed bottom-6 right-6 z-50 grid w-[min(24rem,calc(100vw-2rem))] gap-3"
+    class="pointer-events-none fixed bottom-[max(1.5rem,calc(env(safe-area-inset-bottom)+0.75rem))] right-6 z-50 grid w-[min(24rem,calc(100vw-2rem))] gap-3"
   >
     <div
       v-for="toast in toasts"
