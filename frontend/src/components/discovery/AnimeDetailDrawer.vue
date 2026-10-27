@@ -11,6 +11,11 @@
  */
 import { computed } from "vue";
 
+const props = defineProps<{
+  /** 列表本身不套面板（首页的 Apple TV 式布局）；详情打开时仍然用面板 */
+  plain?: boolean;
+}>();
+
 import type { HomepageAnime, MikanDownloadItem } from "@shared/index";
 
 import { copyText, openExternalLink } from "../../lib/actions";
@@ -92,7 +97,8 @@ function handleSubscribe(payload: {
 
 <template>
   <section
-    class="grid h-full min-h-0 overflow-hidden rounded-lg border border-[var(--line)] bg-[var(--table-bg)] shadow-[var(--soft-shadow)]"
+    class="grid h-full min-h-0 overflow-hidden"
+    :class="props.plain && !detailOpen ? '' : 'rounded-lg border border-[var(--line)] bg-[var(--table-bg)] shadow-[var(--soft-shadow)]'"
   >
     <div v-show="!detailOpen" class="h-full min-h-0 overflow-hidden">
       <slot name="main"></slot>
