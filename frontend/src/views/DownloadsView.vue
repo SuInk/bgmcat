@@ -184,6 +184,16 @@ const playbackEpisodeOptions = computed<PlayerEpisodeOption[]>(() =>
   })
 );
 
+const playbackEpisodeLabel = computed(
+  () => playbackEpisodeOptions.value.find((option) => option.key === playbackEpisodeKey.value)?.label ?? null
+);
+
+/** 选集格子里只放集数：「第 04 集」→「4」，没有数字（SP、OVA）就原样显示 */
+function episodeShortLabel(label: string): string {
+  const match = label.match(/\d+(?:\.\d+)?/);
+  return match ? String(Number(match[0])) : label;
+}
+
 function playEpisodeOption(option: PlayerEpisodeOption): void {
   const download = downloads.value.find((item) => item.gid === option.gid);
   if (download) {
@@ -814,55 +824,87 @@ watch(
 
 <template>
   <section class="grid h-full min-h-0 grid-cols-[minmax(0,1fr)] overflow-hidden rounded-lg border border-[var(--line)] bg-[var(--table-bg)]">
-    <div v-if="activePlayback" class="grid min-h-0 grid-rows-[auto_auto] content-start gap-3 overflow-auto p-4">
-      <section class="grid gap-4 rounded-lg border border-[var(--line)] bg-[var(--card)] p-5">
-        <div class="flex flex-wrap items-start justify-between gap-4">
-          <div class="min-w-0">
-            <h2 class="break-words text-lg font-semibold text-[var(--ink)]">{{ activePlayback.fileName }}</h2>
+    <!--
+      播放页参考 B 站番剧播放页：左边大画面，下面是番名、当前集和播放方式；右边一栏选集格子。
+      容器窄于 56rem（手机、窄窗口）时选集落到画面下方。
+    -->
+    <div v-if="activePlayback" class="@container min-h-0 overflow-auto p-3 sm:p-4">
+      <button type="button" class="btn-ghost mb-3 inline-flex items-center gap-1 px-2.5 py-1.5 text-sm font-semibold" @click="closePlayback">
+        <AppNavIcon name="chevron-left" class="size-4" aria-hidden="true" />
+        下载管理
+      </button>
+
+      <div class="grid content-start gap-4" :class="{ '@min-[56rem]:grid-cols-[minmax(0,1fr)_18rem]': playbackEpisodeOptions.length > 1 }">
+        <div class="grid min-w-0 content-start gap-3">
+          <ArtPlayerPane
+            v-if="activePlayback.supportsInAppPlayback || activePlayback.supportsTranscodePlayback"
+            :gid="activePlayback.gid"
+            :stream-url="activePlaybackStreamUrl"
+            :playback-key="`${activePlayback.filePath}:${activePlayback.deliveryMode}`"
+            :expected-duration-seconds="activePlayback.durationSeconds"
+            :hls="activePlayback.deliveryMode === 'hls-remux' || activePlayback.deliveryMode === 'hls-transcode'"
+            :subtitle-tracks="activePlayback.subtitleTracks"
+            :subtitle-url-for="playbackSubtitleUrl"
+            @ended="playNextEpisode"
+          />
+          <div v-else class="grid aspect-video place-items-center rounded-xl bg-black px-6 text-center text-sm text-white/75">
+            当前文件不支持内置播放器。常见的 MKV / HEVC / 高码率文件建议用下面的外部播放器打开。
           </div>
-          <button type="button" class="btn-ghost px-4 py-2 text-sm font-semibold" @click="closePlayback">关闭</button>
-        </div>
-      </section>
 
-      <div class="grid gap-3">
-        <ArtPlayerPane
-          v-if="activePlayback.supportsInAppPlayback || activePlayback.supportsTranscodePlayback"
-          :gid="activePlayback.gid"
-          :stream-url="activePlaybackStreamUrl"
-          :playback-key="`${activePlayback.filePath}:${activePlayback.deliveryMode}`"
-          :expected-duration-seconds="activePlayback.durationSeconds"
-          :hls="activePlayback.deliveryMode === 'hls-remux' || activePlayback.deliveryMode === 'hls-transcode'"
-          :subtitle-tracks="activePlayback.subtitleTracks"
-          :subtitle-url-for="playbackSubtitleUrl"
-          :episodes="playbackEpisodeOptions"
-          :active-episode-key="playbackEpisodeKey"
-          @select-episode="playEpisodeOption"
-          @ended="playNextEpisode"
-        />
-        <div v-else class="grid h-full place-items-center rounded-lg border border-dashed border-[var(--line)] p-6 text-sm text-[var(--muted)]">
-          当前文件不支持内置播放器。常见的 MKV / HEVC / 高码率文件建议直接调用 VLC、mpv、PotPlayer 或系统默认播放器。
-        </div>
-        <p
-          v-if="activePlayback.deliveryMode === 'hls-remux' || activePlayback.deliveryMode === 'hls-transcode'"
-          class="rounded-lg border border-dashed border-[var(--line)] bg-[var(--card)] px-4 py-3 text-center text-sm font-semibold text-[var(--muted)]"
-        >
-          {{ activePlayback.deliveryMode === "hls-remux" ? "当前文件正在通过本机 ffmpeg 转封装为 HLS 播放。" : "当前文件正在通过本机 ffmpeg 转码为浏览器兼容流。" }}
-        </p>
+          <section class="grid gap-1">
+            <h2 class="line-clamp-2 text-base font-semibold leading-snug text-[var(--ink)] sm:text-lg" :title="playbackGroup?.title ?? activePlayback.fileName">{{ playbackGroup?.title ?? activePlayback.fileName }}</h2>
+            <p class="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-[var(--muted)]">
+              <span v-if="playbackEpisodeLabel" class="font-semibold text-[var(--ink-secondary)]">正在播放 {{ playbackEpisodeLabel }}</span>
+              <span v-if="activePlayback.deliveryMode === 'hls-transcode'" class="rounded bg-[var(--panel)] px-1.5 py-px">本机 ffmpeg 转码</span>
+              <span v-else-if="activePlayback.deliveryMode === 'hls-remux'" class="rounded bg-[var(--panel)] px-1.5 py-px">本机 ffmpeg 转封装</span>
+            </p>
+            <p class="truncate text-[11px] text-[var(--muted)]" :title="activePlayback.fileName">{{ activePlayback.fileName }}</p>
+          </section>
 
-        <div class="flex flex-wrap justify-center gap-2">
-          <button type="button" class="btn-ghost px-3 py-2 text-sm font-semibold" @click="launchExternalPlayer(activePlayback.gid, 'system')">
-            系统默认
-          </button>
-          <button
-            v-for="player in activePlayback.availablePlayers.filter((item) => item.id !== 'system')"
-            :key="player.id"
-            type="button"
-            class="btn-ghost px-3 py-2 text-sm font-semibold"
-            @click="launchExternalPlayer(activePlayback.gid, player.id)"
-          >
-            {{ player.label }}
-          </button>
+          <div class="flex flex-wrap items-center gap-2">
+            <span class="text-xs font-semibold text-[var(--muted)]">用其他播放器打开</span>
+            <button type="button" class="btn-ghost h-8 px-3 text-xs font-semibold" @click="launchExternalPlayer(activePlayback.gid, 'system')">
+              系统默认
+            </button>
+            <button
+              v-for="player in activePlayback.availablePlayers.filter((item) => item.id !== 'system')"
+              :key="player.id"
+              type="button"
+              class="btn-ghost h-8 px-3 text-xs font-semibold"
+              @click="launchExternalPlayer(activePlayback.gid, player.id)"
+            >
+              {{ player.label }}
+            </button>
+          </div>
         </div>
+
+        <aside v-if="playbackEpisodeOptions.length > 1" class="grid content-start gap-3 rounded-xl border border-[var(--line)] bg-[var(--card)] p-3">
+          <div class="flex items-baseline justify-between gap-2">
+            <h3 class="text-sm font-semibold text-[var(--ink)]">选集</h3>
+            <span class="text-xs text-[var(--muted)]">{{ playbackEpisodeOptions.filter((option) => option.playable).length }} / {{ playbackEpisodeOptions.length }} 集可播</span>
+          </div>
+          <div class="grid grid-cols-[repeat(auto-fill,minmax(2.75rem,1fr))] gap-1.5">
+            <button
+              v-for="option in playbackEpisodeOptions"
+              :key="option.key"
+              type="button"
+              class="h-9 rounded-lg text-[13px] font-semibold tabular-nums transition disabled:cursor-not-allowed disabled:opacity-40"
+              :class="
+                option.key === playbackEpisodeKey
+                  ? 'bg-[var(--accent)] text-[var(--accent-contrast)]'
+                  : 'bg-[var(--panel)] text-[var(--ink-secondary)] hover:text-[var(--ink)]'
+              "
+              :disabled="!option.playable"
+              :title="`${option.label} · ${option.statusLabel}`"
+              :aria-label="`${option.label}，${option.playable ? '可播放' : option.statusLabel}`"
+              :aria-current="option.key === playbackEpisodeKey"
+              @click="option.key !== playbackEpisodeKey && playEpisodeOption(option)"
+            >
+              {{ episodeShortLabel(option.label) }}
+            </button>
+          </div>
+          <p class="text-[11px] text-[var(--muted)]">播完自动播下一集已下载的分集。</p>
+        </aside>
       </div>
     </div>
 
