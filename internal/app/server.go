@@ -110,6 +110,10 @@ func New(cfg Config) (*App, error) {
 			cancel()
 			return nil, e
 		}
+	} else if s, e = backfillSettings(store, s); e != nil {
+		store.Close()
+		cancel()
+		return nil, e
 	}
 	_ = os.MkdirAll(str(s["downloadDir"]), 0700)
 	a.aria2 = &Aria2Engine{app: a}
@@ -124,6 +128,30 @@ func randomID(n int) string {
 	}
 	return hex.EncodeToString(b)
 }
+
+// removedSettings were dropped on purpose; never resurrect them from defaults.json.
+var removedSettings = map[string]bool{"gdirectBinaryPath": true, "gdirectDbPath": true, "cloudMountDir": true}
+
+// backfillSettings adds keys introduced after the settings row was first saved.
+// updateSettings only accepts keys that already exist, so without this a new
+// option (e.g. btTrackers) could never be edited on an upgraded install.
+func backfillSettings(store *Store, s Obj) (Obj, error) {
+	var base Obj
+	if e := json.Unmarshal(defaults, &base); e != nil {
+		return s, e
+	}
+	missing := Obj{}
+	for k, v := range base {
+		if _, exists := s[k]; !exists && !removedSettings[k] {
+			missing[k] = v
+		}
+	}
+	if len(missing) == 0 {
+		return s, nil
+	}
+	return store.Patch("config", "settings", missing)
+}
+
 func (a *App) Settings() Obj {
 	s, e := a.Store.Get("config", "settings")
 	if e != nil {
@@ -421,6 +449,13 @@ func (a *App) updateSettings(w http.ResponseWriter, r *http.Request) error {
 		}
 		if k == "downloadDir" && !filepath.IsAbs(str(v)) {
 			return errors.New("下载目录必须是绝对路径")
+		}
+		if k == "btTrackers" {
+			for _, tracker := range list(v) {
+				if !validTracker(str(tracker)) {
+					return fmt.Errorf("Tracker 地址无效：%s（需以 udp://、http://、https:// 或 wss:// 开头）", str(tracker))
+				}
+			}
 		}
 	}
 	s, e = a.Store.Patch("config", "settings", o)

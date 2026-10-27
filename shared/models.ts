@@ -31,6 +31,8 @@ export interface AppSettings {
   aria2SessionPath: string;
   aria2Enabled: boolean;
   aria2SeedEnabled: boolean;
+  /** 额外的公共 Tracker，下载磁力 / 种子时附加给 aria2（与种子自带的并用） */
+  btTrackers: string[];
   qbittorrentBaseUrl: string;
   qbittorrentUsername: string;
   qbittorrentPassword: string;
