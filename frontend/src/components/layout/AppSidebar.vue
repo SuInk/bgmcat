@@ -16,10 +16,8 @@ const hidden = computed(() => props.mobile ? !props.mobileOpen : props.collapsed
 const groups = computed(() => [
  { label: "追番", items: props.tabs.filter(t => ["home", "favorites"].includes(t.key)) },
  { label: "资源管理", items: props.tabs.filter(t => ["subscriptions", "downloads"].includes(t.key)) },
- { label: "工具", items: props.tabs.filter(t => ["logs", "integrations"].includes(t.key)) }
+ { label: "工具", items: props.tabs.filter(t => ["logs", "integrations", "settings"].includes(t.key)) }
 ]);
-// 与 Diana 一致：「设置」不占主导航，收在底部和主题、版本一排
-const settingsTab = computed(() => props.tabs.find(t => t.key === "settings"));
 const themeLabel = computed(() => themeMode.value === "system" ? "跟随系统" : themeMode.value === "light" ? "浅色" : "深色");
 const versionLabel = computed(() => status.value?.appVersion ? `v${status.value.appVersion.replace(/^v/, "")}` : "版本与更新");
 function cycleTheme() { setThemeMode(themeMode.value === "system" ? "light" : themeMode.value === "light" ? "dark" : "system"); }
@@ -51,7 +49,6 @@ function trapFocus(event: KeyboardEvent) {
    </div>
   </nav>
   <div class="nav-footer">
-   <button v-if="settingsTab" type="button" class="nav-action" :class="{ active: activeTab === 'settings' }" :aria-current="activeTab === 'settings' ? 'page' : undefined" :disabled="!hasConsoleAccess" @click="emit('select-tab', 'settings')"><AppNavIcon name="settings" /><span class="nav-label">{{ settingsTab.label }}</span></button>
    <button type="button" class="nav-action" :title="`外观：${themeLabel}（点击切换）`" @click="cycleTheme"><AppNavIcon :name="themeMode === 'dark' ? 'moon' : themeMode === 'light' ? 'sun' : 'theme'" /><span class="nav-label">{{ themeLabel }}</span></button>
    <button type="button" class="nav-action version-action" title="查看版本与更新" :disabled="!hasConsoleAccess" @click="emit('open-version')"><AppNavIcon name="tag" /><span class="version-label-text">{{ versionLabel }}</span><span v-if="updateAvailable" class="update-dot" aria-label="有新版本" /></button>
   </div>

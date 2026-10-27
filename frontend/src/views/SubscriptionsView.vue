@@ -710,7 +710,7 @@ watch(editingSubscriptionId, (id) => {
                       aria-label="复制资源地址"
                       @click="copyText(item.sourceUrl ?? '')"
                     >
-                      <AppNavIcon name="list" />
+                      <AppNavIcon name="copy" />
                     </button>
                   </div>
                 </div>

@@ -46,24 +46,24 @@ const PAGE_GROUPS: Array<{ label: string; pages: SettingsPage[] }> = [
     label: "应用",
     pages: [
       { key: "general", label: "常规", desc: "外观、刷新频率和 Go 服务。", icon: "settings", component: GeneralPage },
-      { key: "data", label: "数据与备份", desc: "订阅、下载记录和设置都存在数据目录里，可以随时备份与恢复。", icon: "inbox", component: DataPage, single: true },
-      { key: "about", label: "关于与更新", desc: "当前版本与自动更新策略。", icon: "overview", component: AboutPage, single: true }
+      { key: "data", label: "数据与备份", desc: "订阅、下载记录和设置都存在数据目录里，可以随时备份与恢复。", icon: "database", component: DataPage, single: true },
+      { key: "about", label: "关于与更新", desc: "当前版本与自动更新策略。", icon: "info", component: AboutPage, single: true }
     ]
   },
   {
     label: "下载与资源",
     pages: [
       { key: "download", label: "下载", desc: "下载目录、下载器、Google Drive 云盘归档和在线播放。", icon: "downloads", component: DownloadPage },
-      { key: "sources", label: "资源站", desc: "种子从哪些站点找，以及蜜柑计划的访问方式。", icon: "feed", component: SourcesPage },
-      { key: "metadata", label: "番剧信息", desc: "番名、评分、简介和封面从哪儿来。", icon: "list", component: MetadataPage, single: true }
+      { key: "sources", label: "资源站", desc: "种子从哪些站点找，以及蜜柑计划的访问方式。", icon: "subscriptions", component: SourcesPage },
+      { key: "metadata", label: "番剧信息", desc: "番名、评分、简介和封面从哪儿来。", icon: "book", component: MetadataPage, single: true }
     ]
   },
   {
     label: "远程访问",
     pages: [
-      { key: "remote", label: "访问与口令", desc: "从其他设备打开 WebUI 需要的地址、口令和网络设置。", icon: "integrations", component: RemotePage },
-      { key: "tunnel", label: "Cloudflare 隧道", desc: "不开端口、不配路由器，把 WebUI 安全地放到公网上。", icon: "external", component: TunnelPage, single: true },
-      { key: "github", label: "GitHub 登录", desc: "从公网打开时，用 GitHub 账号登录代替粘贴 token。", icon: "logout", component: GithubPage, single: true }
+      { key: "remote", label: "访问与口令", desc: "从其他设备打开 WebUI 需要的地址、口令和网络设置。", icon: "globe", component: RemotePage },
+      { key: "tunnel", label: "Cloudflare 隧道", desc: "不开端口、不配路由器，把 WebUI 安全地放到公网上。", icon: "cloud", component: TunnelPage, single: true },
+      { key: "github", label: "GitHub 登录", desc: "从公网打开时，用 GitHub 账号登录代替粘贴 token。", icon: "key", component: GithubPage, single: true }
     ]
   }
 ];
