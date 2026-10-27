@@ -379,7 +379,7 @@ function formatDateTime(value: string): string {
 
       <template v-if="activeTab === 'episodes'">
         <div
-          class="hidden grid-cols-[5.5rem_minmax(18rem,1fr)_5rem_4.5rem_minmax(7rem,9rem)_7.5rem_auto] items-center gap-3 border-b border-[var(--line)] px-2 pb-1.5 text-[11px] font-semibold text-[var(--muted)] @min-[820px]:grid"
+          class="hidden grid-cols-[5.5rem_minmax(10rem,1fr)_5rem_4.5rem_minmax(7rem,9rem)_7.5rem_6.75rem] items-center gap-3 border-b border-[var(--line)] px-2 pb-1.5 text-[11px] font-semibold text-[var(--muted)] @min-[820px]:grid"
         >
           <span>集数</span>
           <span>发布名</span>
@@ -393,7 +393,7 @@ function formatDateTime(value: string): string {
         <div v-for="episode in episodes" :key="episode.key" class="grid">
           <!-- 一集有多个版本时整行可点：窄屏没有「N 版」按钮的位置，得留一条同样的入口 -->
           <div
-            class="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1 rounded-md px-2 py-1.5 transition hover:bg-[var(--tint-2)] @min-[820px]:grid-cols-[5.5rem_minmax(18rem,1fr)_5rem_4.5rem_minmax(7rem,9rem)_7.5rem_auto]"
+            class="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1 rounded-md px-2 py-1.5 transition hover:bg-[var(--tint-2)] @min-[820px]:grid-cols-[5.5rem_minmax(10rem,1fr)_5rem_4.5rem_minmax(7rem,9rem)_7.5rem_6.75rem]"
             :class="[
               expandedEpisodeKey === episode.key ? 'bg-[var(--tint-2)]' : '',
               episode.downloads.length > 1 ? 'cursor-pointer' : ''
@@ -508,7 +508,7 @@ function formatDateTime(value: string): string {
             <div
               v-for="download in episode.downloads"
               :key="download.gid"
-              class="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1 rounded-md border-l-2 border-[var(--line)] px-2 py-1.5 hover:bg-[var(--tint-2)] @min-[820px]:grid-cols-[minmax(18rem,1fr)_5rem_minmax(7rem,9rem)_7.5rem_auto]"
+              class="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1 rounded-md border-l-2 border-[var(--line)] px-2 py-1.5 hover:bg-[var(--tint-2)] @min-[820px]:grid-cols-[minmax(10rem,1fr)_5rem_minmax(7rem,9rem)_7.5rem_auto]"
             >
               <span class="min-w-0 truncate text-xs text-[var(--muted)]" :title="props.downloadDisplayTitle(download)">
                 {{ props.downloadDisplayTitle(download) }}
@@ -572,7 +572,7 @@ function formatDateTime(value: string): string {
 
       <template v-else-if="activeTab === 'files'">
         <div
-          class="hidden grid-cols-[minmax(18rem,1fr)_5rem_minmax(7rem,9rem)_7.5rem_11rem_auto] items-center gap-3 border-b border-[var(--line)] px-2 pb-1.5 text-[11px] font-semibold text-[var(--muted)] @min-[820px]:grid"
+          class="hidden grid-cols-[minmax(10rem,1fr)_5rem_minmax(7rem,9rem)_7.5rem_11rem_auto] items-center gap-3 border-b border-[var(--line)] px-2 pb-1.5 text-[11px] font-semibold text-[var(--muted)] @min-[820px]:grid"
         >
           <span>文件 / 发布名</span>
           <span>状态</span>
@@ -584,7 +584,7 @@ function formatDateTime(value: string): string {
         <div
           v-for="download in downloads"
           :key="download.gid"
-          class="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1 rounded-md px-2 py-1.5 transition hover:bg-[var(--tint-2)] @min-[820px]:grid-cols-[minmax(18rem,1fr)_5rem_minmax(7rem,9rem)_7.5rem_11rem_auto]"
+          class="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1 rounded-md px-2 py-1.5 transition hover:bg-[var(--tint-2)] @min-[820px]:grid-cols-[minmax(10rem,1fr)_5rem_minmax(7rem,9rem)_7.5rem_11rem_auto]"
         >
           <span class="min-w-0 truncate text-xs font-semibold text-[var(--ink)]" :title="props.downloadDisplayTitle(download)">
             {{ props.downloadDisplayTitle(download) }}

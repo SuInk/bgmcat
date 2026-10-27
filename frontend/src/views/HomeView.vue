@@ -227,8 +227,9 @@ onUnmounted(() => {
 
           <span class="hidden flex-1 lg:block" />
 
-          <div class="flex min-w-0 flex-1 items-center gap-2 lg:flex-none">
-            <div ref="searchBoxRef" class="relative flex min-w-0 flex-1 items-center gap-2 lg:w-[18rem] lg:flex-none">
+          <!-- 手机宽度下搜索框独占一行，否则被排序、视图按钮挤成只剩一个「搜」字 -->
+          <div class="flex min-w-0 flex-1 flex-wrap items-center gap-2 sm:flex-nowrap lg:flex-none">
+            <div ref="searchBoxRef" class="relative flex min-w-0 flex-1 basis-full items-center gap-2 sm:basis-auto lg:w-[18rem] lg:flex-none">
               <label class="home-search">
                 <AppNavIcon name="search" class="size-[15px] shrink-0" aria-hidden="true" />
                 <input
@@ -535,7 +536,7 @@ onUnmounted(() => {
 /* 横向货架：上下留出空间给悬停放大和阴影，右侧渐隐提示还能滚 */
 .shelf-row {
   display: flex;
-  gap: 16px;
+  gap: 14px;
   margin: -10px -2px 0;
   padding: 10px 2px 6px;
   overflow-x: auto;
@@ -547,9 +548,15 @@ onUnmounted(() => {
   display: none;
 }
 .shelf-item {
-  width: 10rem;
+  width: 7rem;
   flex: none;
   scroll-snap-align: start;
+}
+
+@media (min-width: 640px) {
+  .shelf-item {
+    width: 8.5rem;
+  }
 }
 
 /* 右侧渐隐：被裁掉的星期读作「还能滚」，而不是渲染坏了 */

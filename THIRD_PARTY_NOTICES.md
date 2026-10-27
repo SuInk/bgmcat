@@ -53,7 +53,7 @@ redistributed alongside it and remain under their own licenses.
 | [zod](https://zod.dev/) | MIT |
 | [electron-store](https://github.com/sindresorhus/electron-store) | MIT |
 | [Model Context Protocol SDK](https://github.com/modelcontextprotocol/typescript-sdk) | MIT |
-| [ArtPlayer](https://artplayer.org/) / artplayer-plugin-assjs | MIT |
+| [ArtPlayer](https://artplayer.org/) / [ASS.js](https://github.com/weizhenye/ASS) | MIT |
 | [hls.js](https://github.com/video-dev/hls.js) | Apache-2.0 |
 
 以上依赖的传递依赖各自的协议文本保留在其 `node_modules/<包名>/` 目录中。

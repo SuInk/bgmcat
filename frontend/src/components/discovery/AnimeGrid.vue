@@ -34,12 +34,12 @@ defineExpose({ rootEl });
     :class="
       layout === 'row'
         ? 'grid-cols-[repeat(auto-fill,minmax(17rem,1fr))] gap-x-3 gap-y-1'
-        : 'grid-cols-[repeat(auto-fill,minmax(10rem,1fr))] gap-x-4 gap-y-5'
+        : 'grid-cols-[repeat(auto-fill,minmax(6.25rem,1fr))] gap-x-2.5 gap-y-3.5 sm:grid-cols-[repeat(auto-fill,minmax(8.5rem,1fr))] sm:gap-x-3.5 sm:gap-y-[18px]'
     "
   >
     <!--
-      海报尺寸对齐 B 站番剧页（实测 177×235、3:4、间距 20px）：10rem 起，1280 宽的窗口一行 5 张、
-      1440 宽 6 张。紧凑列表 17rem 一栏，同样宽度排三栏。跟着首页整页滚动，不再自带滚动区。
+      海报比 B 站番剧页（实测 177×235）小一档：8.5rem 起，1280 宽的窗口一行 6 张（约 150px），
+      收起侧栏 7 张。窄于 640px（手机、窄窗口）降到 6.25rem，再窄也至少两列，不会一张海报占满一屏。紧凑列表 17rem 一栏，同样宽度排三栏。跟着首页整页滚动，不再自带滚动区。
     -->
     <template v-if="showLoader">
       <div

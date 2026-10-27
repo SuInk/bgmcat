@@ -156,8 +156,8 @@ const openLabel = computed(() => {
       </span>
 
       <span class="grid min-w-0 gap-0.5 px-0.5">
-        <strong class="truncate text-sm font-semibold leading-snug text-[var(--ink)]" :title="anime.title">{{ anime.title }}</strong>
-        <span class="truncate text-xs text-[var(--muted)]">{{ metaParts.join(" · ") }}</span>
+        <strong class="truncate text-[13px] font-semibold leading-snug text-[var(--ink)]" :title="anime.title">{{ anime.title }}</strong>
+        <span class="truncate text-[11.5px] text-[var(--muted)]">{{ metaParts.join(" · ") }}</span>
         <span
           v-if="platformBadges.length"
           class="mt-0.5 flex flex-wrap gap-1"
