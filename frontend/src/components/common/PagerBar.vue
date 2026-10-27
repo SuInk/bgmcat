@@ -28,10 +28,10 @@ const emit = defineEmits<{
 
 <template>
   <div
-    class="z-10 shrink-0 flex flex-col items-center justify-center gap-3 px-4 py-2 text-[13px] text-[var(--muted)] sm:flex-row sm:flex-wrap sm:gap-4"
+    class="z-10 flex shrink-0 flex-wrap items-center justify-center gap-x-4 gap-y-2 px-4 py-2 text-[13px] text-[var(--muted)]"
     :class="props.plain ? '' : 'border-t border-[var(--line)] bg-[var(--table-panel)]'"
   >
-    <div class="flex w-full items-center justify-center gap-2 sm:w-auto">
+    <div class="flex items-center justify-center gap-2">
       <span class="text-xs font-medium text-[var(--muted)]">{{ props.rowLabel }}</span>
       <select
         v-if="!props.readonlyCount && props.rowCountOptions.length"
@@ -49,7 +49,7 @@ const emit = defineEmits<{
       </div>
     </div>
 
-    <div class="flex w-full flex-wrap items-center justify-center gap-2 sm:w-auto">
+    <div class="flex flex-wrap items-center justify-center gap-2">
       <button
         class="rounded-lg border border-[var(--line)] bg-[var(--card)] px-3 py-1 text-[13px] font-semibold text-[var(--ink)] transition hover:border-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-40"
         :disabled="props.currentPage <= 1"
