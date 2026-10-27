@@ -99,8 +99,9 @@ const filteredSubscriptions = computed(() => {
 });
 
 const totalMatchedItems = computed(() => feedItems.value.filter((item) => item.matched).length);
+// pending 是「抓到了、还没进下载队列」（仅收集模式的条目一直停在这里），不算入队
 const totalQueuedItems = computed(
-  () => feedItems.value.filter((item) => ["pending", "queued", "complete"].includes(item.downloadStatus)).length
+  () => feedItems.value.filter((item) => ["queued", "complete"].includes(item.downloadStatus)).length
 );
 
 const feedItemsBySubscription = computed(() => {
@@ -114,7 +115,7 @@ const feedItemsBySubscription = computed(() => {
     map.set(item.subscriptionId, list);
   }
   for (const list of map.values()) {
-    list.sort((left, right) => (right.publishedAt ?? right.createdAt).localeCompare(left.publishedAt ?? left.createdAt));
+    list.sort((left, right) => (right.publishedAt || right.createdAt).localeCompare(left.publishedAt || left.createdAt));
   }
   return map;
 });
@@ -590,7 +591,7 @@ watch(editingSubscriptionId, (id) => {
       </div>
 
       <div class="page-body">
-        <div v-if="!subscriptions.length" class="empty-state">
+        <div v-if="!subscriptions.length" class="empty-state h-full">
           <div class="grid max-w-sm gap-3">
             <AppNavIcon name="subscriptions" class="mx-auto size-8 text-[var(--muted)]" aria-hidden="true" />
             <p class="text-sm font-semibold text-[var(--ink)]">还没有订阅</p>
@@ -688,7 +689,7 @@ watch(editingSubscriptionId, (id) => {
                   <div class="grid min-w-0">
                     <span class="truncate text-xs text-[var(--ink)]" :title="item.title">{{ item.title }}</span>
                     <span class="truncate text-[11px] text-[var(--muted)]" :title="item.matchReason ?? undefined">
-                      {{ formatDateTime(item.publishedAt ?? item.createdAt) }}<template v-if="item.matchReason"> · {{ item.matchReason }}</template>
+                      {{ formatDateTime(item.publishedAt || item.createdAt) }}<template v-if="item.matchReason"> · {{ item.matchReason }}</template>
                     </span>
                   </div>
                   <div class="flex shrink-0 items-center gap-1.5">

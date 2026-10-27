@@ -245,9 +245,13 @@ onUnmounted(() => {
         :style="{ fontSize: `${logFontSize}px` }"
         @scroll.passive="handleScroll"
       >
-        <p v-if="!visibleLogs.length" class="p-6 text-center font-sans text-sm text-[var(--muted)]">
-          {{ logs.length ? "没有符合条件的日志" : "还没有日志" }}
-        </p>
+        <div v-if="!visibleLogs.length" class="empty-state h-full font-sans">
+          <div class="grid max-w-sm gap-2">
+            <AppNavIcon name="logs" class="mx-auto size-8 text-[var(--muted)]" aria-hidden="true" />
+            <p class="text-sm font-semibold text-[var(--ink)]">{{ logs.length ? "没有符合条件的日志" : "还没有日志" }}</p>
+            <p v-if="!logs.length" class="text-xs text-[var(--muted)]">订阅刷新、下载、云盘归档等后台动作会记录在这里。</p>
+          </div>
+        </div>
 
         <template v-for="(entry, index) in visibleLogs" :key="entry.id">
           <div v-if="startsNewDay(index)" class="log-day">{{ dayKey(entry.createdAt) }}</div>

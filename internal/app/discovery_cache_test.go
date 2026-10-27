@@ -11,6 +11,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/mmcdole/gofeed"
 )
 
 func TestDiscoveryCacheCoalescesAndIsolatesResults(t *testing.T) {
@@ -203,5 +205,30 @@ func TestSubgroupOfLeadingTag(t *testing.T) {
 		if got := subgroupOf(title); got != want {
 			t.Errorf("subgroupOf(%q) = %v, want %v", title, got, want)
 		}
+	}
+}
+
+func TestFeedItemMetaReadsMikanTorrentBlock(t *testing.T) {
+	x := `<?xml version="1.0" encoding="utf-8"?><rss version="2.0"><channel><title>x</title>` +
+		`<item><title>[LoliHouse] A - 02</title><link>https://mikanani.me/Home/Episode/1</link><torrent xmlns="https://mikanani.me/0.1/"><link>https://mikanani.me/Home/Episode/1</link><contentLength>695310720</contentLength><pubDate>2026-10-21T20:19:00</pubDate></torrent><enclosure type="application/x-bittorrent" length="695310720" url="https://mikanani.me/Download/1.torrent" /></item>` +
+		`<item><title>B</title><pubDate>Tue, 21 Oct 2026 12:00:00 +0000</pubDate><enclosure type="application/x-bittorrent" length="1048576" url="https://nyaa.si/download/1.torrent" /></item>` +
+		`</channel></rss>`
+	f, e := gofeed.NewParser().Parse(strings.NewReader(x))
+	if e != nil {
+		t.Fatal(e)
+	}
+	published, size := feedItemMeta(f.Items[0])
+	if published != "2026-10-21T20:19:00+08:00" || size != 695310720 {
+		t.Fatalf("mikan item = %q, %d", published, size)
+	}
+	if got := sizeText(size); got != "663.1 MB" {
+		t.Fatalf("sizeText = %v", got)
+	}
+	published, size = feedItemMeta(f.Items[1])
+	if published != "2026-10-21T12:00:00Z" || size != 1048576 {
+		t.Fatalf("standard item = %q, %d", published, size)
+	}
+	if sizeText(0) != nil || sizeBytes(0) != nil {
+		t.Fatal("unknown size should stay nil")
 	}
 }
