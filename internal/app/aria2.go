@@ -15,6 +15,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"time"
 )
@@ -135,7 +136,15 @@ func (e *Aria2Engine) ensure(ctx context.Context) (string, string, error) {
 	}
 	secret := randomID(32)
 	config := fmt.Sprintf("enable-rpc=true\nrpc-listen-all=false\nrpc-listen-port=%d\nrpc-secret=%s\nrpc-allow-origin-all=false\nconsole-log-level=error\nquiet=true\nsummary-interval=0\nmax-concurrent-downloads=4\nfile-allocation=none\nauto-save-interval=1\nmax-download-result=1000\nseed-time=0\nenable-dht=true\nenable-dht6=false\nbt-enable-lpd=false\nlisten-port=49152-65535\n", port, secret)
-	config += fmt.Sprintf("stop-with-process=%d\ndht-file-path=%s\ndht-file-path6=%s\n", os.Getpid(), filepath.Join(dir, "dht.dat"), filepath.Join(dir, "dht6.dat"))
+	// The DHT routing table lives in the data dir, not the throwaway run dir: aria2
+	// ships no bootstrap nodes, so a fresh table after every restart meant magnets
+	// with few trackers could not find peers. The entry point seeds an empty table.
+	dhtDir := filepath.Join(e.app.cfg.DataDir, "aria2")
+	if err = os.MkdirAll(dhtDir, 0700); err != nil {
+		os.RemoveAll(dir)
+		return "", "", err
+	}
+	config += fmt.Sprintf("stop-with-process=%d\ndht-file-path=%s\ndht-file-path6=%s\ndht-entry-point=%s\n", os.Getpid(), filepath.Join(dhtDir, "dht.dat"), filepath.Join(dhtDir, "dht6.dat"), dhtEntryPoint)
 	configPath := filepath.Join(dir, "aria2.conf")
 	if err = os.WriteFile(configPath, []byte(config), 0600); err != nil {
 		os.RemoveAll(dir)
@@ -216,6 +225,38 @@ func (e *Aria2Engine) Download(ctx context.Context, j Obj) error {
 	}
 	return errors.New("aria2 下载失败")
 }
+
+// dhtEntryPoint bootstraps an empty DHT table (aria2 accepts a single host:port).
+const dhtEntryPoint = "dht.transmissionbt.com:6881"
+
+func validTracker(raw string) bool {
+	u, e := url.Parse(strings.TrimSpace(raw))
+	if e != nil || u.Host == "" {
+		return false
+	}
+	switch u.Scheme {
+	case "udp", "http", "https", "wss":
+		return true
+	}
+	return false
+}
+
+// btTrackerOption turns the btTrackers setting into aria2's comma-separated
+// bt-tracker value: trimmed, valid, de-duplicated, in the user's order.
+func btTrackerOption(value any) string {
+	seen := map[string]bool{}
+	out := []string{}
+	for _, v := range list(value) {
+		tracker := strings.TrimSpace(str(v))
+		if tracker == "" || seen[tracker] || !validTracker(tracker) {
+			continue
+		}
+		seen[tracker] = true
+		out = append(out, tracker)
+	}
+	return strings.Join(out, ",")
+}
+
 func (e *Aria2Engine) download(ctx context.Context, j Obj) error {
 	endpoint, secret, err := e.ensure(ctx)
 	if err != nil {
@@ -231,6 +272,13 @@ func (e *Aria2Engine) download(ctx context.Context, j Obj) error {
 	options := Obj{"dir": dir, "continue": "true", "auto-file-renaming": "false", "allow-overwrite": "false", "file-allocation": "none", "split": "8", "max-connection-per-server": "8", "min-split-size": "1M", "seed-time": "0", "max-tries": "3", "retry-wait": "1", "connect-timeout": "10", "timeout": "30", "follow-torrent": "false", "follow-metalink": "false", "bt-save-metadata": "true", "check-integrity": "true"}
 	source := str(j["sourceUrl"])
 	kind := str(j["sourceType"])
+	// Extra trackers are a per-task option so editing the list applies to the next
+	// download without restarting aria2; they are added alongside the torrent's own.
+	if kind == "magnet" || kind == "torrent-url" {
+		if trackers := btTrackerOption(e.app.Settings()["btTrackers"]); trackers != "" {
+			options["bt-tracker"] = trackers
+		}
+	}
 	method := "addUri"
 	params := []any{[]string{source}, options}
 	if kind == "torrent-url" {

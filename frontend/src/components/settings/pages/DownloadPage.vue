@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from "vue";
+import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 
 import type { AppSettings } from "@shared/index";
 
@@ -35,6 +35,58 @@ const downloadClient = computed({
     settingsForm.qbittorrentEnabled = client === "qbittorrent";
   }
 });
+
+// —— 公共 Tracker ——
+// 种子自带的 Tracker 往往不多（蜜柑的磁力尤其），多挂几个公共 Tracker 能更快找到做种者。
+// 文本框里一行一个；失焦时才解析写回，免得打字到一半的地址被当成非法项丢掉。
+const RECOMMENDED_TRACKERS = [
+  "udp://tracker.opentrackr.org:1337/announce",
+  "udp://open.stealth.si:80/announce",
+  "udp://tracker.torrent.eu.org:451/announce",
+  "udp://exodus.desync.com:6969/announce",
+  "http://nyaa.tracker.wf:7777/announce"
+];
+const TRACKER_SCHEMES = ["udp:", "http:", "https:", "wss:"];
+
+const trackerDraft = ref("");
+const invalidTrackers = ref<string[]>([]);
+
+watch(
+  () => settingsForm.btTrackers,
+  (trackers) => {
+    trackerDraft.value = (trackers ?? []).join("\n");
+  },
+  { immediate: true }
+);
+
+function isValidTracker(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return TRACKER_SCHEMES.includes(url.protocol) && Boolean(url.host);
+  } catch {
+    return false;
+  }
+}
+
+function commitTrackers(): void {
+  const lines = [...new Set(trackerDraft.value.split(/[\s,]+/u).map((line) => line.trim()).filter(Boolean))];
+  invalidTrackers.value = lines.filter((line) => !isValidTracker(line));
+  // 非法项留在文本框里给用户改，只把合法的写进设置
+  const valid = lines.filter(isValidTracker);
+  if (valid.join("\n") !== (settingsForm.btTrackers ?? []).join("\n")) {
+    settingsForm.btTrackers = valid;
+  }
+  if (invalidTrackers.value.length) {
+    trackerDraft.value = [...valid, ...invalidTrackers.value].join("\n");
+  }
+}
+
+function fillRecommendedTrackers(): void {
+  const merged = [...new Set([...(settingsForm.btTrackers ?? []), ...RECOMMENDED_TRACKERS])];
+  settingsForm.btTrackers = merged;
+  invalidTrackers.value = [];
+  void saveSettingsFields(["btTrackers"]);
+}
 
 // —— Google Drive 授权 ——
 const cloudSetup = ref<InstanceType<typeof CloudSetup> | null>(null);
@@ -305,6 +357,34 @@ onUnmounted(() => window.removeEventListener("focus", refreshCloud));
 
       <SettingsItem as="div" title="下载器" desc="Go 托管 aria2 HTTP / BitTorrent 下载器，也可连接 qBittorrent">
         <SegmentedControl v-model="downloadClient" :options="DOWNLOAD_CLIENT_OPTIONS" aria-label="下载器" />
+      </SettingsItem>
+
+      <SettingsItem
+        v-if="settingsForm.downloadClient === 'native'"
+        as="div"
+        stacked
+        title="公共 Tracker"
+        desc="下载磁力或种子时额外挂上这些 Tracker（与种子自带的并用），做种者少的番剧更容易连上。一行一个，留空则只用种子自带的。改动对之后新加的任务生效。"
+      >
+        <div class="grid w-full min-w-0 gap-2">
+          <textarea
+            v-model="trackerDraft"
+            aria-label="公共 Tracker 列表"
+            class="settings-input settings-input-wide font-mono text-xs"
+            rows="4"
+            spellcheck="false"
+            placeholder="udp://tracker.opentrackr.org:1337/announce"
+            @blur="commitTrackers"
+            @keydown.enter.stop
+          />
+          <div class="settings-actions">
+            <button type="button" class="settings-secondary-button" @click="fillRecommendedTrackers">填入常用列表</button>
+            <span class="settings-desc">{{ settingsForm.btTrackers.length ? `已启用 ${settingsForm.btTrackers.length} 个` : "未添加，只用种子自带的 Tracker" }}</span>
+          </div>
+          <p v-if="invalidTrackers.length" class="settings-field-error">
+            这些地址无效，未保存：{{ invalidTrackers.join("、") }}（需以 udp://、http://、https:// 或 wss:// 开头）
+          </p>
+        </div>
       </SettingsItem>
     </div>
   </SettingsSection>

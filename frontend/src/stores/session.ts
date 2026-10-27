@@ -58,11 +58,12 @@ export const settingsForm = reactive<AppSettings>({
   aria2SessionPath: "",
   aria2Enabled: true,
   aria2SeedEnabled: false,
+  btTrackers: [],
   qbittorrentBaseUrl: "http://127.0.0.1:8080",
   qbittorrentUsername: "admin",
   qbittorrentPassword: "",
   qbittorrentEnabled: false,
-  mikanBaseUrl: "https://mikanime.tv",
+  mikanBaseUrl: "https://mikanani.me",
   mikanDirectAccessMode: "prefer",
   mikanDirectAccessEnabled: true,
   mikanResolverIps: [],
@@ -103,7 +104,8 @@ export const settingsForm = reactive<AppSettings>({
 export function syncSettingsForm(next: AppSettings): void {
   Object.assign(settingsForm, next, {
     corsOrigins: [...next.corsOrigins],
-    mikanResolverIps: [...next.mikanResolverIps]
+    mikanResolverIps: [...next.mikanResolverIps],
+    btTrackers: [...(next.btTrackers ?? [])]
   });
   // 设置是主题色的真身：拿到就认账，顺手写进本地缓存给下次冷启动用
   syncThemeAccent(next.themeAccent);

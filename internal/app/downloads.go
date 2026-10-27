@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -190,6 +191,30 @@ func inside(root, path string) bool {
 	r, e := filepath.Rel(root, path)
 	return e == nil && r != "." && r != ".." && !strings.HasPrefix(r, ".."+string(filepath.Separator)) && !filepath.IsAbs(r)
 }
+
+var infoHashTorrentRE = regexp.MustCompile(`^[0-9a-f]{40}\.torrent$`)
+
+// removeAria2Leftovers clears what aria2 leaves beside a deleted task's files: the
+// metadata it saves as <infohash>.torrent (bt-save-metadata) and stray .aria2
+// control files. The per-task folder (named after the gid) goes too, but only once
+// it is empty, so nothing the user put there is ever touched.
+func removeAria2Leftovers(dir, gid string) {
+	if dir == "" || filepath.Base(dir) != gid {
+		return
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	for _, entry := range entries {
+		name := entry.Name()
+		if !entry.IsDir() && (infoHashTorrentRE.MatchString(name) || strings.HasSuffix(name, ".aria2")) {
+			_ = os.Remove(filepath.Join(dir, name))
+		}
+	}
+	_ = os.Remove(dir)
+}
+
 func (a *App) downloadRoutes() {
 	create := func(w http.ResponseWriter, r *http.Request) error {
 		o, e := body(w, r)
@@ -265,16 +290,19 @@ func (a *App) downloadRoutes() {
 		}
 		count := 0
 		if flag(o["deleteLocalFiles"]) {
+			dir := str(j["directory"])
 			for _, item := range list(j["files"]) {
 				p := str(object(item)["path"])
-				if inside(str(j["directory"]), p) {
+				if inside(dir, p) {
 					if e = os.Remove(p); e == nil {
 						count++
 					} else if !os.IsNotExist(e) {
 						return e
 					}
+					_ = os.Remove(p + ".aria2")
 				}
 			}
+			removeAria2Leftovers(dir, gid)
 		}
 		if fid := str(j["feedItemId"]); fid != "" {
 			_, _ = a.Store.Patch("feed", fid, Obj{"downloadStatus": "ignored"})
