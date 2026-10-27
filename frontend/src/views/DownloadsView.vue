@@ -757,6 +757,16 @@ const narrowDetailGroup = computed(() =>
     : null
 );
 
+/** 详情页标题用番名（「FX战士久留美」），番剧信息没回来之前才退回发布名 */
+const narrowDetailAnimeTitle = computed(() => {
+  const group = narrowDetailGroup.value;
+  if (!group) {
+    return "";
+  }
+  const belongs = group.downloads.some((item) => item.gid === selectedDownloadDetailGid.value);
+  return (belongs && animeDetail.value?.anime.title) || group.title;
+});
+
 function collapseDownloadGroup(): void {
   activeDownloadGroupKey.value = null;
   activeGroupAnchorGid.value = null;
@@ -924,7 +934,7 @@ watch(
           <div v-else class="absolute inset-0 grid place-items-center text-sm font-semibold text-white/90">{{ coverLabel(narrowDetailGroup.title) }}</div>
         </div>
         <div class="min-w-0">
-          <h2 class="line-clamp-2 text-[15px] font-semibold leading-snug text-[var(--ink)]">{{ narrowDetailGroup.title }}</h2>
+          <h2 class="line-clamp-2 text-[15px] font-semibold leading-snug text-[var(--ink)]" :title="narrowDetailGroup.title">{{ narrowDetailAnimeTitle }}</h2>
           <p class="mt-0.5 truncate text-xs text-[var(--muted)]">
             {{ narrowDetailGroup.episodes.length }} 集 · {{ narrowDetailGroup.downloads.length }} 个版本<template v-if="primaryDownloadForGroup(narrowDetailGroup).saveTo === 'cloud' && !primaryDownloadForGroup(narrowDetailGroup).cloudArchive"> · 完成后存到云盘</template>
           </p>

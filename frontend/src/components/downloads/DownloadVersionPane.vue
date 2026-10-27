@@ -3,6 +3,7 @@ import { computed, ref, watch } from "vue";
 
 import type { AnimeDetail, DownloadConflictStrategy, DownloadJob } from "@shared/index";
 import { cloudArchiveLabel } from "../../lib/cloudArchive";
+import { extractResolutionLabel } from "../../lib/mikan";
 import AppNavIcon from "../layout/AppNavIcon.vue";
 
 export interface DownloadEpisodeGroup {
@@ -86,6 +87,8 @@ const sourceLabel = computed(() => {
   }
   return primaryDownload.value?.feedItemSourceUrl ? "RSS / Torrent" : "下载任务";
 });
+/** 全部下完：概览只说「已完成 · 大小」，0 B/s 的速度和满格进度条都是噪音 */
+const allComplete = computed(() => props.downloads.length > 0 && props.downloads.every((download) => download.status === "complete"));
 const resumableDownloads = computed(() => props.downloads.filter(canResume));
 const pausableDownloads = computed(() => props.downloads.filter(canPause));
 const conflictDownloads = computed(() =>
@@ -226,6 +229,20 @@ function sizeForDownloads(downloads: DownloadJob[]): string {
 }
 
 /** 展开区的主列：优先给完整发布名，只有拿不到才退回集数标题 */
+/** 窄屏分集行第二行：字幕组 · 分辨率 · 大小，代替整条发布名 */
+function releaseMeta(downloads: DownloadJob[]): string {
+  const name = releaseName(downloads);
+  const subgroup = name.match(/^\s*[[【]([^\]】]+)[\]】]/)?.[1]?.trim();
+  const size = episodeComplete(downloads)
+    ? props.formatBytes(downloads.reduce((sum, download) => sum + download.totalLength, 0))
+    : sizeForDownloads(downloads);
+  return [subgroup, extractResolutionLabel(name), size].filter(Boolean).join(" · ");
+}
+
+function episodeComplete(downloads: DownloadJob[]): boolean {
+  return downloads.length > 0 && downloads.every((download) => download.status === "complete");
+}
+
 function releaseName(downloads: DownloadJob[]): string {
   const target = primaryForDownloads(downloads);
   return target ? props.downloadDisplayTitle(target) : "--";
@@ -300,20 +317,23 @@ function formatDateTime(value: string): string {
         <span class="shrink-0 rounded-md border px-2 py-0.5 text-xs font-semibold" :class="statusPillClass(primaryDownload.status)">
           {{ statusLabel(primaryDownload.status) }}
         </span>
-        <span class="h-1.5 min-w-[8rem] flex-1 overflow-hidden rounded-full bg-[var(--tint-4)]">
-          <span
-            class="block h-full rounded-full transition-[width] duration-300"
-            :class="progressBarClass(downloads)"
-            :style="{ width: `${aggregateProgress}%` }"
-          ></span>
-        </span>
-        <span class="shrink-0 text-xs font-semibold tabular-nums text-[var(--ink)]">{{ aggregateProgress }}%</span>
-        <span class="shrink-0 text-xs font-semibold tabular-nums text-[var(--muted)]">
-          {{ props.formatBytes(completedLength) }} / {{ props.formatBytes(totalLength) }}
-        </span>
-        <span class="shrink-0 text-xs font-semibold tabular-nums text-[var(--muted)]">↓ {{ props.formatBytes(totalDownloadSpeed) }}/s</span>
-        <span class="shrink-0 text-xs font-semibold tabular-nums text-[var(--muted)]">↑ {{ props.formatBytes(totalUploadSpeed) }}/s</span>
-        <span v-if="remainingSeconds" class="shrink-0 text-xs font-semibold text-[var(--muted)]">剩余 {{ formatDuration(remainingSeconds) }}</span>
+        <span v-if="allComplete" class="shrink-0 text-xs font-semibold tabular-nums text-[var(--muted)]">{{ props.formatBytes(totalLength) }}</span>
+        <template v-else>
+          <span class="h-1.5 min-w-[8rem] flex-1 overflow-hidden rounded-full bg-[var(--tint-4)]">
+            <span
+              class="block h-full rounded-full transition-[width] duration-300"
+              :class="progressBarClass(downloads)"
+              :style="{ width: `${aggregateProgress}%` }"
+            ></span>
+          </span>
+          <span class="shrink-0 text-xs font-semibold tabular-nums text-[var(--ink)]">{{ aggregateProgress }}%</span>
+          <span class="shrink-0 text-xs font-semibold tabular-nums text-[var(--muted)]">
+            {{ props.formatBytes(completedLength) }} / {{ props.formatBytes(totalLength) }}
+          </span>
+          <span class="shrink-0 text-xs font-semibold tabular-nums text-[var(--muted)]">↓ {{ props.formatBytes(totalDownloadSpeed) }}/s</span>
+          <span class="shrink-0 text-xs font-semibold tabular-nums text-[var(--muted)]">↑ {{ props.formatBytes(totalUploadSpeed) }}/s</span>
+          <span v-if="remainingSeconds" class="shrink-0 text-xs font-semibold text-[var(--muted)]">剩余 {{ formatDuration(remainingSeconds) }}</span>
+        </template>
         <span class="shrink-0 text-xs font-semibold text-[var(--muted)]">{{ sourceLabel }}</span>
         <span v-if="detailLoading" class="shrink-0 text-xs font-semibold text-[var(--muted)]">加载详情…</span>
         <span v-else-if="detailError" class="shrink-0 text-xs font-semibold text-[var(--warn)]">详情缺失</span>
@@ -409,8 +429,9 @@ function formatDateTime(value: string): string {
 
             <!-- 主列：完整发布名，全宽下单行省略，不再压成两行小字 -->
             <span class="order-2 min-w-0" :title="releaseName(episode.downloads)">
-              <span class="block truncate text-xs font-semibold text-[var(--ink)] @min-[820px]:font-normal @min-[820px]:text-[var(--muted)]">
-                <span class="font-semibold text-[var(--ink)] @min-[820px]:hidden">
+              <!-- 窄栏：「第 04 集」一行、「字幕组 · 1080P · 大小」一行，不再把整条发布名再抄一遍 -->
+              <span class="grid gap-0.5 @min-[820px]:hidden">
+                <span class="truncate text-[13px] font-semibold text-[var(--ink)]">
                   <span
                     v-if="episode.downloads.length > 1"
                     class="inline-block transition-transform"
@@ -419,10 +440,11 @@ function formatDateTime(value: string): string {
                   >
                     ›
                   </span>
-                  {{ episode.episodeLabel ?? "未知集数" }}<template v-if="episode.downloads.length > 1"> · {{ episode.downloads.length }} 版</template> ·
+                  {{ episode.episodeLabel ?? "未知集数" }}<template v-if="episode.downloads.length > 1"> · {{ episode.downloads.length }} 版</template>
                 </span>
-                {{ releaseName(episode.downloads) }}
+                <span class="truncate text-[11px] text-[var(--muted)]">{{ releaseMeta(episode.downloads) }}</span>
               </span>
+              <span class="hidden truncate text-xs text-[var(--muted)] @min-[820px]:block">{{ releaseName(episode.downloads) }}</span>
             </span>
 
             <span
@@ -451,7 +473,11 @@ function formatDateTime(value: string): string {
             </button>
             <span v-else class="order-5 hidden text-[11px] text-[var(--muted)] @min-[820px]:order-4 @min-[820px]:block">1 版</span>
 
-            <span class="order-3 col-span-2 flex min-w-0 items-center gap-2 @min-[820px]:order-5 @min-[820px]:col-span-1">
+            <!-- 窄栏进度条放到按钮那一行下面；下完的集不画满格进度条 -->
+            <span
+              class="order-8 col-span-2 min-w-0 items-center gap-2 @min-[820px]:order-5 @min-[820px]:col-span-1 @min-[820px]:flex"
+              :class="episodeComplete(episode.downloads) ? 'hidden' : 'flex'"
+            >
               <span class="h-1.5 min-w-0 flex-1 overflow-hidden rounded-full bg-[var(--tint-4)]">
                 <span
                   class="block h-full rounded-full"
