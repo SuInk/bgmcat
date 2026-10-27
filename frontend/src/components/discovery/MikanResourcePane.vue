@@ -9,6 +9,7 @@ import { computed } from "vue";
 
 import type { MikanDownloadItem, ResourceProviderFetchStatus } from "@shared/index";
 
+import { formatDateTime } from "../../lib/format";
 import { extractResolutionLabel, providerIdsOf } from "../../lib/mikan";
 import type { MikanDownloadGroup } from "./AnimeDetailPane.vue";
 
@@ -157,7 +158,7 @@ function downloadLabel(item: MikanDownloadItem): string {
           <tr class="sticky top-0 z-10 bg-[var(--card)]">
             <th class="w-[120px] px-3 pb-2 pt-3 text-left text-[11px] font-semibold text-[var(--muted)]">字幕组</th>
             <th class="px-3 pb-2 pt-3 text-left text-[11px] font-semibold text-[var(--muted)]">发布名</th>
-            <th class="w-[124px] px-3 pb-2 pt-3 text-left text-[11px] font-semibold text-[var(--muted)]">规格</th>
+            <th class="w-[152px] px-3 pb-2 pt-3 text-left text-[11px] font-semibold text-[var(--muted)]">规格</th>
             <th class="w-[96px] px-3 pb-2 pt-3 text-left text-[11px] font-semibold text-[var(--muted)]">来源</th>
             <th class="hidden w-[92px] px-3 pb-2 pt-3 text-left text-[11px] font-semibold text-[var(--muted)] @4xl:table-cell">发布</th>
             <th class="w-[84px] px-3 pb-2 pt-3 text-right text-[11px] font-semibold text-[var(--muted)]">操作</th>
@@ -187,7 +188,7 @@ function downloadLabel(item: MikanDownloadItem): string {
                 </span>
               </span>
             </td>
-            <td class="hidden truncate px-3 py-2.5 text-xs tabular-nums text-[var(--muted)] @4xl:table-cell">{{ item.publishedAt ?? "—" }}</td>
+            <td class="hidden truncate px-3 py-2.5 text-xs tabular-nums text-[var(--muted)] @4xl:table-cell">{{ formatDateTime(item.publishedAt || null, "—") }}</td>
             <td class="px-3 py-2.5 text-right">
               <button
                 v-if="hasDownloadSource(item)"
@@ -229,7 +230,7 @@ function downloadLabel(item: MikanDownloadItem): string {
                 {{ label }}
               </span>
               <span v-if="item.sizeText" class="text-[11px] font-semibold text-[var(--muted)]">{{ item.sizeText }}</span>
-              <span v-if="item.publishedAt" class="text-[11px] text-[var(--muted)]">{{ item.publishedAt }}</span>
+              <span v-if="item.publishedAt" class="text-[11px] text-[var(--muted)]">{{ formatDateTime(item.publishedAt) }}</span>
             </div>
             <p
               class="overflow-hidden text-[11px] leading-4 text-[var(--muted)] [display:-webkit-box] [-webkit-box-orient:vertical] [-webkit-line-clamp:2]"

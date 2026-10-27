@@ -375,12 +375,11 @@
     color: var(--accent-vivid);
   }
 
+  /* 空状态：不再自带虚线框——外层页面卡片已经是框了，框里套框显得很重 */
   .empty-state {
     display: grid;
     min-height: 16rem;
     place-items: center;
-    border-radius: 0.75rem;
-    border: 1px dashed var(--line);
     padding: 1.5rem;
     text-align: center;
   }

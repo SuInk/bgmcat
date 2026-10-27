@@ -43,6 +43,67 @@ func subgroupOf(title string) any {
 	return name
 }
 
+var (
+	torrentPubDateRE = regexp.MustCompile(`<pubDate>\s*([^<]+?)\s*</pubDate>`)
+	torrentLengthRE  = regexp.MustCompile(`<contentLength>\s*(\d+)\s*</contentLength>`)
+	mikanTimeZone    = time.FixedZone("CST", 8*3600)
+)
+
+// feedItemMeta returns an RFC3339 publish time and byte size for a feed item.
+// Mikan leaves the standard <pubDate> empty and puts both in its own
+// <torrent xmlns="https://mikanani.me/0.1/"> block (local China time, no zone),
+// which gofeed keeps as raw text in item.Custom["torrent"].
+func feedItemMeta(item *gofeed.Item) (published string, size int64) {
+	if item.PublishedParsed != nil {
+		published = item.PublishedParsed.Format(time.RFC3339)
+	}
+	custom := item.Custom["torrent"]
+	if published == "" {
+		if m := torrentPubDateRE.FindStringSubmatch(custom); m != nil {
+			if t, e := time.ParseInLocation("2006-01-02T15:04:05", m[1], mikanTimeZone); e == nil {
+				published = t.Format(time.RFC3339)
+			}
+		}
+	}
+	if published == "" {
+		published = item.Published
+	}
+	if m := torrentLengthRE.FindStringSubmatch(custom); m != nil {
+		size, _ = strconv.ParseInt(m[1], 10, 64)
+	}
+	for _, enclosure := range item.Enclosures {
+		if size > 0 {
+			break
+		}
+		size, _ = strconv.ParseInt(enclosure.Length, 10, 64)
+	}
+	return published, size
+}
+
+func sizeBytes(size int64) any {
+	if size <= 0 {
+		return nil
+	}
+	return size
+}
+
+// sizeText renders bytes the way release sites do (663.1 MB); nil when unknown.
+func sizeText(size int64) any {
+	if size <= 0 {
+		return nil
+	}
+	value, units := float64(size), []string{"B", "KB", "MB", "GB", "TB"}
+	unit := 0
+	for value >= 1024 && unit < len(units)-1 {
+		value /= 1024
+		unit++
+	}
+	if unit == 0 {
+		return fmt.Sprintf("%d B", size)
+	}
+	return fmt.Sprintf("%.1f %s", value, units[unit])
+}
+
 func episode(title string) any {
 	m := episodeRE.FindStringSubmatch(title)
 	if len(m) > 1 {
@@ -266,7 +327,7 @@ func (a *App) refreshSubscription(ctx context.Context, s Obj) (Obj, error) {
 		if item.Image != nil {
 			image = item.Image.URL
 		}
-		published := item.Published
+		published, _ := feedItemMeta(item)
 		f := Obj{"id": id, "subscriptionId": s["id"], "title": item.Title, "imageUrl": image, "guid": identity, "link": item.Link, "publishedAt": published, "sourceType": kind, "sourceUrl": source, "infoHash": nil, "normalizedTitle": strings.ToLower(item.Title), "dedupeKey": key, "matched": matched, "matchReason": reason, "downloadStatus": status, "createdAt": now(), "episodeNumber": episode(item.Title), "isBatch": strings.Contains(strings.ToLower(item.Title), "batch"), "subgroup": subgroupOf(item.Title), "resolution": resolutionRE.FindString(item.Title), "resourceKey": hash(source)}
 		if e = a.Store.Put("feed", str(id), f); e != nil {
 			return nil, e

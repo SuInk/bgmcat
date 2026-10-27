@@ -892,7 +892,7 @@ watch(
         <!-- 空态不摆表头：0 条任务时列标题和全选框没有指代对象 -->
         <div
           v-if="!filteredDownloads.length"
-          class="grid place-items-center rounded-lg border border-dashed border-[var(--line)] px-6 py-14 text-center"
+          class="empty-state h-full"
         >
           <div class="grid max-w-md gap-3">
             <AppNavIcon name="inbox" class="mx-auto size-8 text-[var(--muted)]" aria-hidden="true" />

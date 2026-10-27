@@ -151,13 +151,14 @@ func (a *App) fetchResources(ctx context.Context, provider, keyword string) ([]O
 		if src == "" {
 			continue
 		}
+		published, size := feedItemMeta(item)
 		var magnet, torrent any
 		if kind == "magnet" {
 			magnet = src
 		} else if kind == "torrent-url" {
 			torrent = src
 		}
-		items = append(items, Obj{"id": hash(src), "title": item.Title, "subgroup": subgroupOf(item.Title), "magnetUrl": magnet, "torrentUrl": torrent, "pageUrl": item.Link, "sizeText": nil, "publishedAt": item.Published, "sourceType": kind, "providerId": provider, "displayName": provider, "resourceKey": hash(src), "infoHash": nil, "episode": episode(item.Title), "resolution": resolutionRE.FindString(item.Title), "providerIds": []string{provider}, "sizeBytes": nil, "seeders": nil, "leechers": nil, "sources": []Obj{{"providerId": provider, "pageUrl": item.Link}}})
+		items = append(items, Obj{"id": hash(src), "title": item.Title, "subgroup": subgroupOf(item.Title), "magnetUrl": magnet, "torrentUrl": torrent, "pageUrl": item.Link, "sizeText": sizeText(size), "publishedAt": published, "sourceType": kind, "providerId": provider, "displayName": provider, "resourceKey": hash(src), "infoHash": nil, "episode": episode(item.Title), "resolution": resolutionRE.FindString(item.Title), "providerIds": []string{provider}, "sizeBytes": sizeBytes(size), "seeders": nil, "leechers": nil, "sources": []Obj{{"providerId": provider, "pageUrl": item.Link}}})
 	}
 	return items, nil
 }
