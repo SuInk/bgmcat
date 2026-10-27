@@ -22,6 +22,8 @@ type DetailTab = "episodes" | "files" | "logs" | "history";
  * 集数 / 发布名 / 状态 / 进度 / 大小 / 操作 各占一列，发布名拿主要份额。
  */
 const props = defineProps<{
+  /** 手机上的独立详情页里用：不要缩进和左侧竖线，那是「挂在上面那一行下面」的视觉提示 */
+  flat?: boolean;
   downloads: DownloadJob[];
   episodes: DownloadEpisodeGroup[];
   animeDetail: AnimeDetail | null;
@@ -289,9 +291,10 @@ function formatDateTime(value: string): string {
     缩进 + 竖线一起把「这些分集属于上面那一行」说清楚。
   -->
   <section
-    class="@container grid gap-2.5 border-b border-[var(--line)] bg-[var(--tint-1)] py-3 pl-3 pr-3 @min-[640px]:pl-[3.25rem]"
+    class="@container grid gap-2.5"
+    :class="props.flat ? '' : 'border-b border-[var(--line)] bg-[var(--tint-1)] py-3 pl-3 pr-3 @min-[640px]:pl-[3.25rem]'"
   >
-    <div class="grid gap-2.5 border-l-2 border-[var(--accent-line)] pl-3">
+    <div class="grid gap-2.5" :class="props.flat ? '' : 'border-l-2 border-[var(--accent-line)] pl-3'">
       <!-- 概览条：状态、进度、统计、批量操作全部横排，全宽下不必再竖着堆 -->
       <div v-if="primaryDownload" class="flex flex-wrap items-center gap-x-3 gap-y-2">
         <span class="shrink-0 rounded-md border px-2 py-0.5 text-xs font-semibold" :class="statusPillClass(primaryDownload.status)">
@@ -359,12 +362,12 @@ function formatDateTime(value: string): string {
         </button>
       </div>
 
-      <nav class="flex flex-wrap gap-1">
+      <nav class="flex gap-1 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
         <button
           v-for="tab in detailTabs"
           :key="tab.key"
           type="button"
-          class="inline-flex h-8 items-center gap-1.5 rounded-md px-3 text-xs font-semibold transition"
+          class="inline-flex h-8 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md px-3 text-xs font-semibold transition"
           :class="
             activeTab === tab.key
               ? 'bg-[var(--accent)] text-[var(--accent-contrast)]'

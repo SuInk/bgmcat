@@ -381,3 +381,66 @@ func TestDriveOAuthConnectFlow(t *testing.T) {
 		t.Fatalf("replayed state: %d %s", again.Code, again.Body.String())
 	}
 }
+
+func TestSaveToResolution(t *testing.T) {
+	a := testApp(t)
+	if _, err := a.resolveSaveTo("cloud"); err == nil || !strings.Contains(err.Error(), "云盘归档") {
+		t.Fatalf("explicit cloud without Drive: %v", err)
+	}
+	a.Store.Patch("config", "settings", Obj{"defaultSaveTo": "cloud"})
+	if got, err := a.resolveSaveTo(""); err != nil || got != "local" {
+		t.Fatalf("default cloud without Drive should fall back to local, got %q %v", got, err)
+	}
+	a.Store.Put("secrets", "google", Obj{"refresh_token": "rt"})
+	if got, _ := a.resolveSaveTo(""); got != "cloud" {
+		t.Fatalf("default cloud with Drive = %q", got)
+	}
+	if got, _ := a.resolveSaveTo("local"); got != "local" {
+		t.Fatalf("explicit local = %q", got)
+	}
+	if _, err := a.resolveSaveTo("ftp"); err == nil {
+		t.Fatal("unknown target accepted")
+	}
+
+	custom := filepath.Join(a.cfg.DataDir, "elsewhere")
+	w := apiTest(a, "POST", "/api/downloads", Obj{"url": "http://127.0.0.1:1/ep.mp4", "saveTo": "cloud", "directory": custom}, true)
+	if w.Code != 200 {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	var created struct{ Data Obj }
+	json.Unmarshal(w.Body.Bytes(), &created)
+	if str(created.Data["saveTo"]) != "cloud" || !strings.HasPrefix(str(created.Data["directory"]), custom+string(filepath.Separator)) {
+		t.Fatalf("created %v", created.Data)
+	}
+	if w := apiTest(a, "POST", "/api/downloads", Obj{"url": "http://127.0.0.1:1/ep2.mp4", "directory": "relative/dir"}, true); w.Code == 200 {
+		t.Fatal("relative directory accepted")
+	}
+}
+
+// A task saved to Drive uploads even with global auto-archive off, and its
+// local copy is removed once the cloud copy is verified.
+func TestSaveToCloudArchivesAndRemovesLocal(t *testing.T) {
+	a, drive, j, content := driveArchiveFixture(t, 1024*1024)
+	a.Store.Patch("config", "settings", Obj{"cloudArchiveEnabled": false, "cloudDeleteLocal": false})
+	a.Store.Patch("downloads", "job", Obj{"saveTo": "cloud"})
+	a.archiveCompleted()
+	stored, _ := a.Store.Get("downloads", "job")
+	if s := str(object(stored["cloudArchive"])["status"]); s != "archived" {
+		t.Fatalf("cloudArchive = %v", stored["cloudArchive"])
+	}
+	file := object(list(stored["files"])[0])
+	if remote := drive.files[str(file["remoteId"])]; remote == nil || !bytes.Equal(remote.data, content) {
+		t.Fatal("cloud copy missing")
+	}
+	if _, err := os.Stat(str(object(list(j["files"])[0])["path"])); !os.IsNotExist(err) {
+		t.Fatal("local copy kept for a cloud task", err)
+	}
+
+	// A plain local task is left alone while global archive is off.
+	b, drive2, _, _ := driveArchiveFixture(t, 1024)
+	b.Store.Patch("config", "settings", Obj{"cloudArchiveEnabled": false})
+	b.archiveCompleted()
+	if len(drive2.files) != 0 {
+		t.Fatal("local task uploaded with archive disabled")
+	}
+}

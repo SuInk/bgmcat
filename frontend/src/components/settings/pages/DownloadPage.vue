@@ -12,6 +12,11 @@ import { isBusy, withBusy } from "../../../stores/busy";
 import { saveSettingsFields, settingsForm } from "../../../stores/session";
 import { toastError, updateFeedback } from "../../../stores/toasts";
 
+const SAVE_TO_OPTIONS = [
+  { value: "local", label: "本机" },
+  { value: "cloud", label: "Google Drive" }
+] as const satisfies ReadonlyArray<{ value: AppSettings["defaultSaveTo"]; label: string }>;
+
 const DOWNLOAD_CLIENT_OPTIONS = [
   { value: "native", label: "托管 aria2" },
   { value: "qbittorrent", label: "qBittorrent" }
@@ -103,6 +108,10 @@ async function runClearPlaybackCache(): Promise<void> {
     <div class="settings-group">
       <SettingsItem stacked title="下载目录" desc="新任务默认存到这里">
         <input v-model="settingsForm.downloadDir" class="settings-input settings-input-wide" />
+      </SettingsItem>
+
+      <SettingsItem as="div" title="新任务保存到" desc="订阅自动下载和详情页「下载」用这个位置；选 Google Drive 时下载完成后上传并删除本机副本，未连接云盘则先存本机">
+        <SegmentedControl v-model="settingsForm.defaultSaveTo" :options="SAVE_TO_OPTIONS" aria-label="新任务保存位置" />
       </SettingsItem>
 
       <SettingsItem as="div" title="下载器" desc="Go 托管 aria2 HTTP / BitTorrent 下载器，也可连接 qBittorrent">

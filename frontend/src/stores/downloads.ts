@@ -31,9 +31,17 @@ export const downloads = ref<DownloadJob[]>([]);
 export const selectedDownloadDetailGid = ref<string | null>(null);
 export const activePlayback = ref<DownloadPlaybackInfo | null>(null);
 
-export const manualDownloadForm = reactive<{ url: string; sourceTypeOverride: SourceType | null }>({
+export const manualDownloadForm = reactive<{
+  url: string;
+  sourceTypeOverride: SourceType | null;
+  saveTo: "local" | "cloud";
+  /** 空字符串表示用设置里的下载目录 */
+  directory: string;
+}>({
   url: "",
-  sourceTypeOverride: null
+  sourceTypeOverride: null,
+  saveTo: "local",
+  directory: ""
 });
 
 export const inferredManualSourceType = computed<SourceType>(() => {
@@ -133,7 +141,11 @@ export async function submitManualDownload(): Promise<void> {
     try {
       await createDownload({
         url,
-        sourceType: manualDownloadForm.sourceTypeOverride ?? inferredManualSourceType.value
+        sourceType: manualDownloadForm.sourceTypeOverride ?? inferredManualSourceType.value,
+        saveTo: manualDownloadForm.saveTo,
+        ...(manualDownloadForm.saveTo === "local" && manualDownloadForm.directory.trim()
+          ? { directory: manualDownloadForm.directory.trim() }
+          : {})
       });
       manualDownloadForm.url = "";
       manualDownloadForm.sourceTypeOverride = null;

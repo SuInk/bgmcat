@@ -25,8 +25,7 @@ const driveBase = "https://www.googleapis.com/drive/v3"
 func (a *App) cloudRoutes() {
 	a.cloudSetupRoutes()
 	a.handle("GET /api/cloud/status", func(w http.ResponseWriter, r *http.Request) error {
-		token, _ := a.Store.Get("secrets", "google")
-		ok(w, Obj{"connected": token != nil && str(token["refresh_token"]) != "", "configured": str(a.Settings()["googleClientId"]) != ""})
+		ok(w, Obj{"connected": a.driveConnected(), "configured": str(a.Settings()["googleClientId"]) != ""})
 		return nil
 	})
 	a.handle("POST /api/cloud/connect", func(w http.ResponseWriter, r *http.Request) error {
@@ -401,10 +400,24 @@ func verifyDriveFile(file, meta Obj) error {
 	file["verified"] = true
 	return nil
 }
+func (a *App) driveConnected() bool {
+	t, _ := a.Store.Get("secrets", "google")
+	return t != nil && str(t["refresh_token"]) != ""
+}
+
+// archiveWanted: tasks saved to Drive always upload; other finished tasks
+// upload only when global auto-archive is on.
+func (a *App) archiveWanted(j Obj) bool {
+	return str(j["saveTo"]) == "cloud" || flag(a.Settings()["cloudArchiveEnabled"])
+}
+
+// deleteLocalAfterArchive: a task saved to Drive keeps no local copy once the
+// cloud copy is verified; otherwise the global setting decides.
+func (a *App) deleteLocalAfterArchive(j Obj) bool {
+	return str(j["saveTo"]) == "cloud" || flag(a.Settings()["cloudDeleteLocal"])
+}
+
 func (a *App) archiveCompleted() {
-	if !flag(a.Settings()["cloudArchiveEnabled"]) {
-		return
-	}
 	if !a.driveMu.TryLock() {
 		return
 	}
@@ -417,14 +430,14 @@ func (a *App) archiveCompleted() {
 		if a.ctx.Err() != nil {
 			return
 		}
-		if str(j["status"]) != "complete" {
+		if str(j["status"]) != "complete" || !a.archiveWanted(j) {
 			continue
 		}
 		archive := object(j["cloudArchive"])
 		if str(archive["status"]) == "archived" || num(archive["retryAt"]) > time.Now().Unix() {
 			continue
 		}
-		if str(archive["status"]) == "verified" && !flag(a.Settings()["cloudDeleteLocal"]) {
+		if str(archive["status"]) == "verified" && !a.deleteLocalAfterArchive(j) {
 			continue
 		}
 		if e = a.archiveJob(j); e != nil && a.ctx.Err() == nil {
@@ -484,7 +497,7 @@ func (a *App) archiveJob(j Obj) error {
 		}
 	}
 	_, _ = a.Store.Patch("downloads", gid, Obj{"cloudArchive": Obj{"status": "verified", "error": nil, "retryAt": 0}})
-	if !flag(a.Settings()["cloudDeleteLocal"]) {
+	if !a.deleteLocalAfterArchive(j) {
 		return nil
 	}
 	if a.media.Busy(gid) {
@@ -506,7 +519,7 @@ func (a *App) archiveJob(j Obj) error {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		if !flag(a.Settings()["cloudDeleteLocal"]) || !flag(a.Settings()["cloudArchiveEnabled"]) {
+		if !a.deleteLocalAfterArchive(j) || !a.archiveWanted(j) {
 			return nil
 		}
 		f := object(v)

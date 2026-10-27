@@ -67,6 +67,7 @@ export const updateSettingsSchema = z.object({
   aria2Enabled: z.boolean().optional(),
   aria2SeedEnabled: z.boolean().optional(),
   btTrackers: z.array(z.string().trim()).optional(),
+  defaultSaveTo: z.enum(["local", "cloud"]).optional(),
   qbittorrentBaseUrl: z.string().trim().url().optional(),
   qbittorrentUsername: z.string().trim().min(1).optional(),
   qbittorrentPassword: z.string().optional(),
