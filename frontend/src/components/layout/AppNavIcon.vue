@@ -12,6 +12,7 @@ import {
   ChevronRight,
   Copy,
   Cloud,
+  CloudUpload,
   Database,
   ExternalLink,
   FileClock,
@@ -58,6 +59,7 @@ const ICONS: Record<string, Component> = {
   globe: Globe,
   book: BookOpen,
   cloud: Cloud,
+  "cloud-upload": CloudUpload,
   key: KeyRound,
   // 外壳
   "panel-left": PanelLeftClose,

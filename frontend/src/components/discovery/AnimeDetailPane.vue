@@ -83,7 +83,6 @@ const showContentError = computed(() => (props.animeDetail ? props.detailError :
 const detailScrollRef = ref<HTMLElement | null>(null);
 const selectedDownloadGroupKey = ref<string | null>(null);
 /** 只在窄屏有意义：宽屏两栏始终并排，这个值不影响显示。 */
-const narrowView = ref<"episodes" | "resources">("episodes");
 const infoExpanded = ref(false);
 
 const animeAliases = computed(() => {
@@ -315,9 +314,6 @@ function episodeTitleOf(episode: AnimeDetail["episodes"][number]): string | null
 
 /** 宽屏只是给右栏换范围；窄屏顺带切到资源视图。 */
 function selectDownloadGroup(key: string | null): void {
-  narrowView.value = "resources";
-  // 窄屏整页一起滚：从列表中段点进来，资源视图要从顶上开始看
-  detailScrollRef.value?.scrollTo({ top: 0 });
   if (selectedDownloadGroupKey.value === key) {
     return;
   }
@@ -331,7 +327,6 @@ watch(
   () => {
     detailScrollRef.value?.scrollTo({ top: 0 });
     selectedDownloadGroupKey.value = null;
-    narrowView.value = "episodes";
     infoExpanded.value = false;
   }
 );
@@ -412,8 +407,8 @@ watch(
 
         <template v-else>
           <div ref="detailScrollRef" class="detail-split">
-            <!-- 左栏：头部 + 剧集。窄屏在资源视图时收起 -->
-            <div class="detail-side" :class="{ 'narrow-hidden': narrowView === 'resources' }">
+            <!-- 左栏：头部 + 剧集。窄屏只留头部，剧集改成资源上方的一排横向切换 -->
+            <div class="detail-side">
               <!--
                 头部：封面放大做主角，背后铺一层同图的模糊底，评分用大号数字。
                 以前封面只有 56×80、简介默认收起，整块看着像一张表单。
@@ -654,16 +649,44 @@ watch(
               </section>
             </div>
 
-            <!-- 右栏：选中剧集的资源。窄屏只在资源视图出现，顶上带返回 -->
-            <div class="detail-main" :class="{ 'narrow-hidden': narrowView === 'episodes' }">
-              <div class="flex lg:hidden">
+            <!--
+              右栏：选中剧集的资源。窄屏紧跟在头部下面——资源才是这一页要找的东西，
+              以前窄屏得先在剧集列表里点一下才看得到，很多人根本没发现。
+            -->
+            <div class="detail-main">
+              <div class="episode-chips" role="group" aria-label="按剧集筛选资源">
                 <button
                   type="button"
-                  class="btn-ghost inline-flex shrink-0 items-center gap-1 px-2.5 py-1.5 text-xs font-semibold"
-                  @click="narrowView = 'episodes'"
+                  class="episode-chip"
+                  :class="{ 'is-active': selectedDownloadGroupKey === null }"
+                  :aria-pressed="selectedDownloadGroupKey === null"
+                  @click="selectDownloadGroup(null)"
                 >
-                  <AppNavIcon name="chevron-left" class="size-3.5" aria-hidden="true" />
-                  剧集列表
+                  全部 <span class="tabular-nums opacity-70">{{ animeDetail.downloads.length }}</span>
+                </button>
+                <button
+                  v-for="episode in episodes"
+                  :key="episode.episodeId"
+                  type="button"
+                  class="episode-chip"
+                  :class="{ 'is-active': selectedDownloadGroupKey === `episode:${episode.episodeId}` }"
+                  :aria-pressed="selectedDownloadGroupKey === `episode:${episode.episodeId}`"
+                  :disabled="getEpisodeDownloadCount(episode) === 0"
+                  :title="episodeTitleOf(episode) ?? undefined"
+                  @click="selectDownloadGroup(`episode:${episode.episodeId}`)"
+                >
+                  {{ episode.episodeNumber ? `第 ${episode.episodeNumber} 集` : "SP" }}
+                  <span v-if="getEpisodeDownloadCount(episode) > 0" class="tabular-nums opacity-70">{{ getEpisodeDownloadCount(episode) }}</span>
+                </button>
+                <button
+                  v-if="unmatchedDownloadGroup"
+                  type="button"
+                  class="episode-chip"
+                  :class="{ 'is-active': selectedDownloadGroupKey === 'unmatched' }"
+                  :aria-pressed="selectedDownloadGroupKey === 'unmatched'"
+                  @click="selectDownloadGroup('unmatched')"
+                >
+                  未匹配 <span class="tabular-nums opacity-70">{{ unmatchedDownloadGroup.downloads.length }}</span>
                 </button>
               </div>
               <MikanResourcePane
@@ -734,11 +757,56 @@ watch(
   flex: 0 0 auto;
 }
 
-/* 窄屏一次只显示一栏。写在 scoped 样式里：Tailwind 的 max-lg:hidden 压不过上面的 display:flex */
+/* 窄屏：剧集列表收成资源上方的横向切换条（.episode-chips），竖排列表不再占一整屏 */
 @media (max-width: 1023.98px) {
-  .narrow-hidden {
+  .episode-panel {
     display: none;
   }
+}
+
+/* 宽屏左栏有完整剧集列表，横向切换条就不出（scoped 的 display:flex 压得过 lg:hidden，只能写在这） */
+@media (min-width: 1024px) {
+  .episode-chips {
+    display: none !important;
+  }
+}
+
+.episode-chips {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  padding-bottom: 2px;
+  scrollbar-width: none;
+  mask-image: linear-gradient(to right, #000 calc(100% - 1.5rem), transparent);
+}
+.episode-chips::-webkit-scrollbar {
+  display: none;
+}
+.episode-chip {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 5px;
+  height: 30px;
+  padding: 0 11px;
+  border-radius: 999px;
+  background: var(--panel);
+  color: var(--ink-secondary);
+  font-size: 12.5px;
+  font-weight: 550;
+  white-space: nowrap;
+  transition: background 0.15s, color 0.15s;
+}
+.episode-chip:hover:not(:disabled):not(.is-active) {
+  color: var(--ink);
+}
+.episode-chip.is-active {
+  background: var(--accent);
+  color: var(--accent-contrast);
+}
+.episode-chip:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
 }
 
 @media (min-width: 1024px) {

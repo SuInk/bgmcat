@@ -254,10 +254,26 @@ function downloadLabel(item: MikanDownloadItem): string {
       </div>
     </div>
 
-    <div v-else class="grid place-items-center py-10 text-center">
-      <div class="grid max-w-xs gap-2 rounded-lg border border-dashed border-[var(--line)] bg-[var(--panel)] p-4">
-        <strong class="text-xs font-semibold text-[var(--ink)]">没有资源</strong>
-        <span class="text-xs font-semibold leading-5 text-[var(--muted)]">当前筛选条件下没有下载候选。</span>
+    <!--
+      三种「空」要说清楚是哪一种：还在找、资源站上压根没有、只是被筛选条件挡住了。
+      以前一律写「当前筛选条件下没有下载候选」，没资源的新番看着像是筛选出了问题。
+    -->
+    <div v-else class="grid place-items-center px-4 py-10 text-center">
+      <div class="grid max-w-sm gap-1.5">
+        <template v-if="!scopedDownloads.length && pendingProviders?.length">
+          <strong class="text-sm font-semibold text-[var(--ink)]">正在资源站里找…</strong>
+          <span class="text-xs leading-5 text-[var(--muted)]">找到后会自动出现在这里。</span>
+        </template>
+        <template v-else-if="!scopedDownloads.length">
+          <strong class="text-sm font-semibold text-[var(--ink)]">{{ selectedDownloadGroup ? "这一集暂时没有资源" : "资源站上暂时还没有这部番" }}</strong>
+          <span class="text-xs leading-5 text-[var(--muted)]">
+            {{ selectedDownloadGroup ? "换一集看看，或者等字幕组发布。" : "通常是刚开播、字幕组还没发布。点「订阅并自动追更」，有新资源时会自动下载。" }}
+          </span>
+        </template>
+        <template v-else>
+          <strong class="text-sm font-semibold text-[var(--ink)]">没有符合筛选条件的资源</strong>
+          <span class="text-xs leading-5 text-[var(--muted)]">共 {{ scopedDownloads.length }} 条，换个字幕组或分辨率试试。</span>
+        </template>
       </div>
     </div>
   </section>

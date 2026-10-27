@@ -51,7 +51,14 @@ const activeSubtitleId = ref<string | null>(null);
 
 let player: ArtPlayerInstance | null = null;
 let hlsInstance: import("hls.js").default | null = null;
-let assPlugin: { destroy?: () => void } | null = null;
+/**
+ * ASS 字幕直接用 assjs 渲染，不走 artplayer-plugin-assjs：Artplayer 的插件按名字注册、注册后删不掉，
+ * 换一次字幕轨就报「already has the same name」，而且插件在报错前已经建好了第二个渲染器，
+ * 简体和繁体字幕会叠在一起永远不消失。
+ */
+let assRenderer: { destroy: () => void } | null = null;
+/** 快速连点换轨时，只认最后一次请求，晚到的旧字幕直接丢掉 */
+let subtitleRequest = 0;
 let lastSavedTime = 0;
 let restoredForKey: string | null = null;
 let progressTimer: number | null = null;
@@ -212,8 +219,9 @@ async function applySubtitleTrack(track: PlaybackSubtitleTrack | null): Promise<
     return;
   }
 
-  assPlugin?.destroy?.();
-  assPlugin = null;
+  const request = ++subtitleRequest;
+  assRenderer?.destroy();
+  assRenderer = null;
   activeSubtitleId.value = track?.id ?? null;
 
   if (!track || !props.subtitleUrlFor) {
@@ -228,8 +236,8 @@ async function applySubtitleTrack(track: PlaybackSubtitleTrack | null): Promise<
     player.subtitle.show = false;
     player.subtitle.url = "";
     try {
-      const [{ default: artplayerPluginAss }, content] = await Promise.all([
-        import("artplayer-plugin-assjs"),
+      const [{ default: ASS }, content] = await Promise.all([
+        import("assjs"),
         fetch(url).then((response) => {
           if (!response.ok) {
             throw new Error(`HTTP ${response.status}`);
@@ -237,11 +245,15 @@ async function applySubtitleTrack(track: PlaybackSubtitleTrack | null): Promise<
           return response.text();
         })
       ]);
-      if (!player) {
+      if (!player || request !== subtitleRequest) {
         return;
       }
-      assPlugin = player.plugins.add(artplayerPluginAss({ content })) as unknown as { destroy?: () => void };
+      const video = player.video;
+      assRenderer = new ASS(content, video, { container: video.parentElement ?? undefined, resampling: "video_width" });
     } catch (error) {
+      if (request !== subtitleRequest) {
+        return;
+      }
       streamError.value = `字幕加载失败：${error instanceof Error ? error.message : String(error)}`;
     }
     return;
@@ -291,8 +303,9 @@ function startProgressPolling(): void {
 /* ---------- 播放器 ---------- */
 
 function destroyPlayer(): void {
-  assPlugin?.destroy?.();
-  assPlugin = null;
+  subtitleRequest += 1;
+  assRenderer?.destroy();
+  assRenderer = null;
   hlsInstance?.destroy();
   hlsInstance = null;
   player?.destroy(false);
