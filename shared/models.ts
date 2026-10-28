@@ -213,7 +213,7 @@ export interface LocalAiStatus {
 }
 
 export interface LocalAiChatMessage {
-  role: "user" | "assistant";
+  role: "system" | "user" | "assistant";
   content: string;
 }
 

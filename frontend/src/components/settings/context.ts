@@ -1,6 +1,6 @@
 import type { InjectionKey } from "vue";
 
-export type SettingsPageKey = "general" | "data" | "about" | "download" | "cloud" | "sources" | "metadata" | "remote" | "tunnel" | "github";
+export type SettingsPageKey = "general" | "data" | "about" | "download" | "cloud" | "sources" | "metadata" | "ai" | "remote" | "tunnel" | "github";
 
 /**
  * 各分类页都同时挂载（搜索要跨页过滤 DOM），只是用 v-show 藏起来。
