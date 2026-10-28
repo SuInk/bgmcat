@@ -89,6 +89,16 @@ const activePageMeta = computed(() => ALL_PAGES.find((page) => page.key === acti
 const settingsLayoutRef = ref<HTMLElement | null>(null);
 const settingsShellRef = ref<HTMLElement | null>(null);
 
+/** 手机上分类是一行横滑，当前分类可能在屏幕外：打开和切换时都把它拉进来 */
+function revealActiveNavLink(): void {
+  settingsLayoutRef.value
+    ?.querySelector<HTMLElement>(".settings-nav-link-active")
+    ?.scrollIntoView({ block: "nearest", inline: "nearest" });
+}
+
+watch(activePage, () => nextTick(revealActiveNavLink));
+watch(settingsLayoutRef, (el) => el && nextTick(revealActiveNavLink));
+
 function openPage(key: SettingsPageKey): void {
   activePage.value = key;
   settingsQuery.value = "";

@@ -321,13 +321,16 @@ onUnmounted(() => {
   white-space: pre-wrap;
 }
 
+/* 手机：时间和级别一行，消息另起一行占满宽度；以前时间单占一列，消息被挤成一行十几个字 */
 @media (max-width: 640px) {
   .log-line {
-    grid-template-columns: 4.25rem minmax(0, 1fr);
+    grid-template-columns: auto auto minmax(0, 1fr);
+    gap: 0.125rem 0.5rem;
+    padding: 0.375rem 0.75rem;
   }
 
-  .log-line > .status-pill {
-    display: none;
+  .log-line > .min-w-0 {
+    grid-column: 1 / -1;
   }
 }
 </style>

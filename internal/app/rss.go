@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"github.com/mmcdole/gofeed"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -291,11 +292,44 @@ func feedSource(item *gofeed.Item) (string, string) {
 	}
 	return "", ""
 }
+
+// fetchErrorMessage turns Go's transport errors (`Get "https://…": EOF`,
+// `dial tcp: lookup host: no such host`) into a short Chinese reason with the
+// host, which is what the subscription list and the log show.
+func fetchErrorMessage(rawURL string, e error) string {
+	host := rawURL
+	if u, err := url.Parse(rawURL); err == nil && u.Host != "" {
+		host = u.Host
+	}
+	var dnsErr *net.DNSError
+	var netErr net.Error
+	msg := e.Error()
+	reason := ""
+	switch {
+	case errors.As(e, &dnsErr) || strings.Contains(msg, "no such host"):
+		reason = "域名解析失败，检查网络或 DNS"
+	case errors.As(e, &netErr) && netErr.Timeout():
+		reason = "连接超时"
+	case errors.Is(e, io.EOF) || errors.Is(e, io.ErrUnexpectedEOF) || strings.HasSuffix(msg, ": EOF"):
+		reason = "连接被对方中断"
+	case strings.Contains(msg, "connection refused"):
+		reason = "连接被拒绝"
+	case strings.Contains(msg, "connection reset"):
+		reason = "连接被重置"
+	case strings.Contains(msg, "tls:") || strings.Contains(msg, "x509:"):
+		reason = "TLS 握手失败"
+	default:
+		return msg
+	}
+	return host + " " + reason
+}
+
 func (a *App) refreshSubscription(ctx context.Context, s Obj) (Obj, error) {
 	a.refreshMu.Lock()
 	defer a.refreshMu.Unlock()
 	feed, e := a.fetchFeed(ctx, str(s["url"]))
 	if e != nil {
+		e = errors.New(fetchErrorMessage(str(s["url"]), e))
 		_, _ = a.Store.Patch("subscriptions", str(s["id"]), Obj{"lastError": e.Error(), "lastFetchedAt": now()})
 		return nil, e
 	}
@@ -357,7 +391,7 @@ func (a *App) pollSubscriptions() {
 			continue
 		}
 		if _, e := a.refreshSubscription(a.ctx, s); e != nil {
-			a.Log("warn", "RSS: "+e.Error())
+			a.Log("warn", fmt.Sprintf("订阅「%s」刷新失败：%s", str(s["name"]), e.Error()))
 		}
 		if a.ctx.Err() != nil {
 			return

@@ -228,8 +228,12 @@ onUnmounted(() => {
           <span class="hidden flex-1 lg:block" />
 
           <!-- 手机宽度下搜索框独占一行，否则被排序、视图按钮挤成只剩一个「搜」字 -->
-          <div class="flex min-w-0 flex-1 flex-wrap items-center gap-2 sm:flex-nowrap lg:flex-none">
-            <div ref="searchBoxRef" class="relative flex min-w-0 flex-1 basis-full items-center gap-2 sm:basis-auto lg:w-[18rem] lg:flex-none">
+          <!--
+            搜索 + 排序 + 视图这一组至少要 24rem：放不下就整组换到第二行，
+            而不是把搜索框挤成一个圆圈（星期条吃掉大半行时会这样）。
+          -->
+          <div class="flex min-w-0 flex-1 basis-[24rem] flex-wrap items-center gap-2 sm:flex-nowrap lg:flex-none lg:basis-auto">
+            <div ref="searchBoxRef" class="relative flex min-w-[9rem] flex-1 basis-full items-center gap-2 sm:basis-auto lg:w-[18rem] lg:flex-none">
               <label class="home-search">
                 <AppNavIcon name="search" class="size-[15px] shrink-0" aria-hidden="true" />
                 <input
