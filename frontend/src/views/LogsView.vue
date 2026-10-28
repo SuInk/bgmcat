@@ -173,7 +173,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <section class="page-shell rounded-lg border border-[var(--line)] bg-[var(--table-bg)] shadow-[var(--soft-shadow)]">
+  <section class="page-shell">
     <div class="page-toolbar">
       <div class="toolbar-row">
         <div class="toolbar-chips" role="group" aria-label="按级别筛选">
@@ -238,7 +238,7 @@ onUnmounted(() => {
       </div>
     </div>
 
-    <div class="min-h-0 px-4 pb-4">
+    <div class="min-h-0 pb-4">
       <div
         ref="outputRef"
         class="log-output h-full overflow-auto rounded-lg border border-[var(--line)] bg-[var(--card)] font-mono"

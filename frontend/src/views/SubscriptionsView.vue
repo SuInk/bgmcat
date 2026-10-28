@@ -549,7 +549,7 @@ watch(editingSubscriptionId, (id) => {
       </template>
     </AppDialog>
 
-    <div class="page-shell rounded-lg border border-[var(--line)] bg-[var(--table-bg)] shadow-[var(--soft-shadow)]">
+    <div class="page-shell">
       <div class="page-toolbar">
         <div class="toolbar-row">
           <div class="toolbar-chips" role="group" aria-label="按状态筛选">

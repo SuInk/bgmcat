@@ -4,6 +4,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import type { PlaybackSubtitleTrack } from "@shared/index";
 
 import { getDownloadPlaybackProgress, readApiToken } from "../../api";
+import AppNavIcon from "../layout/AppNavIcon.vue";
 import {
   readPlaybackHistory,
   RESUME_END_GAP_SECONDS,
@@ -40,6 +41,12 @@ const SAVE_INTERVAL_SECONDS = 5;
 const PLAYBACK_RATES = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2];
 
 type ArtPlayerInstance = InstanceType<typeof import("artplayer").default>;
+type ControlOption = Parameters<ArtPlayerInstance["controls"]["update"]>[0];
+
+const SUBTITLE_CONTROL = "subtitle-track";
+const SUBTITLE_OFF = "__off";
+/** 续播提示挂这么久没人理，就当是从头看，不一直压在画面上 */
+const RESUME_PROMPT_MS = 8000;
 
 const containerRef = ref<HTMLDivElement | null>(null);
 const resumePrompt = ref<{ seconds: number } | null>(null);
@@ -153,9 +160,21 @@ function offerResume(): void {
     return;
   }
   resumePrompt.value = { seconds: resumeTime };
+  clearResumeTimer();
+  resumeTimer = window.setTimeout(dismissResume, RESUME_PROMPT_MS);
+}
+
+let resumeTimer: number | null = null;
+
+function clearResumeTimer(): void {
+  if (resumeTimer !== null) {
+    window.clearTimeout(resumeTimer);
+    resumeTimer = null;
+  }
 }
 
 function acceptResume(): void {
+  clearResumeTimer();
   const seconds = resumePrompt.value?.seconds;
   resumePrompt.value = null;
   if (player && typeof seconds === "number") {
@@ -165,6 +184,7 @@ function acceptResume(): void {
 }
 
 function dismissResume(): void {
+  clearResumeTimer();
   resumePrompt.value = null;
 }
 
@@ -238,6 +258,41 @@ async function applySubtitleTrack(track: PlaybackSubtitleTrack | null): Promise<
 
   player.subtitle.url = url;
   player.subtitle.show = true;
+}
+
+/**
+ * 字幕轨放进播放器控制条（B 站的「字幕」按钮那样），不再在画面下面摆一排胶囊：
+ * 全屏时那排胶囊根本看不到，平时又把番名挤到了画面下面。
+ */
+function subtitleControlOption(): ControlOption {
+  return {
+    name: SUBTITLE_CONTROL,
+    position: "right",
+    index: 15,
+    html: "字幕",
+    tooltip: "字幕",
+    style: { padding: "0 8px", fontSize: "13px", fontWeight: "600" },
+    selector: [
+      ...subtitleOptions.value.map((track) => ({ html: track.label, value: track.id, default: track.id === activeSubtitleId.value })),
+      { html: "关闭", value: SUBTITLE_OFF, default: activeSubtitleId.value === null }
+    ],
+    onSelect(item) {
+      const track = subtitleOptions.value.find((option) => option.id === item.value) ?? null;
+      void applySubtitleTrack(track);
+      return "字幕";
+    }
+  };
+}
+
+function syncSubtitleControl(): void {
+  if (!player) {
+    return;
+  }
+  if (subtitleOptions.value.length > 1) {
+    player.controls.update(subtitleControlOption());
+  } else if (player.controls[SUBTITLE_CONTROL as keyof typeof player.controls]) {
+    player.controls.remove(SUBTITLE_CONTROL);
+  }
 }
 
 /* ---------- HLS 转码进度 ---------- */
@@ -385,6 +440,12 @@ async function mountPlayer(): Promise<void> {
     clearPlaybackProgress();
     emit("ended");
   });
+  // 浏览器 / 外壳拒绝真全屏时（iPhone Safari、权限被拦），退到铺满窗口，别让按钮点了没反应
+  player.on("fullscreenError", () => {
+    if (player) {
+      player.fullscreenWeb = true;
+    }
+  });
   player.on("video:error", () => {
     waitingForStream.value = false;
     streamError.value = "播放失败：浏览器无法解码这个流，试试外部播放器。";
@@ -393,6 +454,7 @@ async function mountPlayer(): Promise<void> {
   const initialTrack =
     subtitleOptions.value.find((track) => track.id === activeSubtitleId.value) ?? subtitleOptions.value[0] ?? null;
   await applySubtitleTrack(initialTrack);
+  syncSubtitleControl();
 
   startProgressPolling();
 }
@@ -470,6 +532,7 @@ watch(
     }
     const next = tracks?.find((track) => track.id === activeSubtitleId.value) ?? tracks?.[0] ?? null;
     void applySubtitleTrack(next);
+    syncSubtitleControl();
   }
 );
 
@@ -480,6 +543,7 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   window.removeEventListener("keydown", handleKeydown);
+  clearResumeTimer();
   savePlaybackProgress(true);
   stopProgressPolling();
   destroyPlayer();
@@ -512,41 +576,19 @@ onBeforeUnmount(() => {
         {{ streamError }}
       </div>
 
-      <!-- 续播浮层取代静默 seek：不告诉用户就跳走，会让人以为进度条坏了 -->
-      <div
-        v-if="resumePrompt"
-        class="absolute bottom-16 left-6 z-20 flex items-center gap-3 rounded-lg bg-black/75 px-4 py-2.5 text-sm font-semibold text-white shadow-[var(--strong-shadow)]"
-      >
-        <span class="tabular-nums">上次看到 {{ formatPlaybackTime(resumePrompt.seconds) }}</span>
-        <button type="button" class="rounded-md bg-[var(--accent)] px-3 py-1.5 text-xs font-semibold text-[var(--accent-contrast)]" @click="acceptResume">
-          继续播放
-        </button>
-        <button type="button" class="rounded-md px-2 py-1.5 text-xs font-semibold text-white/70 hover:text-white" @click="dismissResume">
-          从头看
-        </button>
-      </div>
-    </div>
-
-    <div v-if="subtitleOptions.length > 1" class="flex flex-wrap items-center gap-2">
-      <span class="text-xs font-semibold text-[var(--muted)]">字幕</span>
-      <button
-        v-for="track in subtitleOptions"
-        :key="track.id"
-        type="button"
-        class="chip h-8 rounded-md px-3 text-xs font-semibold"
-        :class="{ 'chip-active': activeSubtitleId === track.id }"
-        @click="applySubtitleTrack(track)"
-      >
-        {{ track.label }}
-      </button>
-      <button
-        type="button"
-        class="chip h-8 rounded-md px-3 text-xs font-semibold"
-        :class="{ 'chip-active': activeSubtitleId === null }"
-        @click="applySubtitleTrack(null)"
-      >
-        关闭
-      </button>
+      <!--
+        续播提示学 B 站：左下角一行小字「上次看到 16:51 · 跳转播放」，几秒后自己消失。
+        以前是压在画面中间的一大块深色条，还要求用户必须二选一。
+      -->
+      <Transition name="resume-toast">
+        <div v-if="resumePrompt" class="resume-toast">
+          <span class="tabular-nums">上次看到 {{ formatPlaybackTime(resumePrompt.seconds) }}</span>
+          <button type="button" class="font-semibold text-[var(--accent-vivid)] hover:underline" @click="acceptResume">跳转播放</button>
+          <button type="button" class="-mr-1 grid size-5 place-items-center text-white/60 hover:text-white" aria-label="关闭续播提示" @click="dismissResume">
+            <AppNavIcon name="close" class="size-3.5" aria-hidden="true" />
+          </button>
+        </div>
+      </Transition>
     </div>
   </div>
 </template>
@@ -562,6 +604,31 @@ onBeforeUnmount(() => {
  * 于是整层 ASS 字幕被视频盖在下面，DOM 里有字、画面上没有。放到和 Artplayer 自带字幕同一层（20），
  * 在控制条（60）之下；点击要穿透给播放器（暂停、双击全屏）。
  */
+.resume-toast {
+  position: absolute;
+  bottom: 64px;
+  left: 14px;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 12px;
+  border-radius: 8px;
+  background: rgb(0 0 0 / 0.62);
+  color: #fff;
+  font-size: 12.5px;
+  backdrop-filter: blur(8px);
+}
+.resume-toast-enter-active,
+.resume-toast-leave-active {
+  transition: opacity 0.2s, transform 0.2s;
+}
+.resume-toast-enter-from,
+.resume-toast-leave-to {
+  opacity: 0;
+  transform: translateY(6px);
+}
+
 .art-host :deep(.ASS-box) {
   z-index: 20;
   pointer-events: none;
