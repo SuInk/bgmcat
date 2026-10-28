@@ -324,6 +324,8 @@ export interface DownloadJob {
   issueMessage?: string | null;
   canResolveConflict?: boolean;
   canPlayExistingFile?: boolean;
+  /** 主文件路径（单文件任务）；多文件任务看 files */
+  filePath?: string | null;
   /** 保存位置：cloud 表示下载完成后上传 Google Drive，校验通过后删掉本机副本 */
   saveTo?: "local" | "cloud";
   /** 任务的文件清单；云盘归档时每个文件记着已上传的字节数 */

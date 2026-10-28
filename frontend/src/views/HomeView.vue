@@ -8,7 +8,12 @@ import AnimeCard from "../components/discovery/AnimeCard.vue";
 import AnimeDetailDrawer from "../components/discovery/AnimeDetailDrawer.vue";
 import AnimeGrid from "../components/discovery/AnimeGrid.vue";
 import AppNavIcon from "../components/layout/AppNavIcon.vue";
+import { extractEpisodeNumberFromTitle } from "@shared/episode";
+import { resolveDownloadArtworkUrl } from "../api";
 import { broadcastWeekday } from "../lib/format";
+import { continueWatchingEntries, type ContinueWatchingEntry } from "../lib/playbackHistory";
+import { selectTab } from "../stores/boot";
+import { detailSearchKeyword, displayTitle, downloads, openPlayback } from "../stores/downloads";
 import { isBusy } from "../stores/busy";
 import {
   ANIME_PAGE_SIZE_OPTIONS,
@@ -184,13 +189,56 @@ function scrollActiveWeekdayIntoView(): void {
 
 watch(() => discoveryForm.weekday, () => nextTick(scrollActiveWeekdayIntoView));
 
+/**
+ * 「继续观看」（Netflix / B 站那种）：播放器在本机记着每个文件看到哪，
+ * 这里把看了一半的挑出来摆在首页最上面，点一下直接从上次的位置接着放。
+ * 进度存在 localStorage、不是响应式的：回到首页、窗口重新获得焦点时重读一次。
+ */
+const historyVersion = ref(0);
+function refreshContinueWatching(): void {
+  historyVersion.value += 1;
+}
+
+const continueWatching = computed<ContinueWatchingEntry[]>(() => {
+  void historyVersion.value;
+  if (isHistoricalSearchActive.value || discoveryForm.search.trim()) {
+    return [];
+  }
+  return continueWatchingEntries(downloads.value).slice(0, 12);
+});
+
+/** 卡片上放番名（从发布名里拆出来的那段），拆不出来才用整条发布名 */
+function continueTitle(entry: ContinueWatchingEntry): string {
+  const keyword = detailSearchKeyword(entry.download);
+  // 「[FX战士久留美 / FX Senshi Kurumi-chan」→「FX战士久留美」：去掉括号，多语言别名只留第一个
+  const name = keyword.replace(/[[\]【】]/gu, " ").split(/\s+\/\s+/u)[0]?.trim();
+  return name || displayTitle(entry.download);
+}
+
+function continueEpisodeLabel(entry: ContinueWatchingEntry): string {
+  const episode = extractEpisodeNumberFromTitle(entry.download.feedItemTitle ?? "");
+  return episode ? `第 ${episode} 集` : "";
+}
+
+function continueRemainingLabel(entry: ContinueWatchingEntry): string {
+  const minutes = Math.max(1, Math.round((entry.record.duration - entry.record.currentTime) / 60));
+  return `还剩 ${minutes} 分钟`;
+}
+
+function resumeEntry(entry: ContinueWatchingEntry): void {
+  selectTab("downloads");
+  void openPlayback(entry.download);
+}
+
 onMounted(() => {
   window.addEventListener("mousedown", handleDocumentPointerDown);
+  window.addEventListener("focus", refreshContinueWatching);
   void nextTick(scrollActiveWeekdayIntoView);
 });
 
 onUnmounted(() => {
   window.removeEventListener("mousedown", handleDocumentPointerDown);
+  window.removeEventListener("focus", refreshContinueWatching);
 });
 </script>
 
@@ -245,6 +293,7 @@ onUnmounted(() => {
                   @click="searchHistoryVisible = true"
                   @keyup.enter="runSearch"
                 />
+                <kbd v-if="!discoveryForm.search" class="search-kbd" title="按 / 聚焦搜索">/</kbd>
               </label>
               <button
                 v-if="showSearchButton"
@@ -345,6 +394,41 @@ onUnmounted(() => {
             </button>
           </div>
         </div>
+
+        <section v-if="continueWatching.length" class="home-section" aria-labelledby="home-continue-title">
+          <div class="section-head">
+            <h2 id="home-continue-title" class="section-title">继续观看</h2>
+            <span class="section-sub">{{ continueWatching.length }} 部</span>
+          </div>
+          <div class="shelf-row">
+            <button
+              v-for="entry in continueWatching"
+              :key="entry.download.gid"
+              type="button"
+              class="continue-card"
+              :aria-label="`继续观看 ${continueTitle(entry)} ${continueEpisodeLabel(entry)}，${continueRemainingLabel(entry)}`"
+              @click="resumeEntry(entry)"
+            >
+              <span class="continue-thumb">
+                <img
+                  v-if="resolveDownloadArtworkUrl(entry.download)"
+                  :src="resolveDownloadArtworkUrl(entry.download) ?? ''"
+                  alt=""
+                  class="size-full object-cover"
+                  loading="lazy"
+                />
+                <span class="continue-play" aria-hidden="true"><AppNavIcon name="play" class="size-4" /></span>
+                <span class="continue-progress" aria-hidden="true">
+                  <span :style="{ width: `${Math.min(100, (entry.record.currentTime / entry.record.duration) * 100)}%` }"></span>
+                </span>
+              </span>
+              <span class="grid min-w-0 gap-0.5 px-0.5 text-left">
+                <strong class="truncate text-[13px] font-semibold text-[var(--ink)]" :title="displayTitle(entry.download)">{{ continueTitle(entry) }}</strong>
+                <span class="truncate text-[11.5px] text-[var(--muted)]">{{ [continueEpisodeLabel(entry), continueRemainingLabel(entry)].filter(Boolean).join(" · ") }}</span>
+              </span>
+            </button>
+          </div>
+        </section>
 
         <section v-if="todayShelf.length" class="home-section" aria-labelledby="home-today-title">
           <div class="section-head">
@@ -483,6 +567,24 @@ onUnmounted(() => {
   cursor: text;
   transition: box-shadow 0.15s, background 0.15s;
 }
+.search-kbd {
+  display: none;
+  min-width: 18px;
+  padding: 0 5px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  color: var(--muted);
+  font: 600 11px/16px ui-monospace, SFMono-Regular, Menlo, monospace;
+  text-align: center;
+}
+@media (hover: hover) and (min-width: 1024px) {
+  .search-kbd {
+    display: inline-block;
+  }
+}
+.home-search:focus-within .search-kbd {
+  display: none;
+}
 .home-search:focus-within {
   background: var(--card);
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-vivid) 30%, transparent);
@@ -561,6 +663,57 @@ onUnmounted(() => {
   .shelf-item {
     width: 8.5rem;
   }
+}
+
+/* 继续观看：横版 16:9 缩略图，底部一条进度，和下面的竖版海报一眼区分开 */
+.continue-card {
+  display: grid;
+  flex: none;
+  gap: 6px;
+  width: 13rem;
+  scroll-snap-align: start;
+  border-radius: 10px;
+}
+.continue-card:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.continue-thumb {
+  position: relative;
+  display: block;
+  aspect-ratio: 16 / 9;
+  overflow: hidden;
+  border-radius: 10px;
+  background: var(--panel);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.12), 0 6px 16px -8px rgb(0 0 0 / 0.35);
+}
+.continue-play {
+  position: absolute;
+  left: 8px;
+  bottom: 10px;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  background: rgb(0 0 0 / 0.55);
+  backdrop-filter: blur(8px);
+  color: #fff;
+  transition: transform 0.15s;
+}
+.continue-card:hover .continue-play {
+  transform: scale(1.1);
+}
+.continue-progress {
+  position: absolute;
+  inset: auto 0 0 0;
+  height: 3px;
+  background: rgb(255 255 255 / 0.25);
+}
+.continue-progress > span {
+  display: block;
+  height: 100%;
+  background: var(--accent-vivid);
 }
 
 /* 右侧渐隐：被裁掉的星期读作「还能滚」，而不是渲染坏了 */

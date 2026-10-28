@@ -4,6 +4,12 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import type { PlaybackSubtitleTrack } from "@shared/index";
 
 import { getDownloadPlaybackProgress, readApiToken } from "../../api";
+import {
+  readPlaybackHistory,
+  RESUME_END_GAP_SECONDS,
+  RESUME_MIN_SECONDS,
+  writePlaybackHistory
+} from "../../lib/playbackHistory";
 
 export interface PlayerEpisodeOption {
   key: string;
@@ -29,14 +35,10 @@ const emit = defineEmits<{
   (event: "ended"): void;
 }>();
 
-const PLAYBACK_HISTORY_KEY = "anime-rss-playback-history";
 const PLAYBACK_RATE_KEY = "anime-rss-playback-rate";
 const SAVE_INTERVAL_SECONDS = 5;
-const RESUME_MIN_SECONDS = 8;
-const RESUME_END_GAP_SECONDS = 20;
 const PLAYBACK_RATES = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2];
 
-type PlaybackHistory = Record<string, { currentTime: number; duration: number; updatedAt: number }>;
 type ArtPlayerInstance = InstanceType<typeof import("artplayer").default>;
 
 const containerRef = ref<HTMLDivElement | null>(null);
@@ -79,27 +81,6 @@ function isAssTrack(track: PlaybackSubtitleTrack): boolean {
 }
 
 /* ---------- 进度记忆（与播放器实现无关，整段从 DPlayerPane 搬过来） ---------- */
-
-function readPlaybackHistory(): PlaybackHistory {
-  try {
-    const raw = window.localStorage.getItem(PLAYBACK_HISTORY_KEY);
-    if (!raw) {
-      return {};
-    }
-    const parsed = JSON.parse(raw) as PlaybackHistory;
-    return parsed && typeof parsed === "object" ? parsed : {};
-  } catch {
-    return {};
-  }
-}
-
-function writePlaybackHistory(nextHistory: PlaybackHistory): void {
-  try {
-    window.localStorage.setItem(PLAYBACK_HISTORY_KEY, JSON.stringify(nextHistory));
-  } catch {
-    // 隐私模式下写不进去就算了，不该因此中断播放
-  }
-}
 
 function clearPlaybackProgress(): void {
   if (!props.playbackKey) {
@@ -149,7 +130,7 @@ function savePlaybackProgress(force = false): void {
   }
 
   const history = readPlaybackHistory();
-  history[props.playbackKey] = { currentTime, duration, updatedAt: Date.now() };
+  history[props.playbackKey] = { currentTime, duration, updatedAt: Date.now(), gid: props.gid };
   writePlaybackHistory(history);
   lastSavedTime = currentTime;
 }
@@ -574,5 +555,15 @@ onBeforeUnmount(() => {
 .art-host :deep(.art-video-player) {
   height: 100%;
   background: #000;
+}
+
+/*
+ * assjs 把字幕层挂在播放器容器里，但不给 z-index；Artplayer 的 .art-video 是 z-index 10，
+ * 于是整层 ASS 字幕被视频盖在下面，DOM 里有字、画面上没有。放到和 Artplayer 自带字幕同一层（20），
+ * 在控制条（60）之下；点击要穿透给播放器（暂停、双击全屏）。
+ */
+.art-host :deep(.ASS-box) {
+  z-index: 20;
+  pointer-events: none;
 }
 </style>
