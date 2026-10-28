@@ -894,6 +894,8 @@
 @media (max-width: 640px) {
   .settings-app {
     grid-template-columns: minmax(0, 1fr);
+    /* 否则两行平分整页高度，分类条下面空出一大块 */
+    align-content: start;
     gap: 18px;
   }
 
@@ -902,10 +904,17 @@
     padding: 0;
   }
 
+  /* 一行横滑，不再折成三行把内容压到半屏以下；右侧渐隐提示还能滑 */
   .settings-nav {
     display: flex;
-    flex-wrap: wrap;
-    gap: 6px;
+    gap: 4px;
+    overflow-x: auto;
+    scrollbar-width: none;
+    mask-image: linear-gradient(to right, #000 calc(100% - 1.5rem), transparent);
+  }
+
+  .settings-nav::-webkit-scrollbar {
+    display: none;
   }
 
   .settings-nav-group {
@@ -918,9 +927,11 @@
   }
 
   .settings-nav-link {
+    flex: none;
     width: auto;
-    min-height: 40px;
-    font-size: 12px;
+    min-height: 36px;
+    font-size: 12.5px;
+    white-space: nowrap;
   }
 
   .settings-content {

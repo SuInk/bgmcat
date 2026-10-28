@@ -3,8 +3,12 @@ package app
 import (
 	"bytes"
 	"context"
+	"errors"
+	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"reflect"
 	"testing"
 
@@ -106,5 +110,20 @@ func TestTorrentAndMagnetTrackers(t *testing.T) {
 	}
 	if mHash != hash || !reflect.DeepEqual(mTrackers, want[:2]) {
 		t.Fatalf("magnet = %s %v", mHash.HexString(), mTrackers)
+	}
+}
+
+func TestFetchErrorMessage(t *testing.T) {
+	feed := "https://mikanani.me/RSS/Search?searchstr=X"
+	cases := map[string]error{
+		"mikanani.me 连接被对方中断":          &url.Error{Op: "Get", URL: feed, Err: io.EOF},
+		"mikanani.me 域名解析失败，检查网络或 DNS": &url.Error{Op: "Get", URL: feed, Err: &net.OpError{Op: "dial", Net: "tcp", Err: &net.DNSError{Err: "no such host", Name: "mikanani.me", IsNotFound: true}}},
+		"mikanani.me 连接被拒绝":            errors.New(`Get "` + feed + `": dial tcp 1.2.3.4:443: connect: connection refused`),
+		"RSS 返回 HTTP 500":              errors.New("RSS 返回 HTTP 500"),
+	}
+	for want, e := range cases {
+		if got := fetchErrorMessage(feed, e); got != want {
+			t.Errorf("fetchErrorMessage(%v) = %q, want %q", e, got, want)
+		}
 	}
 }
