@@ -76,6 +76,12 @@ export function detailSearchKeyword(download: DownloadJob): string {
   return downloadDetailSearchKeyword(download, feedItemById.value);
 }
 
+/** 从发布名里拆出的番名：「[FX战士久留美 / FX Senshi Kurumi-chan」→「FX战士久留美」，拆不出来才用整条发布名 */
+export function shortAnimeTitle(download: DownloadJob): string {
+  const name = detailSearchKeyword(download).replace(/[[\]【】]/gu, " ").split(/\s+\/\s+/u)[0]?.trim();
+  return name || displayTitle(download);
+}
+
 export function downloadRawError(download: DownloadJob): string | null {
   if (!download.errorMessage || download.issueKind === "connected-idle") {
     return null;

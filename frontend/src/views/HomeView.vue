@@ -13,7 +13,7 @@ import { resolveDownloadArtworkUrl } from "../api";
 import { broadcastWeekday } from "../lib/format";
 import { continueWatchingEntries, type ContinueWatchingEntry } from "../lib/playbackHistory";
 import { selectTab } from "../stores/boot";
-import { detailSearchKeyword, displayTitle, downloads, openPlayback } from "../stores/downloads";
+import { displayTitle, downloads, openPlayback, shortAnimeTitle } from "../stores/downloads";
 import { isBusy } from "../stores/busy";
 import {
   ANIME_PAGE_SIZE_OPTIONS,
@@ -207,12 +207,8 @@ const continueWatching = computed<ContinueWatchingEntry[]>(() => {
   return continueWatchingEntries(downloads.value).slice(0, 12);
 });
 
-/** 卡片上放番名（从发布名里拆出来的那段），拆不出来才用整条发布名 */
 function continueTitle(entry: ContinueWatchingEntry): string {
-  const keyword = detailSearchKeyword(entry.download);
-  // 「[FX战士久留美 / FX Senshi Kurumi-chan」→「FX战士久留美」：去掉括号，多语言别名只留第一个
-  const name = keyword.replace(/[[\]【】]/gu, " ").split(/\s+\/\s+/u)[0]?.trim();
-  return name || displayTitle(entry.download);
+  return shortAnimeTitle(entry.download);
 }
 
 function continueEpisodeLabel(entry: ContinueWatchingEntry): string {
@@ -512,6 +508,12 @@ onUnmounted(() => {
   padding: 2px 2px 10px;
   background: color-mix(in srgb, var(--shell-bg) 86%, transparent);
   backdrop-filter: saturate(1.6) blur(14px);
+}
+/* 手机上工具栏折成三行，吸顶会一直压住五分之一屏；跟着内容滚走，回顶部再用 */
+@media (max-width: 639px) {
+  .home-toolbar {
+    position: static;
+  }
 }
 
 /* 苹果式分段控件：一条浅底轨道，选中段是浮起的白块 */

@@ -304,6 +304,34 @@ function getEpisodeDownloadCount(episode: AnimeDetail["episodes"][number]): numb
   return downloadGroupByKey.value.get(`episode:${episode.episodeId}`)?.downloads.length ?? 0;
 }
 
+/**
+ * 长篇（航海王上千集）大多数集数在资源站上早就没有种子了，一整屏灰格子只是噪音。
+ * 集数超过这个数时默认只列有资源的集，另给一个「全部 N 集」展开。
+ */
+const EPISODE_CHIP_LIMIT = 26;
+const showAllEpisodes = ref(false);
+const episodesWithDownloads = computed(() => episodes.value.filter((episode) => getEpisodeDownloadCount(episode) > 0));
+const canCollapseEpisodes = computed(
+  () => episodes.value.length > EPISODE_CHIP_LIMIT && episodesWithDownloads.value.length < episodes.value.length
+);
+const visibleEpisodes = computed(() => {
+  if (!canCollapseEpisodes.value || showAllEpisodes.value) {
+    return episodes.value;
+  }
+  return episodes.value.filter(
+    (episode) =>
+      getEpisodeDownloadCount(episode) > 0 || selectedDownloadGroupKey.value === `episode:${episode.episodeId}`
+  );
+});
+/** 一集资源都没对上、也没有未匹配的：只剩一个「全部」格子，整行不出 */
+const showEpisodeChips = computed(() => episodesWithDownloads.value.length > 0 || Boolean(unmatchedDownloadGroup.value));
+watch(
+  () => props.animeDetail?.anime.animeId,
+  () => {
+    showAllEpisodes.value = false;
+  }
+);
+
 /** Bangumi 没公布标题时常把标题写成「第 12 集」，和左边的集号重复，干脆不写。 */
 function episodeTitleOf(episode: AnimeDetail["episodes"][number]): string | null {
   const title = episode.title?.trim();
@@ -491,7 +519,7 @@ watch(
                   <div v-if="animeSummary || animeTags.length" class="grid gap-2">
                     <p
                       v-if="animeSummary"
-                      class="whitespace-pre-line text-xs leading-5 text-[var(--ink-secondary)]"
+                      class="max-w-[72ch] whitespace-pre-line text-xs leading-5 text-[var(--ink-secondary)]"
                       :class="{ 'line-clamp-2': !infoExpanded }"
                     >{{ animeSummary }}</p>
                     <div v-if="infoExpanded && animeTags.length" class="flex flex-wrap gap-1">
@@ -589,7 +617,7 @@ watch(
               以前窄屏得先在剧集列表里点一下才看得到，很多人根本没发现。
             -->
             <div class="detail-main">
-              <div class="episode-chips" role="group" aria-label="按剧集筛选资源">
+              <div v-if="showEpisodeChips" class="episode-chips" role="group" aria-label="按剧集筛选资源">
                 <button
                   type="button"
                   class="episode-chip episode-chip-wide"
@@ -600,7 +628,7 @@ watch(
                   全部 <span class="tabular-nums opacity-70">{{ animeDetail.downloads.length }}</span>
                 </button>
                 <button
-                  v-for="episode in episodes"
+                  v-for="episode in visibleEpisodes"
                   :key="episode.episodeId"
                   type="button"
                   class="episode-chip"
@@ -622,6 +650,15 @@ watch(
                   @click="selectDownloadGroup('unmatched')"
                 >
                   未匹配 <span class="tabular-nums opacity-70">{{ unmatchedDownloadGroup.downloads.length }}</span>
+                </button>
+                <button
+                  v-if="canCollapseEpisodes"
+                  type="button"
+                  class="episode-chip episode-chip-wide episode-chip-toggle"
+                  :aria-expanded="showAllEpisodes"
+                  @click="showAllEpisodes = !showAllEpisodes"
+                >
+                  {{ showAllEpisodes ? "只看有资源" : `全部 ${episodes.length} 集` }}
                 </button>
               </div>
               <MikanResourcePane
@@ -728,6 +765,11 @@ watch(
 /* 「全部 N」「未匹配 N」比集数格子宽，占两格 */
 .episode-chip-wide {
   grid-column: span 2;
+}
+.episode-chip-toggle {
+  background: transparent;
+  box-shadow: inset 0 0 0 1px var(--line);
+  color: var(--muted);
 }
 
 /* 头部：封面做主角，背后同图模糊铺底，像海报墙那样带出这部番的配色 */
