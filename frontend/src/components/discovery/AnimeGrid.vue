@@ -3,7 +3,6 @@ import { computed, ref } from "vue";
 
 import type { HomepageAnime } from "@shared/index";
 
-import CuteLoader from "../common/CuteLoader.vue";
 import AnimeCard from "./AnimeCard.vue";
 
 const props = defineProps<{
@@ -41,12 +40,28 @@ defineExpose({ rootEl });
       海报比 B 站番剧页（实测 177×235）小一档：8.5rem 起，1280 宽的窗口一行 6 张（约 150px），
       收起侧栏 7 张。窄于 640px（手机、窄窗口）降到 6.25rem，再窄也至少两列，不会一张海报占满一屏。紧凑列表 17rem 一栏，同样宽度排三栏。跟着首页整页滚动，不再自带滚动区。
     -->
+    <!--
+      骨架屏（参考 Apple TV / YouTube）：先摆出和真卡片同形的灰块，数据回来直接替换，
+      不会从一个居中的转圈突然跳成满屏海报。
+    -->
     <template v-if="showLoader">
-      <div
-        class="col-span-full grid min-h-[18rem] place-items-center p-6"
-      >
-        <CuteLoader mode="loading" />
+      <div v-for="index in 12" :key="index" class="grid gap-2" aria-hidden="true">
+        <template v-if="layout === 'row'">
+          <div class="flex items-center gap-3 p-1.5">
+            <span class="skeleton h-16 w-12 shrink-0 rounded-md"></span>
+            <span class="grid flex-1 gap-1.5">
+              <span class="skeleton h-3 w-4/5 rounded-full"></span>
+              <span class="skeleton h-2.5 w-2/5 rounded-full"></span>
+            </span>
+          </div>
+        </template>
+        <template v-else>
+          <span class="skeleton aspect-[3/4] rounded-lg"></span>
+          <span class="skeleton h-3 w-4/5 rounded-full"></span>
+          <span class="skeleton h-2.5 w-1/2 rounded-full"></span>
+        </template>
       </div>
+      <span class="sr-only" role="status">正在加载当季番剧…</span>
     </template>
 
     <template v-else-if="showError">
@@ -73,3 +88,21 @@ defineExpose({ rootEl });
     </template>
   </div>
 </template>
+
+<style scoped>
+.skeleton {
+  display: block;
+  background: var(--panel);
+  animation: skeleton-breathe 1.4s ease-in-out infinite;
+}
+@keyframes skeleton-breathe {
+  50% {
+    opacity: 0.55;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .skeleton {
+    animation: none;
+  }
+}
+</style>

@@ -8,7 +8,8 @@ import AppNavIcon from "./components/layout/AppNavIcon.vue";
 import HomeView from "./views/HomeView.vue";
 import { loadDashboard, bootstrap, globalSyncOverlay, isLoading, refreshCurrentView, selectTab, teardown } from "./stores/boot";
 import { isBusy } from "./stores/busy";
-import { onlineDownloadCount, unreadCompletedDownloadCount } from "./stores/downloads";
+import { activePlayback, closePlayback, onlineDownloadCount, unreadCompletedDownloadCount } from "./stores/downloads";
+import { animeDetail, animeDetailError, closeAnimeDetail } from "./stores/discovery";
 import { refreshUpdateStatus, updateAvailable } from "./stores/update";
 import { openExternalLink } from "./lib/actions";
 import { activeTab, TABS, type TabKey } from "./stores/router";
@@ -62,7 +63,47 @@ const downloadClientLabel = computed(() =>
 const menuButton = ref<HTMLButtonElement | null>(null);
 watch(mobileSidebarOpen, async open => { if (!open) { await nextTick(); menuButton.value?.focus(); } });
 watch(sidebarCollapsed, async collapsed => { if (collapsed) { await nextTick(); menuButton.value?.focus(); } });
-function closeDrawer(event: KeyboardEvent) { if (event.key === "Escape") mobileSidebarOpen.value = false; }
+function isTypingTarget(target: EventTarget | null): target is HTMLElement {
+  const el = target as HTMLElement | null;
+  return Boolean(el && (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/u.test(el.tagName)));
+}
+
+/**
+ * 全局快捷键（参考 Linear / YouTube）：
+ * - 「/」聚焦当前页的搜索框；
+ * - Esc 一层层往回退：输入框失焦 → 关侧栏抽屉 → 关播放页 → 关番剧详情。
+ * 对话框开着时一律不管，Esc 由 AppDialog 自己处理；播放器全屏时 Esc 留给退出全屏。
+ */
+function handleGlobalKeydown(event: KeyboardEvent): void {
+  if (event.defaultPrevented || event.isComposing || document.querySelector('[role="dialog"]')) {
+    return;
+  }
+  if (event.key === "Escape") {
+    if (isTypingTarget(event.target)) {
+      event.target.blur();
+    } else if (mobileSidebarOpen.value) {
+      mobileSidebarOpen.value = false;
+    } else if (document.fullscreenElement || document.querySelector(".art-fullscreen-web")) {
+      return;
+    } else if (activePlayback.value) {
+      closePlayback();
+    } else if (animeDetail.value || animeDetailError.value) {
+      closeAnimeDetail();
+    }
+    return;
+  }
+  // 中文输入法下 / 键打出来的是「、」，按物理键位也认
+  if ((event.key === "/" || event.code === "Slash") && !event.metaKey && !event.ctrlKey && !event.altKey && !isTypingTarget(event.target)) {
+    const input = [...document.querySelectorAll<HTMLInputElement>(
+      '.app-content input[type="search"], .app-content input[placeholder*="搜索"], .app-content input[aria-label*="搜索"]'
+    )].find((el) => el.offsetParent !== null);
+    if (input) {
+      event.preventDefault();
+      input.focus();
+      input.select();
+    }
+  }
+}
 
 function handleTabSelection(tab: string): void {
   selectTab(tab as TabKey);
@@ -93,7 +134,7 @@ let updateBadgeTimer: number | null = null;
 onMounted(() => {
   initTheme();
   window.addEventListener("resize", handleWindowResize);
-  window.addEventListener("keydown", closeDrawer);
+  window.addEventListener("keydown", handleGlobalKeydown);
   void bootstrap();
   void refreshUpdateStatus();
   updateBadgeTimer = window.setInterval(() => void refreshUpdateStatus(), UPDATE_BADGE_REFRESH_MS);
@@ -107,7 +148,7 @@ onUnmounted(() => {
   teardown();
   teardownTheme();
   window.removeEventListener("resize", handleWindowResize);
-  window.removeEventListener("keydown", closeDrawer);
+  window.removeEventListener("keydown", handleGlobalKeydown);
 });
 </script>
 
