@@ -326,7 +326,7 @@ function formatDateTime(value: string): string {
   -->
   <section
     class="@container grid gap-2.5"
-    :class="props.flat ? '' : 'px-2 pb-3 @min-[640px]:pl-[4.75rem]'"
+    :class="props.flat ? '' : 'motion-drop px-2 pb-3 @min-[640px]:pl-[4.75rem]'"
   >
     <div class="grid gap-2">
       <!-- 概览条：状态、进度、统计、批量操作全部横排，全宽下不必再竖着堆 -->

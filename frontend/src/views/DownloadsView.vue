@@ -922,7 +922,7 @@ watch(
       播放页参考 B 站番剧播放页：左边大画面，下面是番名、当前集和播放方式；右边一栏选集格子。
       容器窄于 56rem（手机、窄窗口）时选集落到画面下方。
     -->
-    <div v-if="activePlayback" class="@container min-h-0 overflow-auto p-3 sm:p-4">
+    <div v-if="activePlayback" class="motion-rise @container min-h-0 overflow-auto p-3 sm:p-4">
       <!--
         标题放在画面上面（B 站 / YouTube 的做法）：一进来先知道在看哪部第几集，
         以前番名、集数、文件名全堆在画面下面，还隔着一排字幕按钮。
@@ -1007,7 +1007,7 @@ watch(
     </div>
 
     <div v-else class="downloads-layout" :class="{ 'has-side': detailPanelGroup && !narrowDownloads }">
-    <div v-if="!(narrowDownloads && detailPanelGroup)" class="grid min-h-0 grid-rows-[auto_minmax(0,1fr)_auto] overflow-hidden">
+    <div v-if="!(narrowDownloads && detailPanelGroup)" class="motion-rise grid min-h-0 grid-rows-[auto_minmax(0,1fr)_auto] overflow-hidden">
       <!-- 与其他页同一套工具栏：第一行状态筛选 + 右侧总速度，第二行搜索 / 排序 / 批量与主操作 -->
       <div class="page-toolbar">
         <div class="toolbar-row">
@@ -1313,7 +1313,7 @@ watch(
       选中一部番后的分集面板：手机上全屏（带返回），宽屏是右侧栏（像「邮件」「音乐」那样左列表右详情），
       中等宽度没地方放侧栏，就在列表里就地展开。
     -->
-    <aside v-if="detailPanelGroup" class="download-detail" :class="{ 'is-side': !narrowDownloads }">
+    <aside v-if="detailPanelGroup" :key="detailPanelGroup.key" class="download-detail" :class="narrowDownloads ? 'motion-rise' : 'is-side motion-slide'">
       <button
         v-if="narrowDownloads"
         type="button"
