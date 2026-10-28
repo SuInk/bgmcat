@@ -8,6 +8,7 @@ import AppNavIcon from "../components/layout/AppNavIcon.vue";
 import { settingsPageVisibleKey, type SettingsPageKey } from "../components/settings/context";
 import AboutPage from "../components/settings/pages/AboutPage.vue";
 import DataPage from "../components/settings/pages/DataPage.vue";
+import AiPage from "../components/settings/pages/AiPage.vue";
 import CloudPage from "../components/settings/pages/CloudPage.vue";
 import DownloadPage from "../components/settings/pages/DownloadPage.vue";
 import GeneralPage from "../components/settings/pages/GeneralPage.vue";
@@ -57,7 +58,8 @@ const PAGE_GROUPS: Array<{ label: string; pages: SettingsPage[] }> = [
       { key: "download", label: "下载", desc: "下载目录、下载器、Tracker 和在线播放。", icon: "downloads", component: DownloadPage },
       { key: "cloud", label: "云盘归档", desc: "下载完成后自动上传到 Google Drive，校验通过后可清理本地文件。", icon: "cloud-upload", component: CloudPage, single: true },
       { key: "sources", label: "资源站", desc: "种子从哪些站点找，以及蜜柑计划的访问方式。", icon: "subscriptions", component: SourcesPage },
-      { key: "metadata", label: "番剧信息", desc: "番名、评分、简介和封面从哪儿来。", icon: "book", component: MetadataPage, single: true }
+      { key: "metadata", label: "番剧信息", desc: "番名、评分、简介和封面从哪儿来。", icon: "book", component: MetadataPage, single: true },
+      { key: "ai", label: "本地 AI", desc: "用本机的 Ollama 模型帮你挑资源，数据不出这台机器。", icon: "sparkles", component: AiPage, single: true }
     ]
   },
   {
@@ -204,6 +206,7 @@ const IMMEDIATE_KEYS = [
   "launchAtLogin",
   "downloadClient",
   "defaultSaveTo",
+  "localAiEnabled",
   "aria2Enabled",
   "aria2SeedEnabled",
   "cloudArchiveEnabled",
