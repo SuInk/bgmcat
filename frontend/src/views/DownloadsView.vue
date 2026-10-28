@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { computed, ref, watch } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 
-import type { DownloadJob, PlaybackSubtitleTrack } from "@shared/index";
+import type { DownloadJob, ExternalPlayerId, PlaybackSubtitleTrack } from "@shared/index";
 import { sourceTypeLabel, type SourceType } from "@shared/index";
 
 import {
@@ -190,6 +190,47 @@ const playbackEpisodeOptions = computed<PlayerEpisodeOption[]>(() =>
 const playbackEpisodeLabel = computed(
   () => playbackEpisodeOptions.value.find((option) => option.key === playbackEpisodeKey.value)?.label ?? null
 );
+
+/** 画面上方标题下那一行：第几集 · 字幕组 · 清晰度 · 播放方式 */
+const playbackMetaLine = computed(() => {
+  const playback = activePlayback.value;
+  if (!playback) {
+    return "";
+  }
+  const download = downloads.value.find((item) => item.gid === playback.gid);
+  const parts = [playbackEpisodeLabel.value, download ? subgroupLabel(download) : null, download ? resolutionLabel(download) : null];
+  if (playback.deliveryMode === "hls-transcode") {
+    parts.push("本机 ffmpeg 转码");
+  } else if (playback.deliveryMode === "hls-remux") {
+    parts.push("本机 ffmpeg 转封装");
+  }
+  return parts.filter(Boolean).join(" · ");
+});
+
+const externalPlayerMenuRef = ref<HTMLDetailsElement | null>(null);
+const externalPlayerOptions = computed<Array<{ id: ExternalPlayerId; label: string }>>(() => [
+  { id: "system", label: "系统默认" },
+  ...(activePlayback.value?.availablePlayers.filter((item) => item.id !== "system") ?? [])
+]);
+
+/** <details> 菜单点外面不会自己收起，补一个 */
+function closeExternalPlayerMenu(event: PointerEvent): void {
+  const menu = externalPlayerMenuRef.value;
+  if (menu?.open && !menu.contains(event.target as Node)) {
+    menu.open = false;
+  }
+}
+onMounted(() => window.addEventListener("pointerdown", closeExternalPlayerMenu));
+onBeforeUnmount(() => window.removeEventListener("pointerdown", closeExternalPlayerMenu));
+
+function openExternalPlayer(playerId: ExternalPlayerId): void {
+  if (externalPlayerMenuRef.value) {
+    externalPlayerMenuRef.value.open = false;
+  }
+  if (activePlayback.value) {
+    void launchExternalPlayer(activePlayback.value.gid, playerId);
+  }
+}
 
 /** 选集格子里只放集数：「第 04 集」→「4」，没有数字（SP、OVA）就原样显示 */
 function episodeShortLabel(label: string): string {
@@ -791,15 +832,17 @@ function toggleDownloadGroup(key: string): void {
  * 就地展开在窄屏上是缩进套缩进、竖线套竖线，一屏只剩半个面板。
  */
 const narrowDownloads = computed(() => viewportWidth.value <= 640);
-const narrowDetailGroup = computed(() =>
-  narrowDownloads.value && activeDownloadGroupKey.value
+/** 宽屏（内容区放得下列表 + 22rem 侧栏）选中一部番时，分集显示在右侧栏而不是行下展开 */
+const sideDownloads = computed(() => viewportWidth.value >= 1200);
+const detailPanelGroup = computed(() =>
+  (narrowDownloads.value || sideDownloads.value) && activeDownloadGroupKey.value
     ? groupedDownloads.value.find((group) => group.key === activeDownloadGroupKey.value) ?? null
     : null
 );
 
 /** 详情页标题用番名（「FX战士久留美」），番剧信息没回来之前才退回发布名 */
-const narrowDetailAnimeTitle = computed(() => {
-  const group = narrowDetailGroup.value;
+const detailPanelAnimeTitle = computed(() => {
+  const group = detailPanelGroup.value;
   if (!group) {
     return "";
   }
@@ -873,16 +916,46 @@ watch(
 </script>
 
 <template>
-  <section class="grid h-full min-h-0 grid-cols-[minmax(0,1fr)] overflow-hidden rounded-lg border border-[var(--line)] bg-[var(--table-bg)]">
+  <!-- 不再套一层带边框的卡片：首页直接铺在底色上，这页也一样，框里套框只是多一道线 -->
+  <section class="grid h-full min-h-0 grid-cols-[minmax(0,1fr)] overflow-hidden">
     <!--
       播放页参考 B 站番剧播放页：左边大画面，下面是番名、当前集和播放方式；右边一栏选集格子。
       容器窄于 56rem（手机、窄窗口）时选集落到画面下方。
     -->
     <div v-if="activePlayback" class="@container min-h-0 overflow-auto p-3 sm:p-4">
-      <button type="button" class="btn-ghost mb-3 inline-flex items-center gap-1 px-2.5 py-1.5 text-sm font-semibold" @click="closePlayback">
-        <AppNavIcon name="chevron-left" class="size-4" aria-hidden="true" />
-        下载管理
-      </button>
+      <!--
+        标题放在画面上面（B 站 / YouTube 的做法）：一进来先知道在看哪部第几集，
+        以前番名、集数、文件名全堆在画面下面，还隔着一排字幕按钮。
+      -->
+      <header class="mb-3 flex min-w-0 items-center gap-2.5">
+        <button type="button" class="icon-btn shrink-0" aria-label="返回下载管理" title="返回下载管理" @click="closePlayback">
+          <AppNavIcon name="chevron-left" />
+        </button>
+        <div class="min-w-0 flex-1">
+          <h2 class="truncate text-base font-semibold leading-snug text-[var(--ink)]" :title="activePlayback.fileName">
+            {{ playbackGroup?.title ?? activePlayback.fileName }}
+          </h2>
+          <p class="truncate text-xs text-[var(--muted)]">{{ playbackMetaLine }}</p>
+        </div>
+        <!-- 外部播放器是兜底手段，收进一个菜单，不再在画面下面摆一排按钮 -->
+        <details ref="externalPlayerMenuRef" class="external-menu relative shrink-0">
+          <summary class="btn-ghost inline-flex h-8 cursor-pointer list-none items-center gap-1 px-3 text-xs font-semibold">
+            <AppNavIcon name="external" class="size-3.5" aria-hidden="true" />
+            <span class="max-sm:sr-only">外部播放器</span>
+          </summary>
+          <div class="absolute right-0 top-full z-30 mt-1 grid min-w-[9rem] gap-0.5 rounded-lg border border-[var(--line)] bg-[var(--card)] p-1 shadow-[var(--strong-shadow)]">
+            <button
+              v-for="player in externalPlayerOptions"
+              :key="player.id"
+              type="button"
+              class="rounded-md px-2.5 py-1.5 text-left text-xs font-semibold text-[var(--ink)] hover:bg-[var(--tint-2)]"
+              @click="openExternalPlayer(player.id)"
+            >
+              {{ player.label }}
+            </button>
+          </div>
+        </details>
+      </header>
 
       <div class="grid content-start gap-4" :class="{ '@min-[56rem]:grid-cols-[minmax(0,1fr)_18rem]': playbackEpisodeOptions.length > 1 }">
         <div class="grid min-w-0 content-start gap-3">
@@ -898,34 +971,9 @@ watch(
             @ended="playNextEpisode"
           />
           <div v-else class="grid aspect-video place-items-center rounded-xl bg-black px-6 text-center text-sm text-white/75">
-            当前文件不支持内置播放器。常见的 MKV / HEVC / 高码率文件建议用下面的外部播放器打开。
+            当前文件不支持内置播放器。常见的 MKV / HEVC / 高码率文件建议用右上角的外部播放器打开。
           </div>
 
-          <section class="grid gap-1">
-            <h2 class="line-clamp-2 text-base font-semibold leading-snug text-[var(--ink)] sm:text-lg" :title="playbackGroup?.title ?? activePlayback.fileName">{{ playbackGroup?.title ?? activePlayback.fileName }}</h2>
-            <p class="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-[var(--muted)]">
-              <span v-if="playbackEpisodeLabel" class="font-semibold text-[var(--ink-secondary)]">正在播放 {{ playbackEpisodeLabel }}</span>
-              <span v-if="activePlayback.deliveryMode === 'hls-transcode'" class="rounded bg-[var(--panel)] px-1.5 py-px">本机 ffmpeg 转码</span>
-              <span v-else-if="activePlayback.deliveryMode === 'hls-remux'" class="rounded bg-[var(--panel)] px-1.5 py-px">本机 ffmpeg 转封装</span>
-            </p>
-            <p class="truncate text-[11px] text-[var(--muted)]" :title="activePlayback.fileName">{{ activePlayback.fileName }}</p>
-          </section>
-
-          <div class="flex flex-wrap items-center gap-2">
-            <span class="text-xs font-semibold text-[var(--muted)]">用其他播放器打开</span>
-            <button type="button" class="btn-ghost h-8 px-3 text-xs font-semibold" @click="launchExternalPlayer(activePlayback.gid, 'system')">
-              系统默认
-            </button>
-            <button
-              v-for="player in activePlayback.availablePlayers.filter((item) => item.id !== 'system')"
-              :key="player.id"
-              type="button"
-              class="btn-ghost h-8 px-3 text-xs font-semibold"
-              @click="launchExternalPlayer(activePlayback.gid, player.id)"
-            >
-              {{ player.label }}
-            </button>
-          </div>
         </div>
 
         <aside v-if="playbackEpisodeOptions.length > 1" class="grid content-start gap-3 rounded-xl border border-[var(--line)] bg-[var(--card)] p-3">
@@ -958,50 +1006,8 @@ watch(
       </div>
     </div>
 
-    <div v-else-if="narrowDetailGroup" class="grid min-h-0 content-start gap-4 overflow-auto p-3">
-      <button type="button" class="btn-ghost inline-flex w-fit items-center gap-1 px-2.5 py-1.5 text-sm font-semibold" @click="collapseDownloadGroup">
-        <AppNavIcon name="chevron-left" class="size-4" aria-hidden="true" />
-        下载管理
-      </button>
-      <header class="flex min-w-0 items-center gap-3">
-        <div class="download-poster !w-14" :style="coverStyle(primaryDownloadForGroup(narrowDetailGroup).gid)">
-          <img
-            v-if="resolveDownloadArtworkUrl(primaryDownloadForGroup(narrowDetailGroup))"
-            :src="resolveDownloadArtworkUrl(primaryDownloadForGroup(narrowDetailGroup)) ?? ''"
-            alt=""
-            class="absolute inset-0 size-full object-cover"
-          />
-          <div v-else class="absolute inset-0 grid place-items-center text-sm font-semibold text-white/90">{{ coverLabel(narrowDetailGroup.title) }}</div>
-        </div>
-        <div class="min-w-0">
-          <h2 class="line-clamp-2 text-[15px] font-semibold leading-snug text-[var(--ink)]" :title="narrowDetailGroup.title">{{ narrowDetailAnimeTitle }}</h2>
-          <p class="mt-0.5 truncate text-xs text-[var(--muted)]">
-            {{ groupMetaLine(narrowDetailGroup) }}
-          </p>
-        </div>
-      </header>
-      <DownloadVersionPane
-        flat
-        :downloads="narrowDetailGroup.downloads"
-        :episodes="narrowDetailGroup.episodes"
-        :format-bytes="formatBytes"
-        :download-display-title="displayTitle"
-        :progress-percent="progressPercent"
-        :download-raw-error="downloadRawError"
-        :is-download-row-busy="isDownloadRowBusy"
-        :anime-detail="animeDetail"
-        :detail-belongs-to-group="narrowDetailGroup.downloads.some((item) => item.gid === selectedDownloadDetailGid)"
-        :detail-error="animeDetailError"
-        :detail-loading="detailLoading"
-        @conflict="handleDownloadConflict($event.gid, $event.strategy)"
-        @playback="openPlayback"
-        @pause="updateDownloadState('pause', $event)"
-        @resume="updateDownloadState('resume', $event)"
-        @remove="requestDelete"
-      />
-    </div>
-
-    <div v-else class="grid min-h-0 grid-rows-[auto_minmax(0,1fr)_auto] overflow-hidden">
+    <div v-else class="downloads-layout" :class="{ 'has-side': detailPanelGroup && !narrowDownloads }">
+    <div v-if="!(narrowDownloads && detailPanelGroup)" class="grid min-h-0 grid-rows-[auto_minmax(0,1fr)_auto] overflow-hidden">
       <!-- 与其他页同一套工具栏：第一行状态筛选 + 右侧总速度，第二行搜索 / 排序 / 批量与主操作 -->
       <div class="page-toolbar">
         <div class="toolbar-row">
@@ -1080,7 +1086,7 @@ watch(
         断点看的是这一列的实际宽度，不是视口宽度。并排详情栏拆掉之后这一列就是整个内容区，
         宽屏下能排满「番剧 / 状态 / 进度 / 速度 / 操作」五列，番剧列拿走剩下的全部份额。
       -->
-      <div class="@container min-h-0 overflow-auto px-4 pb-2">
+      <div class="@container min-h-0 overflow-auto pb-2">
         <!-- 空态不摆表头：0 条任务时列标题和全选框没有指代对象 -->
         <div
           v-if="!filteredDownloads.length"
@@ -1227,7 +1233,7 @@ watch(
               <AppNavIcon
                 name="chevron-right"
                 class="size-4 shrink-0 text-[var(--muted)] transition-transform duration-200"
-                :class="{ 'rotate-90': activeDownloadGroupKey === group.key && !narrowDownloads }"
+                :class="{ 'rotate-90': activeDownloadGroupKey === group.key && !narrowDownloads && !sideDownloads }"
                 aria-hidden="true"
               />
             </div>
@@ -1235,7 +1241,7 @@ watch(
 
           <!-- 就地展开：分集/版本/日志直接长在这一行下面，拿整行全宽 -->
           <DownloadVersionPane
-            v-if="activeDownloadGroupKey === group.key && !narrowDownloads"
+            v-if="activeDownloadGroupKey === group.key && !narrowDownloads && !sideDownloads"
             :downloads="group.downloads"
             :episodes="group.episodes"
             :format-bytes="formatBytes"
@@ -1301,6 +1307,69 @@ watch(
           />
         </div>
       </div>
+    </div>
+
+    <!--
+      选中一部番后的分集面板：手机上全屏（带返回），宽屏是右侧栏（像「邮件」「音乐」那样左列表右详情），
+      中等宽度没地方放侧栏，就在列表里就地展开。
+    -->
+    <aside v-if="detailPanelGroup" class="download-detail" :class="{ 'is-side': !narrowDownloads }">
+      <button
+        v-if="narrowDownloads"
+        type="button"
+        class="btn-ghost inline-flex w-fit items-center gap-1 px-2.5 py-1.5 text-sm font-semibold"
+        @click="collapseDownloadGroup"
+      >
+        <AppNavIcon name="chevron-left" class="size-4" aria-hidden="true" />
+        下载管理
+      </button>
+      <header class="flex min-w-0 items-center gap-3">
+        <div class="download-poster !w-14" :style="coverStyle(primaryDownloadForGroup(detailPanelGroup).gid)">
+          <img
+            v-if="resolveDownloadArtworkUrl(primaryDownloadForGroup(detailPanelGroup))"
+            :src="resolveDownloadArtworkUrl(primaryDownloadForGroup(detailPanelGroup)) ?? ''"
+            alt=""
+            class="absolute inset-0 size-full object-cover"
+          />
+          <div v-else class="absolute inset-0 grid place-items-center text-sm font-semibold text-white/90">{{ coverLabel(detailPanelGroup.title) }}</div>
+        </div>
+        <div class="min-w-0">
+          <h2 class="line-clamp-2 text-[15px] font-semibold leading-snug text-[var(--ink)]" :title="detailPanelGroup.title">{{ detailPanelAnimeTitle }}</h2>
+          <p class="mt-0.5 truncate text-xs text-[var(--muted)]">
+            {{ groupMetaLine(detailPanelGroup) }}
+          </p>
+        </div>
+        <button
+          v-if="!narrowDownloads"
+          type="button"
+          class="icon-btn ml-auto shrink-0 self-start"
+          aria-label="关闭侧栏"
+          title="关闭侧栏"
+          @click="collapseDownloadGroup"
+        >
+          <AppNavIcon name="close" />
+        </button>
+      </header>
+      <DownloadVersionPane
+        flat
+        :downloads="detailPanelGroup.downloads"
+        :episodes="detailPanelGroup.episodes"
+        :format-bytes="formatBytes"
+        :download-display-title="displayTitle"
+        :progress-percent="progressPercent"
+        :download-raw-error="downloadRawError"
+        :is-download-row-busy="isDownloadRowBusy"
+        :anime-detail="animeDetail"
+        :detail-belongs-to-group="detailPanelGroup.downloads.some((item) => item.gid === selectedDownloadDetailGid)"
+        :detail-error="animeDetailError"
+        :detail-loading="detailLoading"
+        @conflict="handleDownloadConflict($event.gid, $event.strategy)"
+        @playback="openPlayback"
+        @pause="updateDownloadState('pause', $event)"
+        @resume="updateDownloadState('resume', $event)"
+        @remove="requestDelete"
+      />
+    </aside>
     </div>
 
     <AppDialog
@@ -1449,6 +1518,31 @@ watch(
 }
 .download-info {
   flex: 1;
+}
+
+.downloads-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  min-height: 0;
+  overflow: hidden;
+}
+.downloads-layout.has-side {
+  grid-template-columns: minmax(0, 1fr) 22rem;
+  gap: 20px;
+}
+.download-detail {
+  display: grid;
+  align-content: start;
+  gap: 16px;
+  min-height: 0;
+  overflow: auto;
+  padding: 12px;
+}
+/* 右侧栏：一块浅底圆角面板，和左边列表里「选中」那张卡同一个底色，看得出是它的详情 */
+.download-detail.is-side {
+  border-radius: 14px;
+  background: var(--tint-1);
+  padding: 16px;
 }
 @media (max-width: 639px) {
   .download-row {

@@ -48,7 +48,7 @@ const detectedCount = computed(() => agents.value.filter((agent) => agent.detect
 </script>
 
 <template>
-  <section class="page-shell rounded-lg border border-[var(--line)] bg-[var(--table-bg)] shadow-[var(--soft-shadow)]">
+  <section class="page-shell">
     <div class="page-toolbar">
       <div class="toolbar-row flex-wrap">
         <div class="search-field min-w-[16rem]" title="AI 客户端连这个地址调用本应用">

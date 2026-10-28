@@ -85,8 +85,12 @@ async function start() {
   });
   window.webContents.setUserAgent(window.webContents.getUserAgent() + ' AnimeRSSShell/1');
   const session = window.webContents.session;
-  session.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
-  session.setPermissionCheckHandler(() => false);
+  // Deny everything except HTML fullscreen: the player's fullscreen button goes
+  // through requestFullscreen(), which Electron gates behind the 'fullscreen'
+  // permission, so a blanket deny made the button silently do nothing.
+  const allowedPermissions = new Set(['fullscreen']);
+  session.setPermissionRequestHandler((_contents, permission, callback) => callback(allowedPermissions.has(permission)));
+  session.setPermissionCheckHandler((_contents, permission) => allowedPermissions.has(permission));
   session.webRequest.onHeadersReceived({ urls: [`${origin}/*`] }, (details, callback) => {
     callback({ responseHeaders: { ...details.responseHeaders,
       'Content-Security-Policy': ["default-src 'self'; script-src 'self' blob:; worker-src 'self' blob:; style-src 'self' 'unsafe-inline'; img-src 'self' https: http: data: blob:; media-src 'self' blob:; connect-src 'self'; object-src 'none'; frame-src 'none'; base-uri 'self'; form-action 'self'"],

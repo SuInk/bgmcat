@@ -292,7 +292,8 @@
     display: grid;
     min-width: 0;
     gap: 0.5rem;
-    padding: 0.75rem 1rem 0.5rem;
+    /* 页面不再套边框卡片，工具栏和首页一样贴着内容区左右边 */
+    padding: 0 0 0.5rem;
   }
 
   .toolbar-row {

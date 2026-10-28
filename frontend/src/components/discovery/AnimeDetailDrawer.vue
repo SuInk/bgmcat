@@ -98,7 +98,6 @@ function handleSubscribe(payload: {
 <template>
   <section
     class="grid h-full min-h-0 overflow-hidden"
-    :class="props.plain && !detailOpen ? '' : 'rounded-lg border border-[var(--line)] bg-[var(--table-bg)] shadow-[var(--soft-shadow)]'"
   >
     <div v-show="!detailOpen" class="h-full min-h-0 overflow-hidden">
       <slot name="main"></slot>
