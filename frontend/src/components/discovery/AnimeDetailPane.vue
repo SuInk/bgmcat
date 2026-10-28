@@ -386,37 +386,45 @@ watch(
     <template v-if="animeDetail">
       <div class="relative grid h-full min-h-0 overflow-hidden">
         <!-- 刷新中：骨架与真实布局同形，切换时不跳 -->
+        <!-- 刷新中：骨架和真实布局同形（左栏头部卡片，右栏剧集格子 + 资源），数据回来时不跳 -->
         <div v-if="showContentLoading" class="detail-split">
           <div class="detail-side">
-            <section class="grid gap-3 rounded-lg border border-[var(--line)] bg-[var(--card)] p-3">
-              <div class="flex items-start gap-3">
+            <section class="grid gap-2.5 rounded-lg border border-[var(--line)] bg-[var(--card)] p-3">
+              <div class="flex items-center gap-2">
                 <button type="button" class="icon-btn shrink-0" aria-label="返回列表" title="返回列表" @click="emit('close')">
                   <AppNavIcon name="chevron-left" />
                 </button>
+                <div class="h-4 w-3/5 rounded-full bg-[var(--line)]/70 skeleton-pulse"></div>
+              </div>
+              <div class="flex items-start gap-3">
                 <div class="detail-poster shrink-0 skeleton-pulse"></div>
                 <div class="grid flex-1 content-start gap-2 pt-1">
-                  <div class="h-5 w-4/5 rounded-full bg-[var(--line)]/70 skeleton-pulse"></div>
-                  <div class="h-3 w-3/5 rounded-full bg-[var(--line)]/55 skeleton-pulse"></div>
-                  <div class="h-3 w-2/5 rounded-full bg-[var(--line)]/55 skeleton-pulse"></div>
+                  <div class="h-3 w-4/5 rounded-full bg-[var(--line)]/55 skeleton-pulse"></div>
+                  <div class="h-5 w-2/5 rounded-full bg-[var(--line)]/55 skeleton-pulse"></div>
+                  <div class="h-6 w-1/3 rounded-full bg-[var(--line)]/70 skeleton-pulse"></div>
                 </div>
               </div>
-            </section>
-            <section class="grid overflow-hidden rounded-lg border border-[var(--line)] bg-[var(--card)]">
-              <div class="h-10 border-b border-[var(--line)]"></div>
-              <div v-for="index in 8" :key="index" class="grid gap-1.5 border-b border-[var(--line)] px-3 py-2.5 last:border-b-0">
-                <div class="h-3 w-3/5 rounded-full bg-[var(--line)]/70 skeleton-pulse"></div>
-                <div class="h-3 w-1/4 rounded-full bg-[var(--line)]/55 skeleton-pulse"></div>
+              <div class="grid gap-1.5">
+                <div class="h-3 w-full rounded-full bg-[var(--line)]/45 skeleton-pulse"></div>
+                <div class="h-3 w-11/12 rounded-full bg-[var(--line)]/45 skeleton-pulse"></div>
+                <div class="h-3 w-3/4 rounded-full bg-[var(--line)]/45 skeleton-pulse"></div>
+              </div>
+              <div class="grid grid-cols-[5rem_minmax(0,1fr)] gap-2">
+                <div class="h-9 rounded-lg bg-[var(--line)]/55 skeleton-pulse"></div>
+                <div class="h-9 rounded-lg bg-[var(--accent-soft)] skeleton-pulse"></div>
               </div>
             </section>
           </div>
-          <section class="detail-main hidden content-start gap-3 rounded-lg border border-[var(--line)] bg-[var(--card)] p-3 lg:grid">
-            <div class="flex flex-wrap gap-2">
-              <div class="h-7 w-24 rounded-md bg-[var(--accent-soft)] skeleton-pulse"></div>
-              <div class="h-7 w-28 rounded-md bg-[var(--line)]/60 skeleton-pulse"></div>
-              <div class="h-7 w-20 rounded-md bg-[var(--line)]/60 skeleton-pulse"></div>
+          <div class="detail-main">
+            <div class="episode-chips">
+              <div v-for="index in 12" :key="index" class="h-[30px] rounded-[7px] bg-[var(--line)]/45 skeleton-pulse"></div>
             </div>
-            <div v-for="index in 6" :key="index" class="h-14 rounded-md bg-[var(--line)]/45 skeleton-pulse"></div>
-          </section>
+            <section class="grid gap-2 rounded-lg border border-[var(--line)] bg-[var(--card)] p-3">
+              <div class="h-4 w-24 rounded-full bg-[var(--line)]/70 skeleton-pulse"></div>
+              <div class="h-9 rounded-lg bg-[var(--line)]/40 skeleton-pulse"></div>
+              <div v-for="index in 6" :key="index" class="h-12 rounded-md bg-[var(--line)]/45 skeleton-pulse"></div>
+            </section>
+          </div>
         </div>
 
         <div v-else-if="showContentError" class="grid min-h-full content-start gap-3 p-3">
@@ -520,7 +528,7 @@ watch(
                     <p
                       v-if="animeSummary"
                       class="max-w-[72ch] whitespace-pre-line text-xs leading-5 text-[var(--ink-secondary)]"
-                      :class="{ 'line-clamp-2': !infoExpanded }"
+                      :class="{ 'line-clamp-2 lg:line-clamp-6': !infoExpanded }"
                     >{{ animeSummary }}</p>
                     <div v-if="infoExpanded && animeTags.length" class="flex flex-wrap gap-1">
                       <span v-for="tag in animeTags" :key="tag" class="detail-chip">{{ tag }}</span>
@@ -702,7 +710,9 @@ watch(
 
 <style scoped>
 /**
- * 一栏整页滚动：头部、选集、资源依次往下排。
+ * 窄屏一栏整页滚动：头部、选集、资源依次往下排。
+ * 宽屏（≥1024px）分两栏：左栏是封面、评分、简介和收藏/订阅，滚动时钉在顶上；
+ * 右栏是剧集格子和资源列表，资源一长串往下翻时番剧信息一直在旁边。
  */
 .detail-split {
   display: grid;
@@ -721,6 +731,18 @@ watch(
   flex-direction: column;
   gap: 0.75rem;
   min-width: 0;
+}
+
+@media (min-width: 1024px) {
+  .detail-split {
+    grid-template-columns: 19rem minmax(0, 1fr);
+    align-items: start;
+    gap: 1rem;
+  }
+  .detail-side {
+    position: sticky;
+    top: 0;
+  }
 }
 
 .detail-resources {

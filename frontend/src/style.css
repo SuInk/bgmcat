@@ -722,3 +722,47 @@ body {
   -webkit-tap-highlight-color: transparent;
   overscroll-behavior: none;
 }
+
+/*
+ * 进场动画：视图切换（点开详情、打开侧栏、就地展开、进播放页）以前是瞬间替换，
+ * 眼睛跟不上「东西从哪来的」。统一用很短的淡入 + 小位移，不做弹跳，不拖慢操作。
+ */
+@keyframes motion-rise {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+}
+@keyframes motion-slide {
+  from {
+    opacity: 0;
+    transform: translateX(16px);
+  }
+}
+@keyframes motion-drop {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+}
+.motion-rise {
+  animation: motion-rise 220ms cubic-bezier(0.2, 0.8, 0.2, 1) backwards;
+}
+.motion-slide {
+  animation: motion-slide 240ms cubic-bezier(0.2, 0.8, 0.2, 1) backwards;
+}
+.motion-drop {
+  animation: motion-drop 180ms ease-out backwards;
+}
+
+/* 系统里开了「减弱动态效果」：所有动画和过渡都压到几乎为零，状态照样切换 */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  ::before,
+  ::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

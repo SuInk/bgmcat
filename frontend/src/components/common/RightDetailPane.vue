@@ -8,7 +8,7 @@ defineProps<{
 </script>
 
 <template>
-  <aside class="grid h-full min-h-0 overflow-hidden grid-rows-[auto_minmax(0,1fr)_auto] border-t border-[var(--line)] bg-[var(--card)] lg:border-t-0">
+  <aside class="grid h-full min-h-0 overflow-hidden grid-rows-[auto_minmax(0,1fr)_auto]">
     <slot name="header"></slot>
 
     <div v-if="loading" class="grid min-h-0 place-items-center p-8 text-center">

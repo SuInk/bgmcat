@@ -99,13 +99,13 @@ function handleSubscribe(payload: {
   <section
     class="grid h-full min-h-0 overflow-hidden"
   >
-    <div v-show="!detailOpen" class="h-full min-h-0 overflow-hidden">
+    <div v-show="!detailOpen" class="motion-rise h-full min-h-0 overflow-hidden">
       <slot name="main"></slot>
     </div>
 
     <div
       v-if="detailOpen"
-      class="grid h-full min-h-0 overflow-hidden"
+      class="motion-rise grid h-full min-h-0 overflow-hidden"
       :class="animeDetail ? 'grid-rows-[minmax(0,1fr)]' : 'grid-rows-[auto_minmax(0,1fr)]'"
     >
       <!--
