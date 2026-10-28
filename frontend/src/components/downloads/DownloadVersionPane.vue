@@ -150,6 +150,23 @@ watch(
   }
 );
 
+/** 「第 04 集」→「04」放进左边的集号方块；没有数字的（SP、合集）给个短标 */
+function episodeIndex(label: string | null | undefined): string {
+  return label?.match(/\d+(?:\.\d+)?/)?.[0] ?? "SP";
+}
+
+/** 点一集：多个版本先展开挑版本，只有一个版本且能播就直接播 */
+function openEpisode(episode: DownloadEpisodeGroup): void {
+  if (episode.downloads.length > 1) {
+    toggleEpisode(episode.key);
+    return;
+  }
+  const playable = playableForDownloads(episode.downloads);
+  if (playable) {
+    emit("playback", playable);
+  }
+}
+
 function toggleEpisode(key: string): void {
   expandedEpisodeKey.value = expandedEpisodeKey.value === key ? null : key;
 }
@@ -309,11 +326,12 @@ function formatDateTime(value: string): string {
   -->
   <section
     class="@container grid gap-2.5"
-    :class="props.flat ? '' : 'border-b border-[var(--line)] bg-[var(--tint-1)] py-3 pl-3 pr-3 @min-[640px]:pl-[3.25rem]'"
+    :class="props.flat ? '' : 'px-2 pb-3 @min-[640px]:pl-[4.75rem]'"
   >
-    <div class="grid gap-2.5" :class="props.flat ? '' : 'border-l-2 border-[var(--accent-line)] pl-3'">
+    <div class="grid gap-2">
       <!-- 概览条：状态、进度、统计、批量操作全部横排，全宽下不必再竖着堆 -->
-      <div v-if="primaryDownload" class="flex flex-wrap items-center gap-x-3 gap-y-2">
+      <!-- 就地展开时上面那一行已经有状态、进度和大小，这里不再抄一遍；手机全屏详情没有那一行，才要这条概览 -->
+      <div v-if="primaryDownload && props.flat" class="flex flex-wrap items-center gap-x-3 gap-y-2">
         <span class="shrink-0 rounded-md border px-2 py-0.5 text-xs font-semibold" :class="statusPillClass(primaryDownload.status)">
           {{ statusLabel(primaryDownload.status) }}
         </span>
@@ -336,7 +354,6 @@ function formatDateTime(value: string): string {
         </template>
         <span class="shrink-0 text-xs font-semibold text-[var(--muted)]">{{ sourceLabel }}</span>
         <span v-if="detailLoading" class="shrink-0 text-xs font-semibold text-[var(--muted)]">加载详情…</span>
-        <span v-else-if="detailError" class="shrink-0 text-xs font-semibold text-[var(--warn)]">详情缺失</span>
 
         <span class="ml-auto flex shrink-0 flex-wrap gap-1.5">
           <button
@@ -359,7 +376,7 @@ function formatDateTime(value: string): string {
       </div>
 
       <!-- 简介只留一行；要看全番信息走番剧页 -->
-      <p v-if="displaySummary" class="line-clamp-1 text-xs leading-5 text-[var(--muted)]" :title="displaySummary">
+      <p v-if="displaySummary && props.flat" class="line-clamp-1 text-xs leading-5 text-[var(--muted)]" :title="displaySummary">
         {{ displaySummary }}
       </p>
 
@@ -382,17 +399,15 @@ function formatDateTime(value: string): string {
         </button>
       </div>
 
-      <nav class="flex gap-1 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+      <!-- 分集是主角，文件 / 日志 / 记录是排查用的：做成一排安静的文字标签，不和行上的按钮抢 -->
+      <nav class="detail-tabs" aria-label="任务详情">
         <button
           v-for="tab in detailTabs"
           :key="tab.key"
           type="button"
-          class="inline-flex h-8 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md px-3 text-xs font-semibold transition"
-          :class="
-            activeTab === tab.key
-              ? 'bg-[var(--accent)] text-[var(--accent-contrast)]'
-              : 'text-[var(--muted)] hover:bg-[var(--tint-2)] hover:text-[var(--ink)]'
-          "
+          class="detail-tab"
+          :class="{ 'is-active': activeTab === tab.key }"
+          :aria-pressed="activeTab === tab.key"
           @click="activeTab = tab.key"
         >
           <span>{{ tab.label }}</span>
@@ -401,133 +416,78 @@ function formatDateTime(value: string): string {
       </nav>
 
       <template v-if="activeTab === 'episodes'">
-        <div
-          class="hidden grid-cols-[5.5rem_minmax(10rem,1fr)_5rem_4.5rem_minmax(7rem,9rem)_7.5rem_6.75rem] items-center gap-3 border-b border-[var(--line)] px-2 pb-1.5 text-[11px] font-semibold text-[var(--muted)] @min-[820px]:grid"
-        >
-          <span>集数</span>
-          <span>发布名</span>
-          <span>状态</span>
-          <span>版本</span>
-          <span>进度</span>
-          <span class="text-right">大小</span>
-          <span class="text-right">操作</span>
-        </div>
-
+        <!--
+          像视频 App 的「下载」页：左边集号方块，中间「第 N 集」+ 字幕组 · 清晰度 · 大小，
+          右边只放这集现在能做的事。以前宽屏是七列表格，整条发布名和「1 版」「已完成」挤在一行里抓不住重点。
+        -->
         <div v-for="episode in episodes" :key="episode.key" class="grid">
-          <!-- 一集有多个版本时整行可点：窄屏没有「N 版」按钮的位置，得留一条同样的入口 -->
           <div
-            class="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1 rounded-md px-2 py-1.5 transition hover:bg-[var(--tint-2)] @min-[820px]:grid-cols-[5.5rem_minmax(10rem,1fr)_5rem_4.5rem_minmax(7rem,9rem)_7.5rem_6.75rem]"
-            :class="[
-              expandedEpisodeKey === episode.key ? 'bg-[var(--tint-2)]' : '',
-              episode.downloads.length > 1 ? 'cursor-pointer' : ''
-            ]"
-            @click="episode.downloads.length > 1 && toggleEpisode(episode.key)"
+            class="episode-row"
+            :class="{
+              'is-open': expandedEpisodeKey === episode.key,
+              'cursor-pointer': episode.downloads.length > 1 || playableForDownloads(episode.downloads)
+            }"
+            :title="releaseName(episode.downloads)"
+            @click="openEpisode(episode)"
           >
-            <span class="order-1 hidden shrink-0 text-xs font-semibold text-[var(--ink)] @min-[820px]:block">
-              {{ episode.episodeLabel ?? "未知集数" }}
+            <span class="episode-index tabular-nums" :class="{ 'is-done': episodeComplete(episode.downloads) }">
+              {{ episodeIndex(episode.episodeLabel) }}
             </span>
 
-            <!-- 主列：完整发布名，全宽下单行省略，不再压成两行小字 -->
-            <span class="order-2 min-w-0" :title="releaseName(episode.downloads)">
-              <!-- 窄栏：「第 04 集」一行、「字幕组 · 1080P · 大小」一行，不再把整条发布名再抄一遍 -->
-              <span class="grid gap-0.5 @min-[820px]:hidden">
-                <span class="truncate text-[13px] font-semibold text-[var(--ink)]">
-                  <span
-                    v-if="episode.downloads.length > 1"
-                    class="inline-block transition-transform"
-                    :class="expandedEpisodeKey === episode.key ? 'rotate-90' : ''"
-                    aria-hidden="true"
-                  >
-                    ›
-                  </span>
-                  {{ episode.episodeLabel ?? "未知集数" }}<template v-if="episode.downloads.length > 1"> · {{ episode.downloads.length }} 版</template>
+            <span class="grid min-w-0 gap-0.5">
+              <span class="flex min-w-0 items-center gap-1.5 text-[13px] font-semibold text-[var(--ink)]">
+                <span class="truncate">{{ episode.episodeLabel ?? "未知集数" }}</span>
+                <span v-if="episode.downloads.length > 1" class="shrink-0 text-[11px] font-medium text-[var(--muted)]">
+                  {{ episode.downloads.length }} 个版本
+                  <span class="inline-block transition-transform" :class="expandedEpisodeKey === episode.key ? 'rotate-90' : ''" aria-hidden="true">›</span>
                 </span>
-                <span class="truncate text-[11px] text-[var(--muted)]">{{ releaseMeta(episode.downloads) }}</span>
               </span>
-              <span class="hidden truncate text-xs text-[var(--muted)] @min-[820px]:block">{{ releaseName(episode.downloads) }}</span>
-            </span>
-
-            <span
-              class="order-4 hidden w-fit shrink-0 rounded-md border px-2 py-0.5 text-[11px] font-semibold @min-[820px]:order-3 @min-[820px]:block"
-              :class="statusPillClass(primaryForDownloads(episode.downloads)?.status ?? 'waiting')"
-            >
-              {{ statusLabel(primaryForDownloads(episode.downloads)?.status ?? "waiting") }}
-            </span>
-
-            <button
-              v-if="episode.downloads.length > 1"
-              type="button"
-              class="order-5 hidden w-fit items-center gap-1 rounded-md border border-[var(--line)] bg-[var(--card)] px-2 py-0.5 text-[11px] font-semibold text-[var(--ink)] transition hover:border-[var(--accent)] @min-[820px]:order-4 @min-[820px]:inline-flex"
-              :aria-expanded="expandedEpisodeKey === episode.key"
-              :title="expandedEpisodeKey === episode.key ? '收起版本' : '展开全部版本'"
-              @click="toggleEpisode(episode.key)"
-            >
-              <span>{{ episode.downloads.length }} 版</span>
-              <span
-                class="inline-block transition-transform"
-                :class="expandedEpisodeKey === episode.key ? 'rotate-90' : ''"
-                aria-hidden="true"
-              >
-                ›
-              </span>
-            </button>
-            <span v-else class="order-5 hidden text-[11px] text-[var(--muted)] @min-[820px]:order-4 @min-[820px]:block">1 版</span>
-
-            <!-- 窄栏进度条放到按钮那一行下面；下完的集不画满格进度条 -->
-            <span
-              class="order-8 col-span-2 min-w-0 items-center gap-2 @min-[820px]:order-5 @min-[820px]:col-span-1 @min-[820px]:flex"
-              :class="episodeComplete(episode.downloads) ? 'hidden' : 'flex'"
-            >
-              <span class="h-1.5 min-w-0 flex-1 overflow-hidden rounded-full bg-[var(--tint-4)]">
-                <span
-                  class="block h-full rounded-full"
-                  :class="progressBarClass(episode.downloads)"
-                  :style="{ width: `${progressForDownloads(episode.downloads)}%` }"
-                ></span>
-              </span>
-              <span class="w-9 shrink-0 text-right text-[11px] font-semibold tabular-nums text-[var(--muted)]">
-                {{ progressForDownloads(episode.downloads) }}%
+              <span class="truncate text-[11px] text-[var(--muted)]">{{ releaseMeta(episode.downloads) }}</span>
+              <span v-if="!episodeComplete(episode.downloads)" class="mt-1 flex max-w-sm items-center gap-2">
+                <span class="h-1 min-w-0 flex-1 overflow-hidden rounded-full bg-[var(--tint-4)]">
+                  <span
+                    class="block h-full rounded-full"
+                    :class="progressBarClass(episode.downloads)"
+                    :style="{ width: `${progressForDownloads(episode.downloads)}%` }"
+                  ></span>
+                </span>
+                <span class="shrink-0 text-[11px] tabular-nums text-[var(--muted)]">
+                  {{ statusLabel(primaryForDownloads(episode.downloads)?.status ?? "waiting") }} · {{ progressForDownloads(episode.downloads) }}%
+                </span>
               </span>
             </span>
 
-            <span class="order-6 hidden truncate text-right text-[11px] font-semibold tabular-nums text-[var(--muted)] @min-[820px]:block">
-              {{ sizeForDownloads(episode.downloads) }}
-            </span>
-
-            <span class="order-7 flex shrink-0 justify-end gap-1.5" @click.stop>
-              <button
-                type="button"
-                class="icon-btn"
-                :title="`播放 ${episode.episodeLabel ?? '该集'}`"
-                :aria-label="`播放 ${episode.episodeLabel ?? '该集'}`"
-                :disabled="!playableForDownloads(episode.downloads)"
-                @click="playableForDownloads(episode.downloads) && emit('playback', playableForDownloads(episode.downloads)!)"
-              >
-                <AppNavIcon name="play" />
-              </button>
+            <span class="flex shrink-0 items-center gap-1" @click.stop>
               <button
                 v-if="primaryForDownloads(episode.downloads)"
                 type="button"
-                class="icon-btn"
-                :title="canResume(primaryForDownloads(episode.downloads)!) ? '继续' : '暂停'"
-                :aria-label="canResume(primaryForDownloads(episode.downloads)!) ? '继续' : '暂停'"
-                :disabled="
-                  (!canPause(primaryForDownloads(episode.downloads)!) && !canResume(primaryForDownloads(episode.downloads)!)) ||
-                  props.isDownloadRowBusy(primaryForDownloads(episode.downloads)!.gid)
-                "
-                @click="triggerTransfer(primaryForDownloads(episode.downloads)!)"
-              >
-                <AppNavIcon :name="canResume(primaryForDownloads(episode.downloads)!) ? 'play' : 'pause'" />
-              </button>
-              <button
-                v-if="primaryForDownloads(episode.downloads)"
-                type="button"
-                class="icon-btn text-[var(--err)] hover:text-[var(--err)]"
+                class="icon-btn reveal-on-hover text-[var(--err)] hover:text-[var(--err)]"
                 title="删除该集"
                 aria-label="删除该集"
                 @click="emit('remove', primaryForDownloads(episode.downloads)!)"
               >
                 <AppNavIcon name="trash" />
+              </button>
+              <button
+                v-if="primaryForDownloads(episode.downloads) && (canPause(primaryForDownloads(episode.downloads)!) || canResume(primaryForDownloads(episode.downloads)!))"
+                type="button"
+                class="icon-btn"
+                :title="canResume(primaryForDownloads(episode.downloads)!) ? '继续' : '暂停'"
+                :aria-label="canResume(primaryForDownloads(episode.downloads)!) ? '继续' : '暂停'"
+                :disabled="props.isDownloadRowBusy(primaryForDownloads(episode.downloads)!.gid)"
+                @click="triggerTransfer(primaryForDownloads(episode.downloads)!)"
+              >
+                <AppNavIcon :name="canResume(primaryForDownloads(episode.downloads)!) ? 'download' : 'pause'" />
+              </button>
+              <button
+                v-if="playableForDownloads(episode.downloads)"
+                type="button"
+                class="play-btn"
+                :title="`播放 ${episode.episodeLabel ?? '该集'}`"
+                :aria-label="`播放 ${episode.episodeLabel ?? '该集'}`"
+                @click="emit('playback', playableForDownloads(episode.downloads)!)"
+              >
+                <AppNavIcon name="play" class="size-3.5" />
               </button>
             </span>
           </div>
@@ -706,3 +666,67 @@ function formatDateTime(value: string): string {
     </div>
   </section>
 </template>
+
+<style scoped>
+.detail-tabs {
+  display: flex;
+  gap: 18px;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--line);
+  scrollbar-width: none;
+}
+.detail-tabs::-webkit-scrollbar {
+  display: none;
+}
+.detail-tab {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 5px;
+  margin-bottom: -1px;
+  padding: 6px 0 7px;
+  border-bottom: 2px solid transparent;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  transition: color 0.15s, border-color 0.15s;
+}
+.detail-tab:hover {
+  color: var(--ink);
+}
+.detail-tab.is-active {
+  border-color: var(--accent);
+  color: var(--ink);
+}
+
+.episode-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 8px;
+  border-radius: 10px;
+  transition: background 0.15s;
+}
+.episode-row:hover,
+.episode-row.is-open {
+  background: var(--tint-2);
+}
+/* 集号方块：替代视频站分集缩略图的位置，下完的变成主题色 */
+.episode-index {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 9px;
+  background: var(--panel);
+  color: var(--ink-secondary);
+  font-size: 14px;
+  font-weight: 700;
+}
+.episode-index.is-done {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+</style>

@@ -97,6 +97,8 @@ const activeDownloadGroupKey = ref<string | null>(null);
 /** 分组 key 由标题推导，订阅/种子元数据晚到会让它变形；用 gid 做锚点才不会把已展开的行收起来 */
 const activeGroupAnchorGid = ref<string | null>(null);
 const selectedGroupKeys = ref<Set<string>>(new Set());
+/** 多选是低频操作：平时不摆复选框，点工具栏「选择」才出现（iOS 照片 / 文件 App 的做法） */
+const selectMode = ref(false);
 const manualOptionsOpen = ref(false);
 const manualComposerOpen = ref(false);
 
@@ -412,6 +414,7 @@ function togglePagedGroups(selected: boolean): void {
 
 function clearSelectedGroups(): void {
   selectedGroupKeys.value = new Set();
+  selectMode.value = false;
 }
 
 function runBatchTransfer(action: "pause" | "resume"): void {
@@ -610,6 +613,42 @@ function formatDuration(seconds: number | null): string {
     return `${minutes}m ${String(rest).padStart(2, "0")}s`;
   }
   return `${rest}s`;
+}
+
+/** 卡片第二行：单集写「第 04 集」，多集写「12 集」，后面跟字幕组、清晰度、总大小 */
+function groupMetaLine(group: SeriesDownloadGroup): string {
+  const primary = primaryDownloadForGroup(group);
+  const parts = [group.episodes.length === 1 ? currentEpisodeLabel(group) : `${group.episodes.length} 集`];
+  if (group.downloads.length > group.episodes.length) {
+    parts.push(`${group.downloads.length} 个版本`);
+  }
+  for (const part of [subgroupLabel(primary), resolutionLabel(primary)]) {
+    if (part) {
+      parts.push(part);
+    }
+  }
+  const total = groupTotalLength(group);
+  if (total > 0) {
+    parts.push(formatBytes(total));
+  }
+  if (primary.saveTo === "cloud" && !primary.cloudArchive) {
+    parts.push("完成后存到云盘");
+  }
+  return parts.join(" · ");
+}
+
+/** 进度条右边那句：下载中给速度和剩余时间，其他状态给状态名 */
+function groupProgressLine(group: SeriesDownloadGroup): string {
+  const status = groupStatus(group);
+  const progress = `${groupProgress(group)}%`;
+  if (status === "active") {
+    const speed = groupDownloadSpeed(group);
+    const remaining = groupRemainingSeconds(group);
+    return [progress, speed > 0 ? `${formatBytes(speed)}/s` : "连接中", remaining ? `剩余 ${formatDuration(remaining)}` : null]
+      .filter(Boolean)
+      .join(" · ");
+  }
+  return `${statusLabel(status)} · ${progress}`;
 }
 
 function currentEpisodeLabel(group: SeriesDownloadGroup): string {
@@ -925,7 +964,7 @@ watch(
         下载管理
       </button>
       <header class="flex min-w-0 items-center gap-3">
-        <div class="relative size-14 shrink-0 overflow-hidden rounded-lg" :style="coverStyle(primaryDownloadForGroup(narrowDetailGroup).gid)">
+        <div class="download-poster !w-14" :style="coverStyle(primaryDownloadForGroup(narrowDetailGroup).gid)">
           <img
             v-if="resolveDownloadArtworkUrl(primaryDownloadForGroup(narrowDetailGroup))"
             :src="resolveDownloadArtworkUrl(primaryDownloadForGroup(narrowDetailGroup)) ?? ''"
@@ -937,7 +976,7 @@ watch(
         <div class="min-w-0">
           <h2 class="line-clamp-2 text-[15px] font-semibold leading-snug text-[var(--ink)]" :title="narrowDetailGroup.title">{{ narrowDetailAnimeTitle }}</h2>
           <p class="mt-0.5 truncate text-xs text-[var(--muted)]">
-            {{ narrowDetailGroup.episodes.length }} 集 · {{ narrowDetailGroup.downloads.length }} 个版本<template v-if="primaryDownloadForGroup(narrowDetailGroup).saveTo === 'cloud' && !primaryDownloadForGroup(narrowDetailGroup).cloudArchive"> · 完成后存到云盘</template>
+            {{ groupMetaLine(narrowDetailGroup) }}
           </p>
         </div>
       </header>
@@ -990,7 +1029,7 @@ watch(
         <!-- 空列表时主操作交给空态卡片，不在工具栏摆一排永远禁用的按钮 -->
         <div v-if="downloads.length" class="toolbar-row flex-wrap">
           <!-- 手机上搜索、排序、添加挤在一行：一个任务配三行工具栏，比列表本身还高 -->
-          <label class="search-field min-w-0 flex-1 basis-[8rem] sm:min-w-[14rem]">
+          <label class="search-field min-w-0 flex-1 basis-[8rem] sm:min-w-[14rem] sm:max-w-[22rem]">
             <AppNavIcon name="search" aria-hidden="true" />
             <input v-model="searchQuery" type="search" aria-label="搜索下载任务" placeholder="搜索番剧、集数、GID 或字幕组" />
           </label>
@@ -999,17 +1038,18 @@ watch(
             <option value="updated">按更新时间</option>
             <option value="progress">按进度</option>
           </select>
-          <span
-            v-if="detailLoading"
-            class="status-pill status-pill-accent shrink-0"
-          >
-            <span class="size-1.5 animate-pulse rounded-full bg-current"></span>
-            正在查询番剧详情…
-          </span>
           <div class="ml-auto flex flex-wrap items-center justify-end gap-2 max-sm:contents">
             <button
               type="button"
-              class="btn-ghost px-3 py-1.5 text-sm font-semibold max-sm:order-last max-sm:disabled:hidden"
+              class="btn-ghost px-3 py-1.5 text-sm font-semibold max-sm:hidden"
+              :aria-pressed="selectMode"
+              @click="selectMode ? clearSelectedGroups() : (selectMode = true)"
+            >
+              {{ selectMode ? "完成" : "选择" }}
+            </button>
+            <button
+              type="button"
+              class="btn-ghost px-3 py-1.5 text-sm font-semibold max-sm:order-last disabled:hidden"
               :disabled="!downloads.some((download) => download.status === 'paused')"
               @click="resumeAllDownloads"
             >
@@ -1017,7 +1057,7 @@ watch(
             </button>
             <button
               type="button"
-              class="btn-ghost px-3 py-1.5 text-sm font-semibold max-sm:order-last max-sm:disabled:hidden"
+              class="btn-ghost px-3 py-1.5 text-sm font-semibold max-sm:order-last disabled:hidden"
               :disabled="!downloads.some((download) => ['active', 'waiting', 'queued'].includes(download.status))"
               @click="pauseAllDownloads"
             >
@@ -1081,33 +1121,20 @@ watch(
           </div>
         </div>
 
-        <div v-else>
-          <!-- 表头和行的最后一列（操作）必须同宽：以前都写 auto，表头算出 24px、行算出 108px，中间几列整体错位 84px -->
-          <div class="hidden grid-cols-[minmax(0,1fr)_auto] items-center gap-3 border-b border-[var(--line)] px-2 py-2.5 @min-[640px]:grid text-xs font-medium text-[var(--muted)] @min-[640px]:grid-cols-[2rem_minmax(9rem,1fr)_6rem_minmax(7rem,10rem)_6.75rem] @min-[1000px]:grid-cols-[2rem_minmax(14rem,1fr)_6.5rem_minmax(11rem,15rem)_6.5rem_6.75rem]">
-            <label class="hidden size-6 place-items-center @min-[640px]:grid">
-              <input
-                type="checkbox"
-                class="size-4 accent-[var(--accent)]"
-                aria-label="全选本页任务"
-                :checked="allPagedGroupsSelected"
-                @change="togglePagedGroups(($event.target as HTMLInputElement).checked)"
-              />
-            </label>
-            <span>番剧</span>
-            <span class="hidden @min-[640px]:block">状态</span>
-            <span class="hidden @min-[640px]:block">进度</span>
-            <span class="hidden @min-[1000px]:block">速度</span>
-            <span class="text-right">操作</span>
-          </div>
-
-          <div v-for="group in pagedDownloadGroups" :key="group.key">
-          <article
-            class="grid cursor-pointer grid-cols-[minmax(0,1fr)_auto] items-center gap-3 border-b px-2 py-2.5 transition @min-[640px]:grid-cols-[2rem_minmax(9rem,1fr)_6rem_minmax(7rem,10rem)_6.75rem] @min-[1000px]:grid-cols-[2rem_minmax(14rem,1fr)_6.5rem_minmax(11rem,15rem)_6.5rem_6.75rem]"
-            :class="activeDownloadGroupKey === group.key ? 'border-[var(--accent)] bg-[var(--tint-2)]' : 'border-[var(--line)] hover:bg-[var(--tint-1)]'"
-            @click="toggleDownloadGroup(group.key)"
+        <!--
+          参考 Apple TV / Netflix 的「下载」页：不要表头和五列表格，一部番一张卡——
+          竖版封面、番名、「第 N 集 · 字幕组 · 清晰度 · 大小」一行，只有没下完的才出进度条，
+          右边是这部番此刻最该做的事（能看就是实心播放键）。删除这类低频操作悬停才出现。
+        -->
+        <div v-else class="grid gap-1 py-2">
+          <div
+            v-for="group in pagedDownloadGroups"
+            :key="group.key"
+            class="download-card"
+            :class="{ 'is-open': activeDownloadGroupKey === group.key }"
           >
-            <!-- 手机上没地方放多选框：批量操作留给宽屏，窄屏点行展开逐条处理 -->
-            <label class="hidden size-6 place-items-center @min-[640px]:grid" @click.stop>
+          <article class="download-row" @click="selectMode ? setGroupSelected(group.key, !selectedGroupKeys.has(group.key)) : toggleDownloadGroup(group.key)">
+            <label v-if="selectMode" class="grid size-6 shrink-0 place-items-center" @click.stop>
               <input
                 type="checkbox"
                 class="size-4 accent-[var(--accent)]"
@@ -1117,130 +1144,92 @@ watch(
               />
             </label>
 
-            <div class="flex min-w-0 items-center gap-3">
-              <!-- 展开指示：收起时指右、展开时转向下。整行也能点，但键盘语义落在这个真按钮上 -->
-              <button
-                type="button"
-                class="hidden size-5 shrink-0 place-items-center rounded text-sm leading-none transition-transform duration-200 @min-[640px]:grid"
-                :class="activeDownloadGroupKey === group.key ? 'rotate-90 text-[var(--accent)]' : 'text-[var(--muted)]'"
-                :aria-expanded="activeDownloadGroupKey === group.key"
-                :aria-label="`${activeDownloadGroupKey === group.key ? '收起' : '展开'} ${group.title} 的分集`"
-                @click.stop="toggleDownloadGroup(group.key)"
-              >
-                ›
-              </button>
-              <div class="relative size-10 shrink-0 overflow-hidden rounded-md @min-[640px]:size-12" :style="coverStyle(primaryDownloadForGroup(group).gid)">
-                <img
-                  v-if="resolveDownloadArtworkUrl(primaryDownloadForGroup(group))"
-                  :src="resolveDownloadArtworkUrl(primaryDownloadForGroup(group)) ?? ''"
-                  :alt="group.title"
-                  class="absolute inset-0 size-full object-cover"
-                  loading="lazy"
-                />
-                <div v-else class="absolute inset-0 grid place-items-center px-1 text-center">
-                  <span class="text-sm font-semibold text-white/90">{{ coverLabel(group.title) }}</span>
-                </div>
-              </div>
-              <div class="min-w-0 flex-1">
-                <strong class="block truncate text-sm font-semibold text-[var(--ink)]" :title="group.title">{{ group.title }}</strong>
-                <p class="mt-0.5 truncate text-xs text-[var(--muted)]">
-                  {{ group.episodes.length }} 集 · {{ group.downloads.length }} 个版本 · {{ currentEpisodeLabel(group) }}<template v-if="resolutionLabel(primaryDownloadForGroup(group))"> · {{ resolutionLabel(primaryDownloadForGroup(group)) }}</template><template v-if="subgroupLabel(primaryDownloadForGroup(group))"> · {{ subgroupLabel(primaryDownloadForGroup(group)) }}</template><template v-if="primaryDownloadForGroup(group).saveTo === 'cloud' && !primaryDownloadForGroup(group).cloudArchive"> · 完成后存到云盘</template>
-                </p>
-                <p
-                  v-if="downloadRawError(primaryDownloadForGroup(group))"
-                  class="mt-0.5 truncate text-xs text-[var(--err)]"
-                  :title="downloadRawError(primaryDownloadForGroup(group)) ?? undefined"
-                >
-                  {{ downloadRawError(primaryDownloadForGroup(group)) }}
-                </p>
-                <p v-if="primaryDownloadForGroup(group).cloudArchive" class="mt-0.5 text-xs text-[var(--muted)]"
-                  :title="primaryDownloadForGroup(group).cloudArchive?.error ?? undefined">
-                  {{ cloudArchiveLabel(primaryDownloadForGroup(group)) }}
-                  <span v-if="primaryDownloadForGroup(group).cloudArchive?.error" class="text-[var(--err)]"> · {{ primaryDownloadForGroup(group).cloudArchive?.error }}</span>
-                </p>
-                <!-- 窄屏内联进度 -->
-                <div class="mt-1.5 flex items-center gap-2 @min-[640px]:hidden">
-                  <div class="h-1.5 flex-1 overflow-hidden rounded-full bg-[var(--tint-4)]">
-                    <div
-                      class="h-full rounded-full transition-[width] duration-300"
-                      :class="groupStatus(group) === 'complete' ? 'bg-[var(--ok)]' : 'bg-[var(--accent-vivid)]'"
-                      :style="{ width: `${groupProgress(group)}%` }"
-                    ></div>
-                  </div>
-                  <span class="shrink-0 text-xs text-[var(--muted)]">{{ groupProgress(group) }}%</span>
-                </div>
+            <div class="download-poster" :style="coverStyle(primaryDownloadForGroup(group).gid)">
+              <img
+                v-if="resolveDownloadArtworkUrl(primaryDownloadForGroup(group))"
+                :src="resolveDownloadArtworkUrl(primaryDownloadForGroup(group)) ?? ''"
+                :alt="group.title"
+                class="absolute inset-0 size-full object-cover"
+                loading="lazy"
+              />
+              <div v-else class="absolute inset-0 grid place-items-center px-1 text-center">
+                <span class="text-xs font-semibold text-white/90">{{ coverLabel(group.title) }}</span>
               </div>
             </div>
 
-            <div class="hidden min-w-0 gap-1 @min-[640px]:grid">
-              <span class="w-fit rounded-md border px-2 py-0.5 text-xs font-medium" :class="statusPillClass(groupStatus(group))">
-                {{ statusLabel(groupStatus(group)) }}
-              </span>
-              <!-- 速度在宽屏有独立一列，这里只在中等宽度补一句，别两处重复 -->
-              <span v-if="groupDownloadSpeed(group) > 0" class="truncate text-xs tabular-nums text-[var(--muted)] @min-[1000px]:hidden">
-                ↓ {{ formatBytes(groupDownloadSpeed(group)) }}/s
-              </span>
-              <span v-else-if="groupRemainingSeconds(group)" class="truncate text-xs text-[var(--muted)] @min-[1000px]:hidden">
-                剩余 {{ formatDuration(groupRemainingSeconds(group)) }}
-              </span>
-            </div>
-
-            <!-- 宽屏下进度条拿到 12–18rem，数字和进度条并排而不是叠成两行 -->
-            <div class="hidden items-center gap-2.5 @min-[640px]:flex">
-              <span class="h-1.5 min-w-0 flex-1 overflow-hidden rounded-full bg-[var(--tint-4)]">
-                <span
-                  class="block h-full rounded-full transition-[width] duration-300"
-                  :class="groupStatus(group) === 'complete' ? 'bg-[var(--ok)]' : 'bg-[var(--accent-vivid)]'"
-                  :style="{ width: `${groupProgress(group)}%` }"
-                ></span>
-              </span>
-              <span class="shrink-0 text-xs font-medium tabular-nums text-[var(--ink)] @min-[1000px]:hidden">{{ groupProgress(group) }}%</span>
-              <span class="hidden shrink-0 text-right text-xs tabular-nums text-[var(--muted)] @min-[1000px]:block">
-                {{ formatBytes(groupCompletedLength(group)) }} / {{ formatBytes(groupTotalLength(group)) }}
-              </span>
-            </div>
-
-            <div class="hidden min-w-0 @min-[1000px]:block">
-              <span v-if="groupDownloadSpeed(group) > 0" class="block truncate text-xs tabular-nums text-[var(--ink)]">
-                ↓ {{ formatBytes(groupDownloadSpeed(group)) }}/s
-              </span>
-              <span v-else-if="groupRemainingSeconds(group)" class="block truncate text-xs text-[var(--muted)]">
-                剩余 {{ formatDuration(groupRemainingSeconds(group)) }}
-              </span>
-              <span v-else class="block text-xs text-[var(--muted)]">—</span>
-            </div>
-
-            <div class="flex justify-end gap-1.5" @click.stop>
-              <!-- 播放键指向最新一个能播的集，不再跟着「正在下载的代表任务」一起变灰 -->
-              <button
-                type="button"
-                class="icon-btn"
-                :title="playableEpisodeLabelForGroup(group) ? `播放 ${playableEpisodeLabelForGroup(group)}` : '暂无可播放的分集'"
-                :aria-label="playableEpisodeLabelForGroup(group) ? `播放 ${playableEpisodeLabelForGroup(group)}` : '暂无可播放的分集'"
-                :disabled="!playableDownloadForGroup(group) || isDownloadRowBusy(playableDownloadForGroup(group)!.gid)"
-                @click="playableDownloadForGroup(group) && openPlayback(playableDownloadForGroup(group)!)"
+            <div class="download-info grid min-w-0 gap-1">
+              <strong class="truncate text-[15px] font-semibold leading-snug text-[var(--ink)]" :title="group.title">{{ group.title }}</strong>
+              <p class="flex min-w-0 items-center gap-1.5 text-xs text-[var(--muted)]">
+                <span v-if="groupStatus(group) === 'complete'" class="inline-flex shrink-0 items-center gap-0.5 font-semibold text-[var(--ok)]">
+                  <AppNavIcon name="check" class="size-3.5" aria-hidden="true" />已下载
+                </span>
+                <span class="truncate">{{ groupMetaLine(group) }}</span>
+              </p>
+              <div v-if="groupStatus(group) !== 'complete'" class="flex max-w-md items-center gap-2.5">
+                <span class="h-1 min-w-0 flex-1 overflow-hidden rounded-full bg-[var(--tint-4)]">
+                  <span
+                    class="block h-full rounded-full transition-[width] duration-300"
+                    :class="groupStatus(group) === 'error' ? 'bg-[var(--err)]' : groupStatus(group) === 'paused' ? 'bg-[var(--muted)]' : 'bg-[var(--accent-vivid)]'"
+                    :style="{ width: `${groupProgress(group)}%` }"
+                  ></span>
+                </span>
+                <span class="shrink-0 text-xs tabular-nums" :class="groupStatus(group) === 'error' ? 'text-[var(--err)]' : 'text-[var(--muted)]'">
+                  {{ groupProgressLine(group) }}
+                </span>
+              </div>
+              <p
+                v-if="downloadRawError(primaryDownloadForGroup(group))"
+                class="truncate text-xs text-[var(--err)]"
+                :title="downloadRawError(primaryDownloadForGroup(group)) ?? undefined"
               >
-                <AppNavIcon name="play" />
-              </button>
+                {{ downloadRawError(primaryDownloadForGroup(group)) }}
+              </p>
+              <p v-if="primaryDownloadForGroup(group).cloudArchive" class="truncate text-xs text-[var(--muted)]"
+                :title="primaryDownloadForGroup(group).cloudArchive?.error ?? undefined">
+                {{ cloudArchiveLabel(primaryDownloadForGroup(group)) }}
+                <span v-if="primaryDownloadForGroup(group).cloudArchive?.error" class="text-[var(--err)]"> · {{ primaryDownloadForGroup(group).cloudArchive?.error }}</span>
+              </p>
+            </div>
+
+            <div v-if="!selectMode" class="flex shrink-0 items-center gap-1.5" @click.stop>
               <button
                 type="button"
-                class="icon-btn"
-                :title="canResumeDownload(primaryDownloadForGroup(group)) ? '继续' : '暂停'"
-                :aria-label="canResumeDownload(primaryDownloadForGroup(group)) ? '继续' : '暂停'"
-                :disabled="(!canPauseDownload(primaryDownloadForGroup(group)) && !canResumeDownload(primaryDownloadForGroup(group))) || isDownloadRowBusy(primaryDownloadForGroup(group).gid)"
-                @click="updateDownloadState(canResumeDownload(primaryDownloadForGroup(group)) ? 'resume' : 'pause', primaryDownloadForGroup(group).gid)"
-              >
-                <AppNavIcon :name="canResumeDownload(primaryDownloadForGroup(group)) ? 'play' : 'pause'" />
-              </button>
-              <button
-                type="button"
-                class="icon-btn hidden text-[var(--err)] hover:text-[var(--err)] @min-[640px]:inline-grid"
+                class="icon-btn reveal-on-hover text-[var(--err)] hover:text-[var(--err)] max-sm:hidden"
                 title="删除"
                 aria-label="删除"
                 @click="requestDelete(primaryDownloadForGroup(group))"
               >
                 <AppNavIcon name="trash" />
               </button>
+              <!-- 暂停 / 继续只在能用时出现，不再摆一个永远灰着的按钮 -->
+              <button
+                v-if="canPauseDownload(primaryDownloadForGroup(group)) || canResumeDownload(primaryDownloadForGroup(group))"
+                type="button"
+                class="icon-btn"
+                :title="canResumeDownload(primaryDownloadForGroup(group)) ? '继续下载' : '暂停'"
+                :aria-label="canResumeDownload(primaryDownloadForGroup(group)) ? '继续下载' : '暂停'"
+                :disabled="isDownloadRowBusy(primaryDownloadForGroup(group).gid)"
+                @click="updateDownloadState(canResumeDownload(primaryDownloadForGroup(group)) ? 'resume' : 'pause', primaryDownloadForGroup(group).gid)"
+              >
+                <AppNavIcon :name="canResumeDownload(primaryDownloadForGroup(group)) ? 'download' : 'pause'" />
+              </button>
+              <button
+                v-if="playableDownloadForGroup(group)"
+                type="button"
+                class="play-btn"
+                :title="`播放 ${playableEpisodeLabelForGroup(group) ?? ''}`"
+                :aria-label="`播放 ${playableEpisodeLabelForGroup(group) ?? ''}`"
+                :disabled="isDownloadRowBusy(playableDownloadForGroup(group)!.gid)"
+                @click="openPlayback(playableDownloadForGroup(group)!)"
+              >
+                <AppNavIcon name="play" class="size-3.5" />
+              </button>
+              <AppNavIcon
+                name="chevron-right"
+                class="size-4 shrink-0 text-[var(--muted)] transition-transform duration-200"
+                :class="{ 'rotate-90': activeDownloadGroupKey === group.key && !narrowDownloads }"
+                aria-hidden="true"
+              />
             </div>
           </article>
 
@@ -1273,11 +1262,14 @@ watch(
         留着就是一条空边框（分页器自己在单页时也不渲染）。
       -->
       <div
-        v-if="filteredDownloads.length && (selectedGroupKeys.size > 0 || downloadSeriesTotalPages > 1)"
+        v-if="filteredDownloads.length && (selectMode || downloadSeriesTotalPages > 1)"
         class="flex flex-wrap items-center gap-2 border-t border-[var(--line)] px-4 py-2"
       >
-        <template v-if="selectedGroupKeys.size > 0">
+        <template v-if="selectMode">
           <span class="text-sm font-medium text-[var(--ink)]">已选 {{ selectedGroupKeys.size }} 项</span>
+          <button type="button" class="btn-ghost h-8 px-3 text-sm" @click="togglePagedGroups(!allPagedGroupsSelected)">
+            {{ allPagedGroupsSelected ? "取消全选" : "全选本页" }}
+          </button>
           <button type="button" class="btn-ghost h-8 px-3 text-sm" :disabled="!selectedActionableDownloads.length" @click="runBatchTransfer('resume')">
             开始
           </button>
@@ -1287,16 +1279,14 @@ watch(
           <button
             type="button"
             class="h-8 rounded-md border border-[var(--err-soft)] bg-[var(--err-soft)] px-3 text-sm font-medium text-[var(--err)] transition hover:border-[var(--err)]"
+            :disabled="!selectedGroupKeys.size"
             @click="requestBatchDelete"
           >
             删除
           </button>
-          <button type="button" class="btn-ghost h-8 px-3 text-sm text-[var(--muted)]" @click="clearSelectedGroups">
-            取消选择
-          </button>
         </template>
         <!-- 没选中任务时分页器居中；选中后左边是批量操作，分页器靠右 -->
-        <div :class="selectedGroupKeys.size > 0 ? 'ml-auto' : 'mx-auto'">
+        <div :class="selectMode ? 'ml-auto' : 'mx-auto'">
           <PagerBar
             plain
             class="!px-0"
@@ -1429,3 +1419,44 @@ watch(
     </AppDialog>
   </section>
 </template>
+
+<style scoped>
+/* 一部番一张卡：平时无边框，悬停 / 展开时浮出浅底，和视频 App 下载页一样轻 */
+.download-card {
+  border-radius: 14px;
+  transition: background 0.15s;
+}
+.download-card:hover,
+.download-card.is-open {
+  background: var(--tint-1);
+}
+.download-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 10px;
+  cursor: pointer;
+}
+/* 竖版海报而不是方形缩略图：番剧封面本来就是 2:3，裁成方的只剩半张脸 */
+.download-poster {
+  position: relative;
+  flex-shrink: 0;
+  width: 3.25rem;
+  aspect-ratio: 2 / 3;
+  overflow: hidden;
+  border-radius: 8px;
+  box-shadow: 0 0 0 1px var(--line);
+}
+.download-info {
+  flex: 1;
+}
+@media (max-width: 639px) {
+  .download-row {
+    gap: 12px;
+    padding: 8px 6px;
+  }
+  .download-poster {
+    width: 2.75rem;
+  }
+}
+</style>

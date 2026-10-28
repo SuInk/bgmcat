@@ -7,7 +7,9 @@
 import { computed } from "vue";
 import type { Component } from "vue";
 import {
+  ArrowDownToLine,
   BookOpen,
+  Check,
   ChevronLeft,
   ChevronRight,
   Copy,
@@ -79,6 +81,8 @@ const ICONS: Record<string, Component> = {
   "chevron-left": ChevronLeft,
   "chevron-right": ChevronRight,
   plus: Plus,
+  download: ArrowDownToLine,
+  check: Check,
   search: Search,
   sparkles: Sparkles,
   refresh: RefreshCw,

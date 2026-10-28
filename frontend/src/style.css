@@ -205,6 +205,44 @@
     height: 1rem;
   }
 
+  /* 列表里「能看了」的主操作：实心圆形播放键，和视频 App 下载页一样一眼找到 */
+  .play-btn {
+    display: inline-grid;
+    place-items: center;
+    width: 2rem;
+    height: 2rem;
+    border-radius: 999px;
+    background: var(--accent);
+    color: var(--accent-contrast);
+    transition: filter 150ms ease, transform 150ms ease;
+  }
+
+  .play-btn:hover {
+    filter: brightness(1.08);
+  }
+
+  .play-btn:active {
+    transform: scale(0.94);
+  }
+
+  .play-btn > svg {
+    margin-left: 2px;
+    fill: currentColor;
+  }
+
+  /* 删除这类低频操作：鼠标移到行上才出现；触屏没有悬停，始终显示 */
+  @media (hover: hover) {
+    .reveal-on-hover {
+      opacity: 0;
+    }
+
+    :hover > * > .reveal-on-hover,
+    :hover > .reveal-on-hover,
+    .reveal-on-hover:focus-visible {
+      opacity: 1;
+    }
+  }
+
   .chip {
     display: inline-flex;
     align-items: center;
