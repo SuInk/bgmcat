@@ -1,4 +1,10 @@
 <script setup lang="ts">
+/**
+ * 分页器。只有一页时整条不出——「上一页 1 下一页」三个按钮里两个是灰的，纯占地方。
+ * 样式跟分段控件一套：无边框的浅底胶囊，当前页用主题色。
+ */
+import AppNavIcon from "../layout/AppNavIcon.vue";
+
 const props = withDefaults(
   defineProps<{
     currentPage: number;
@@ -27,62 +33,104 @@ const emit = defineEmits<{
 </script>
 
 <template>
-  <div
+  <nav
+    v-if="props.totalPages > 1"
     class="z-10 flex shrink-0 flex-wrap items-center justify-center gap-x-4 gap-y-2 px-4 py-2 text-[13px] text-[var(--muted)]"
     :class="props.plain ? '' : 'border-t border-[var(--line)] bg-[var(--table-panel)]'"
+    aria-label="分页"
   >
-    <div class="flex items-center justify-center gap-2">
-      <span class="text-xs font-medium text-[var(--muted)]">{{ props.rowLabel }}</span>
+    <label class="flex items-center gap-2">
+      <span class="text-xs font-medium">{{ props.rowLabel }}</span>
       <select
         v-if="!props.readonlyCount && props.rowCountOptions.length"
         :value="props.rowCount"
-        class="min-w-16 rounded-lg border border-[var(--line)] bg-[var(--input-bg)] px-2.5 py-1 text-[13px] font-semibold text-[var(--ink)] outline-none transition focus:border-[var(--accent)]"
+        class="pager-select"
+        :aria-label="props.rowLabel"
         @change="emit('update:rowCount', Number(($event.target as HTMLSelectElement).value))"
       >
         <option v-for="size in props.rowCountOptions" :key="size" :value="size">{{ size }}</option>
       </select>
-      <div
-        v-else
-        class="min-w-12 rounded-lg border border-[var(--line)] bg-[var(--card)] px-2.5 py-1 text-center text-[13px] font-semibold text-[var(--ink)]"
-      >
-        {{ props.rowCount }}
-      </div>
-    </div>
+      <span v-else class="pager-item pager-static">{{ props.rowCount }}</span>
+    </label>
 
-    <div class="flex flex-wrap items-center justify-center gap-2">
+    <div class="flex flex-wrap items-center justify-center gap-1">
       <button
-        class="rounded-lg border border-[var(--line)] bg-[var(--card)] px-3 py-1 text-[13px] font-semibold text-[var(--ink)] transition hover:border-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-40"
+        type="button"
+        class="pager-item"
+        aria-label="上一页"
+        title="上一页"
         :disabled="props.currentPage <= 1"
         @click="emit('update:page', props.currentPage - 1)"
       >
-        上一页
+        <AppNavIcon name="chevron-left" class="size-4" aria-hidden="true" />
       </button>
-
-      <div class="flex flex-wrap items-center justify-center gap-1.5">
-        <template v-for="item in props.paginationItems" :key="`${item}-${props.currentPage}`">
-          <span v-if="item === 'ellipsis'" class="px-1 text-xs text-[var(--muted)]">...</span>
-          <button
-            v-else
-            class="min-w-8 rounded-lg border px-2.5 py-1 text-[13px] font-semibold transition"
-            :class="
-              props.currentPage === item
-                ? 'border-[var(--accent)] bg-[var(--accent)] text-[var(--accent-contrast)] shadow-[var(--soft-shadow)]'
-                : 'border-[var(--line)] bg-[var(--card)] text-[var(--ink)] hover:border-[var(--accent)]'
-            "
-            @click="emit('update:page', item)"
-          >
-            {{ item }}
-          </button>
-        </template>
-      </div>
-
+      <template v-for="item in props.paginationItems" :key="`${item}-${props.currentPage}`">
+        <span v-if="item === 'ellipsis'" class="px-1 text-xs">…</span>
+        <button
+          v-else
+          type="button"
+          class="pager-item tabular-nums"
+          :class="{ 'is-active': props.currentPage === item }"
+          :aria-current="props.currentPage === item ? 'page' : undefined"
+          @click="emit('update:page', item)"
+        >
+          {{ item }}
+        </button>
+      </template>
       <button
-        class="rounded-lg border border-[var(--line)] bg-[var(--card)] px-3 py-1 text-[13px] font-semibold text-[var(--ink)] transition hover:border-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-40"
+        type="button"
+        class="pager-item"
+        aria-label="下一页"
+        title="下一页"
         :disabled="props.currentPage >= props.totalPages"
         @click="emit('update:page', props.currentPage + 1)"
       >
-        下一页
+        <AppNavIcon name="chevron-right" class="size-4" aria-hidden="true" />
       </button>
     </div>
-  </div>
+  </nav>
 </template>
+
+<style scoped>
+.pager-item {
+  display: inline-grid;
+  place-items: center;
+  min-width: 32px;
+  height: 32px;
+  padding: 0 8px;
+  border-radius: 9px;
+  background: var(--panel);
+  color: var(--ink-secondary);
+  font-size: 13px;
+  font-weight: 600;
+  transition: background 0.15s, color 0.15s;
+}
+.pager-item:hover:not(:disabled):not(.is-active) {
+  color: var(--ink);
+}
+.pager-item.is-active {
+  background: var(--accent);
+  color: var(--accent-contrast);
+}
+.pager-item:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+.pager-static {
+  cursor: default;
+}
+.pager-select {
+  height: 32px;
+  padding: 0 26px 0 10px;
+  border: 0;
+  border-radius: 9px;
+  background: var(--panel);
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 600;
+  outline: none;
+}
+.pager-select:focus-visible {
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-vivid) 30%, transparent);
+}
+</style>
