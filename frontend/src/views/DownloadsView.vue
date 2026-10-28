@@ -32,6 +32,7 @@ import {
   activePlayback,
   closePlayback,
   displayTitle,
+  shortAnimeTitle,
   downloadRawError,
   downloads,
   handleDownloadConflict,
@@ -289,7 +290,7 @@ const groupedDownloads = computed<SeriesDownloadGroup[]>(() => {
 
     let seriesGroup = seriesGroups.get(seriesKey);
     if (!seriesGroup) {
-      seriesGroup = { key: seriesKey, title: series || title, downloads: [], episodes: [] };
+      seriesGroup = { key: seriesKey, title: series || shortAnimeTitle(download), downloads: [], episodes: [] };
       seriesGroups.set(seriesKey, seriesGroup);
     }
 
@@ -982,17 +983,18 @@ watch(
           <!-- 速度每 3 秒变一次；给数字固定最小宽度，不然会推着左边的 chip 来回跳 -->
           <span v-if="downloads.length" class="toolbar-meta flex items-center gap-3 tabular-nums">
             <span class="inline-block min-w-[4.5rem] text-right text-[var(--ink)]">↓ {{ formatBytes(totalDownloadSpeed) }}/s</span>
-            <span class="inline-block min-w-[4.5rem] text-right">↑ {{ formatBytes(totalUploadSpeed) }}/s</span>
+            <span class="inline-block min-w-[4.5rem] text-right max-sm:hidden">↑ {{ formatBytes(totalUploadSpeed) }}/s</span>
           </span>
         </div>
 
         <!-- 空列表时主操作交给空态卡片，不在工具栏摆一排永远禁用的按钮 -->
         <div v-if="downloads.length" class="toolbar-row flex-wrap">
-          <label class="search-field w-full sm:w-auto sm:min-w-[14rem]">
+          <!-- 手机上搜索、排序、添加挤在一行：一个任务配三行工具栏，比列表本身还高 -->
+          <label class="search-field min-w-0 flex-1 basis-[8rem] sm:min-w-[14rem]">
             <AppNavIcon name="search" aria-hidden="true" />
             <input v-model="searchQuery" type="search" aria-label="搜索下载任务" placeholder="搜索番剧、集数、GID 或字幕组" />
           </label>
-          <select v-model="sortMode" class="input-base h-[2.125rem] shrink-0 px-2.5 text-sm font-semibold" aria-label="排序方式">
+          <select v-model="sortMode" class="input-base h-[2.125rem] shrink-0 px-2.5 text-sm font-semibold max-sm:w-[5.75rem]" aria-label="排序方式">
             <option value="status">按状态</option>
             <option value="updated">按更新时间</option>
             <option value="progress">按进度</option>
@@ -1004,10 +1006,10 @@ watch(
             <span class="size-1.5 animate-pulse rounded-full bg-current"></span>
             正在查询番剧详情…
           </span>
-          <div class="ml-auto flex flex-wrap items-center justify-end gap-2">
+          <div class="ml-auto flex flex-wrap items-center justify-end gap-2 max-sm:contents">
             <button
               type="button"
-              class="btn-ghost px-3 py-1.5 text-sm font-semibold"
+              class="btn-ghost px-3 py-1.5 text-sm font-semibold max-sm:order-last max-sm:disabled:hidden"
               :disabled="!downloads.some((download) => download.status === 'paused')"
               @click="resumeAllDownloads"
             >
@@ -1015,14 +1017,20 @@ watch(
             </button>
             <button
               type="button"
-              class="btn-ghost px-3 py-1.5 text-sm font-semibold"
+              class="btn-ghost px-3 py-1.5 text-sm font-semibold max-sm:order-last max-sm:disabled:hidden"
               :disabled="!downloads.some((download) => ['active', 'waiting', 'queued'].includes(download.status))"
               @click="pauseAllDownloads"
             >
               全部暂停
             </button>
-            <button type="button" class="btn-primary px-3 py-1.5 text-sm font-semibold" @click="manualComposerOpen = true">
-              添加任务
+            <button
+              type="button"
+              class="btn-primary inline-flex shrink-0 items-center gap-1 px-3 py-1.5 text-sm font-semibold max-sm:px-2.5"
+              aria-label="添加任务"
+              @click="manualComposerOpen = true"
+            >
+              <AppNavIcon name="plus" class="size-4 sm:hidden" aria-hidden="true" />
+              <span class="max-sm:sr-only">添加任务</span>
             </button>
           </div>
         </div>
