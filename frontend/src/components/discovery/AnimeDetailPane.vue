@@ -422,12 +422,12 @@ watch(
                   aria-hidden="true"
                 ></div>
 
-                <div class="relative grid gap-3 p-3 sm:p-4">
+                <div class="relative grid gap-2.5 p-3">
                   <div class="flex items-start gap-2">
                     <button type="button" class="icon-btn shrink-0" aria-label="返回列表" title="返回列表" @click="emit('close')">
                       <AppNavIcon name="chevron-left" />
                     </button>
-                    <h2 class="line-clamp-2 min-w-0 flex-1 pt-1 text-[17px] font-bold leading-snug text-[var(--ink)]" :title="animeDetail.anime.title">
+                    <h2 class="line-clamp-2 min-w-0 flex-1 pt-1 text-base font-bold leading-snug text-[var(--ink)]" :title="animeDetail.anime.title">
                       {{ animeDetail.anime.title }}
                     </h2>
                   </div>
@@ -460,7 +460,7 @@ watch(
                         @click="platformRows.find((row) => row.id === primaryScore?.id) && emit('open-link', platformRows.find((row) => row.id === primaryScore?.id)!.url)"
                       >
                         <span class="flex items-baseline gap-1">
-                          <strong class="text-2xl font-bold leading-none tabular-nums text-[var(--accent-vivid)]">{{ primaryScore.value }}</strong>
+                          <strong class="text-xl font-bold leading-none tabular-nums text-[var(--accent-vivid)]">{{ primaryScore.value }}</strong>
                           <span class="text-xs font-semibold text-[var(--muted)]">/ {{ primaryScore.max }}</span>
                         </span>
                         <span class="text-[11px] font-medium text-[var(--muted)]">
@@ -492,7 +492,7 @@ watch(
                     <p
                       v-if="animeSummary"
                       class="whitespace-pre-line text-xs leading-5 text-[var(--ink-secondary)]"
-                      :class="{ 'line-clamp-3': !infoExpanded }"
+                      :class="{ 'line-clamp-2': !infoExpanded }"
                     >{{ animeSummary }}</p>
                     <div v-if="infoExpanded && animeTags.length" class="flex flex-wrap gap-1">
                       <span v-for="tag in animeTags" :key="tag" class="detail-chip">{{ tag }}</span>
@@ -696,17 +696,17 @@ watch(
  */
 .episode-chips {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(2.75rem, 1fr));
-  gap: 6px;
+  grid-template-columns: repeat(auto-fill, minmax(2.5rem, 1fr));
+  gap: 5px;
 }
 .episode-chip {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 4px;
-  height: 34px;
+  height: 30px;
   padding: 0 6px;
-  border-radius: 8px;
+  border-radius: 7px;
   background: var(--panel);
   color: var(--ink-secondary);
   font-size: 12.5px;
@@ -760,7 +760,7 @@ watch(
 .detail-poster {
   display: grid;
   place-items: center;
-  width: 7rem;
+  width: 5.5rem;
   aspect-ratio: 3 / 4;
   overflow: hidden;
   border-radius: 0.625rem;
@@ -771,16 +771,13 @@ watch(
   font-weight: 600;
 }
 
-/* 窄屏单栏时横向空间足，封面再大一号 */
-@media (min-width: 640px) and (max-width: 1023.98px) {
+/*
+ * 头部要矮：资源才是这一页的正事。封面 88px（宽屏 104px），
+ * 以前中等宽度给到 144px，加上大号评分和三行简介，资源被挤到第一屏以下。
+ */
+@media (min-width: 1024px) {
   .detail-poster {
-    width: 9rem;
-  }
-}
-
-@media (min-width: 1280px) {
-  .detail-poster {
-    width: 7.5rem;
+    width: 6.5rem;
   }
 }
 

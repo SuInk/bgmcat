@@ -1261,11 +1261,11 @@ watch(
       </div>
 
       <!--
-        0 条任务时不渲染分页器：没有可翻的页。手机上只有一页、也没选中东西时同样不出，
-        否则底部一大块只放着「每页 8 / 1」。
+        只有一页、也没选中东西时整条底栏不出：没有可翻的页，也没有批量操作，
+        留着就是一条空边框（分页器自己在单页时也不渲染）。
       -->
       <div
-        v-if="filteredDownloads.length && (!narrowDownloads || selectedGroupKeys.size > 0 || downloadSeriesTotalPages > 1)"
+        v-if="filteredDownloads.length && (selectedGroupKeys.size > 0 || downloadSeriesTotalPages > 1)"
         class="flex flex-wrap items-center gap-2 border-t border-[var(--line)] px-4 py-2"
       >
         <template v-if="selectedGroupKeys.size > 0">
