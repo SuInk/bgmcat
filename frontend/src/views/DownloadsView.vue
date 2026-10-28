@@ -422,6 +422,28 @@ const filterTabs = computed(() => [
   }
 ]);
 
+/**
+ * 按 B 站「离线缓存」分两段：上面「正在缓存」是还没下完的（带进度、能暂停），
+ * 下面「已缓存」是下完的番，排成封面墙，点进去看分集。
+ */
+const cachingGroups = computed(() => pagedDownloadGroups.value.filter((group) => groupStatus(group) !== "complete"));
+const cachedGroups = computed(() => pagedDownloadGroups.value.filter((group) => groupStatus(group) === "complete"));
+
+/** 封面墙卡片下面那行：单集写「第 04 集」，多集写「已缓存 12 集」，后面跟大小 */
+function cachedMetaLine(group: SeriesDownloadGroup): string {
+  const episodes = group.episodes.length === 1 ? currentEpisodeLabel(group) : `已缓存 ${group.episodes.length} 集`;
+  const total = groupTotalLength(group);
+  return total > 0 ? `${episodes} · ${formatBytes(total)}` : episodes;
+}
+
+function onGroupActivate(group: SeriesDownloadGroup): void {
+  if (selectMode.value) {
+    setGroupSelected(group.key, !selectedGroupKeys.value.has(group.key));
+    return;
+  }
+  toggleDownloadGroup(group.key);
+}
+
 const selectedGroups = computed(() => groupedDownloads.value.filter((group) => selectedGroupKeys.value.has(group.key)));
 const selectedDownloads = computed(() => selectedGroups.value.flatMap((group) => group.downloads));
 const selectedActionableDownloads = computed(() =>
@@ -827,15 +849,12 @@ function toggleDownloadGroup(key: string): void {
   }
 }
 
-/**
- * 手机宽度：点任务进一个全屏详情页（顶上带返回），不在列表里就地展开。
- * 就地展开在窄屏上是缩进套缩进、竖线套竖线，一屏只剩半个面板。
- */
-const narrowDownloads = computed(() => viewportWidth.value <= 640);
 /** 宽屏（内容区放得下列表 + 22rem 侧栏）选中一部番时，分集显示在右侧栏而不是行下展开 */
 const sideDownloads = computed(() => viewportWidth.value >= 1200);
+/** 不够放侧栏时点开一部番就进整页分集（B 站「离线缓存」点进番剧那样），不再在列表里就地展开 */
+const fullPageDetail = computed(() => !sideDownloads.value);
 const detailPanelGroup = computed(() =>
-  (narrowDownloads.value || sideDownloads.value) && activeDownloadGroupKey.value
+  activeDownloadGroupKey.value
     ? groupedDownloads.value.find((group) => group.key === activeDownloadGroupKey.value) ?? null
     : null
 );
@@ -1006,8 +1025,8 @@ watch(
       </div>
     </div>
 
-    <div v-else class="downloads-layout" :class="{ 'has-side': detailPanelGroup && !narrowDownloads }">
-    <div v-if="!(narrowDownloads && detailPanelGroup)" class="motion-rise grid min-h-0 grid-rows-[auto_minmax(0,1fr)_auto] overflow-hidden">
+    <div v-else class="downloads-layout" :class="{ 'has-side': detailPanelGroup && !fullPageDetail }">
+    <div v-if="!(fullPageDetail && detailPanelGroup)" class="motion-rise grid min-h-0 grid-rows-[auto_minmax(0,1fr)_auto] overflow-hidden">
       <!-- 与其他页同一套工具栏：第一行状态筛选 + 右侧总速度，第二行搜索 / 排序 / 批量与主操作 -->
       <div class="page-toolbar">
         <div class="toolbar-row">
@@ -1128,18 +1147,21 @@ watch(
         </div>
 
         <!--
-          参考 Apple TV / Netflix 的「下载」页：不要表头和五列表格，一部番一张卡——
-          竖版封面、番名、「第 N 集 · 字幕组 · 清晰度 · 大小」一行，只有没下完的才出进度条，
-          右边是这部番此刻最该做的事（能看就是实心播放键）。删除这类低频操作悬停才出现。
+          参考 B 站「离线缓存」：上面「正在缓存」一行一部、带进度和暂停；下面「已缓存」是封面墙，
+          封面右下角标集数，点封面进分集页（宽屏是右侧栏）。以前所有任务混在一个列表里、点开就地展开，
+          下完的和正在下的抢同一块地方。
         -->
-        <div v-else class="grid gap-1 py-2">
+        <div v-else class="grid gap-6 py-2">
+          <section v-if="cachingGroups.length" class="grid gap-2">
+          <h3 class="cache-section-title">正在缓存 <span class="tabular-nums">{{ cachingGroups.length }}</span></h3>
+          <div class="grid gap-1">
           <div
-            v-for="group in pagedDownloadGroups"
+            v-for="group in cachingGroups"
             :key="group.key"
             class="download-card"
             :class="{ 'is-open': activeDownloadGroupKey === group.key }"
           >
-          <article class="download-row" @click="selectMode ? setGroupSelected(group.key, !selectedGroupKeys.has(group.key)) : toggleDownloadGroup(group.key)">
+          <article class="download-row" @click="onGroupActivate(group)">
             <label v-if="selectMode" class="grid size-6 shrink-0 place-items-center" @click.stop>
               <input
                 type="checkbox"
@@ -1233,33 +1255,60 @@ watch(
               <AppNavIcon
                 name="chevron-right"
                 class="size-4 shrink-0 text-[var(--muted)] transition-transform duration-200"
-                :class="{ 'rotate-90': activeDownloadGroupKey === group.key && !narrowDownloads && !sideDownloads }"
                 aria-hidden="true"
               />
             </div>
           </article>
 
-          <!-- 就地展开：分集/版本/日志直接长在这一行下面，拿整行全宽 -->
-          <DownloadVersionPane
-            v-if="activeDownloadGroupKey === group.key && !narrowDownloads && !sideDownloads"
-            :downloads="group.downloads"
-            :episodes="group.episodes"
-            :format-bytes="formatBytes"
-            :download-display-title="displayTitle"
-            :progress-percent="progressPercent"
-            :download-raw-error="downloadRawError"
-            :is-download-row-busy="isDownloadRowBusy"
-            :anime-detail="animeDetail"
-            :detail-belongs-to-group="group.downloads.some((item) => item.gid === selectedDownloadDetailGid)"
-            :detail-error="animeDetailError"
-            :detail-loading="detailLoading"
-            @conflict="handleDownloadConflict($event.gid, $event.strategy)"
-            @playback="openPlayback"
-            @pause="updateDownloadState('pause', $event)"
-            @resume="updateDownloadState('resume', $event)"
-            @remove="requestDelete"
-          />
           </div>
+          </div>
+          </section>
+
+          <section v-if="cachedGroups.length" class="grid gap-3">
+            <h3 class="cache-section-title">已缓存 <span class="tabular-nums">{{ cachedGroups.length }}</span></h3>
+            <div class="cache-grid">
+              <div
+                v-for="group in cachedGroups"
+                :key="group.key"
+                class="cache-card"
+                :class="{ 'is-open': activeDownloadGroupKey === group.key, 'is-selected': selectMode && selectedGroupKeys.has(group.key) }"
+                role="button"
+                tabindex="0"
+                :aria-label="`${group.title}，${cachedMetaLine(group)}`"
+                @click="onGroupActivate(group)"
+                @keydown.enter.prevent="onGroupActivate(group)"
+              >
+                <div class="cache-poster" :style="coverStyle(primaryDownloadForGroup(group).gid)">
+                  <img
+                    v-if="resolveDownloadArtworkUrl(primaryDownloadForGroup(group))"
+                    :src="resolveDownloadArtworkUrl(primaryDownloadForGroup(group)) ?? ''"
+                    :alt="group.title"
+                    class="absolute inset-0 size-full object-cover"
+                    loading="lazy"
+                  />
+                  <div v-else class="absolute inset-0 grid place-items-center px-2 text-center">
+                    <span class="text-sm font-semibold text-white/90">{{ coverLabel(group.title) }}</span>
+                  </div>
+                  <span class="cache-badge tabular-nums">{{ group.episodes.length }} 集</span>
+                  <span v-if="selectMode" class="cache-check" :class="{ 'is-on': selectedGroupKeys.has(group.key) }" aria-hidden="true">
+                    <AppNavIcon name="check" class="size-3.5" />
+                  </span>
+                  <button
+                    v-else-if="playableDownloadForGroup(group)"
+                    type="button"
+                    class="play-btn cache-play"
+                    :title="`播放 ${playableEpisodeLabelForGroup(group) ?? ''}`"
+                    :aria-label="`播放 ${playableEpisodeLabelForGroup(group) ?? ''}`"
+                    @click.stop="openPlayback(playableDownloadForGroup(group)!)"
+                  >
+                    <AppNavIcon name="play" class="size-3.5" />
+                  </button>
+                </div>
+                <strong class="mt-2 line-clamp-1 text-[13px] font-semibold text-[var(--ink)]" :title="group.title">{{ group.title }}</strong>
+                <span class="line-clamp-1 text-xs text-[var(--muted)]">{{ cachedMetaLine(group) }}</span>
+              </div>
+            </div>
+          </section>
         </div>
       </div>
 
@@ -1313,9 +1362,9 @@ watch(
       选中一部番后的分集面板：手机上全屏（带返回），宽屏是右侧栏（像「邮件」「音乐」那样左列表右详情），
       中等宽度没地方放侧栏，就在列表里就地展开。
     -->
-    <aside v-if="detailPanelGroup" :key="detailPanelGroup.key" class="download-detail" :class="narrowDownloads ? 'motion-rise' : 'is-side motion-slide'">
+    <aside v-if="detailPanelGroup" :key="detailPanelGroup.key" class="download-detail" :class="fullPageDetail ? 'motion-rise' : 'is-side motion-slide'">
       <button
-        v-if="narrowDownloads"
+        v-if="fullPageDetail"
         type="button"
         class="btn-ghost inline-flex w-fit items-center gap-1 px-2.5 py-1.5 text-sm font-semibold"
         @click="collapseDownloadGroup"
@@ -1340,7 +1389,7 @@ watch(
           </p>
         </div>
         <button
-          v-if="!narrowDownloads"
+          v-if="!fullPageDetail"
           type="button"
           class="icon-btn ml-auto shrink-0 self-start"
           aria-label="关闭侧栏"
@@ -1518,6 +1567,96 @@ watch(
 }
 .download-info {
   flex: 1;
+}
+
+.cache-section-title {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  color: var(--ink);
+  font-size: 15px;
+  font-weight: 700;
+}
+.cache-section-title > span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+/* 封面墙：和首页海报墙同一个尺寸档，一屏能看到很多部 */
+.cache-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(8.5rem, 1fr));
+  gap: 18px 14px;
+}
+.cache-card {
+  display: grid;
+  min-width: 0;
+  cursor: pointer;
+  outline: none;
+}
+.cache-poster {
+  position: relative;
+  aspect-ratio: 2 / 3;
+  overflow: hidden;
+  border-radius: 10px;
+  box-shadow: 0 0 0 1px var(--line);
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+.cache-card:hover .cache-poster,
+.cache-card:focus-visible .cache-poster {
+  transform: translateY(-2px);
+}
+.cache-card.is-open .cache-poster,
+.cache-card.is-selected .cache-poster,
+.cache-card:focus-visible .cache-poster {
+  box-shadow: 0 0 0 2px var(--accent);
+}
+/* 右下角集数角标：B 站离线缓存封面上的「已缓存 N 个」 */
+.cache-badge {
+  position: absolute;
+  right: 6px;
+  bottom: 6px;
+  padding: 1px 6px;
+  border-radius: 6px;
+  background: rgb(0 0 0 / 0.62);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
+  backdrop-filter: blur(6px);
+}
+.cache-play {
+  position: absolute;
+  left: 6px;
+  bottom: 6px;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.cache-card:hover .cache-play,
+.cache-play:focus-visible {
+  opacity: 1;
+}
+@media (hover: none) {
+  .cache-play {
+    opacity: 1;
+  }
+}
+.cache-check {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  border: 2px solid #fff;
+  background: rgb(0 0 0 / 0.35);
+  color: transparent;
+}
+.cache-check.is-on {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--accent-contrast);
 }
 
 .downloads-layout {
