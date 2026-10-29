@@ -289,8 +289,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
     final ready = controller != null && controller.value.isInitialized;
     final value = controller?.value;
     final position = value?.position ?? Duration.zero;
-    final cues = _subtitle?.at(position) ?? const <AssCue>[];
-    final subtitleSize = _fullscreen ? 22.0 : 15.0;
+    final subtitle = _subtitle;
+    final cues = subtitle?.at(position) ?? const <AssCue>[];
 
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
@@ -304,30 +304,16 @@ class _PlayerScreenState extends State<PlayerScreen> {
             Center(
               child: AspectRatio(
                 aspectRatio: value!.aspectRatio > 0 ? value.aspectRatio : 16 / 9,
-                child: VideoPlayer(controller),
+                child: Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    VideoPlayer(controller),
+                    // 字幕画在视频画面的矩形里，\pos 定位才能对得上
+                    if (subtitle != null && cues.isNotEmpty) AssLayer(subtitle: subtitle, cues: cues),
+                  ],
+                ),
               ),
             ),
-          // 字幕：底部的往上叠，顶部的贴着上沿
-          if (cues.isNotEmpty) ...[
-            Positioned(
-              left: 24,
-              right: 24,
-              bottom: _controlsVisible ? 52 : 14,
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [for (final cue in cues.where((c) => !c.top)) _subtitleText(cue.text, subtitleSize)],
-              ),
-            ),
-            Positioned(
-              left: 24,
-              right: 24,
-              top: _controlsVisible ? 48 : 12,
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [for (final cue in cues.where((c) => c.top)) _subtitleText(cue.text, subtitleSize * 0.85)],
-              ),
-            ),
-          ],
           if (_error != null)
             Center(
               child: Padding(
@@ -382,32 +368,6 @@ class _PlayerScreenState extends State<PlayerScreen> {
                 ),
               ),
             ),
-        ],
-      ),
-    );
-  }
-
-  Widget _subtitleText(String text, double size) {
-    return Padding(
-      padding: const EdgeInsets.only(top: 2),
-      child: Stack(
-        children: [
-          Text(
-            text,
-            textAlign: TextAlign.center,
-            style: TextStyle(
-              fontSize: size,
-              fontWeight: FontWeight.w600,
-              height: 1.3,
-              foreground: Paint()
-                ..style = PaintingStyle.stroke
-                ..strokeWidth = size / 6
-                ..color = Colors.black,
-            ),
-          ),
-          Text(text,
-              textAlign: TextAlign.center,
-              style: TextStyle(fontSize: size, fontWeight: FontWeight.w600, height: 1.3, color: Colors.white)),
         ],
       ),
     );
@@ -643,4 +603,89 @@ class _PlayerScreenState extends State<PlayerScreen> {
         decoration: BoxDecoration(color: AppColors.panel, borderRadius: BorderRadius.circular(6)),
         child: Text(text, style: const TextStyle(fontSize: 12, color: AppColors.inkSecondary)),
       );
+}
+
+/// 按 ASS 的 PlayRes 坐标把字幕画到视频画面上：有 \pos 的（屏幕文字翻译）放到原位，
+/// 其余按对齐方位叠在底部 / 顶部 / 中间。
+class AssLayer extends StatelessWidget {
+  const AssLayer({super.key, required this.subtitle, required this.cues});
+
+  final AssSubtitle subtitle;
+  final List<AssCue> cues;
+
+  @override
+  Widget build(BuildContext context) {
+    return IgnorePointer(
+      child: LayoutBuilder(builder: (context, constraints) {
+        final scaleX = constraints.maxWidth / subtitle.playResX;
+        final scaleY = constraints.maxHeight / subtitle.playResY;
+        // 手机竖屏画面很小，字号按比例算下来看不清，兜个底
+        double size(AssCue cue) => (cue.fontSize > 0 ? cue.fontSize * scaleY : constraints.maxHeight / 18).clamp(9.0, 64.0);
+        final margin = constraints.maxHeight * 0.04;
+
+        final positioned = cues.where((c) => c.pos != null);
+        final flowing = cues.where((c) => c.pos == null);
+        Widget column(Iterable<AssCue> group) => Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [for (final cue in group) _AssText(cue: cue, size: size(cue))],
+            );
+
+        return Stack(
+          children: [
+            for (final cue in positioned)
+              Positioned(
+                left: cue.pos!.dx * scaleX,
+                top: cue.pos!.dy * scaleY,
+                child: FractionalTranslation(
+                  translation: Offset(
+                    switch (cue.align % 3) { 1 => 0.0, 2 => -0.5, _ => -1.0 },
+                    cue.align >= 7 ? 0.0 : (cue.align >= 4 ? -0.5 : -1.0),
+                  ),
+                  child: ConstrainedBox(
+                    constraints: BoxConstraints(maxWidth: constraints.maxWidth),
+                    child: _AssText(cue: cue, size: size(cue)),
+                  ),
+                ),
+              ),
+            Positioned(left: margin, right: margin, bottom: margin, child: column(flowing.where((c) => c.align <= 3))),
+            Positioned(left: margin, right: margin, top: margin, child: column(flowing.where((c) => c.top))),
+            Positioned.fill(
+              child: Center(child: column(flowing.where((c) => c.align >= 4 && c.align <= 6))),
+            ),
+          ],
+        );
+      }),
+    );
+  }
+}
+
+class _AssText extends StatelessWidget {
+  const _AssText({required this.cue, required this.size});
+
+  final AssCue cue;
+  final double size;
+
+  @override
+  Widget build(BuildContext context) {
+    final align = switch (cue.align % 3) { 1 => TextAlign.left, 0 => TextAlign.right, _ => TextAlign.center };
+    final style = TextStyle(fontSize: size, fontWeight: FontWeight.w600, height: 1.25);
+    final fill = Text(cue.text, textAlign: align, style: style.copyWith(color: cue.color));
+    if (!cue.outline) return fill;
+    return Stack(
+      children: [
+        Text(
+          cue.text,
+          textAlign: align,
+          style: style.copyWith(
+            foreground: Paint()
+              ..style = PaintingStyle.stroke
+              ..strokeWidth = (size / 7).clamp(1.5, 5.0)
+              ..strokeJoin = StrokeJoin.round
+              ..color = Colors.black,
+          ),
+        ),
+        fill,
+      ],
+    );
+  }
 }

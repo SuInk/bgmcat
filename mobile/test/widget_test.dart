@@ -22,6 +22,29 @@ Dialogue: 0,0:00:02.00,0:00:04.00,Default,,0,0,0,,{\\p1}m 0 0 l 1 1
     expect(cues.map((c) => c.text), ['你好，世界\n第二行', '注释']);
     expect(cues.last.top, isTrue);
     expect(sub.at(const Duration(seconds: 5)), isEmpty);
+    expect(sub.playResY, 288);
+  });
+
+  test('keeps \\pos placement, font size and colour for typeset signs', () {
+    const source = '''
+[Script Info]
+PlayResX: 1920
+PlayResY: 1080
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, Outline, Alignment
+Style: Screen,Arial,70,&H00000000,0,7
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+Dialogue: 1,0:00:11.45,0:00:14.62,Screen,,0,0,0,,{\\pos(1419.333,717)\\fs28}说实话这事我本不想写的
+''';
+    final cue = AssSubtitle.parse(source).cues.single;
+    expect(cue.pos!.dx, closeTo(1419.333, 0.001));
+    expect(cue.fontSize, 28);
+    expect(cue.align, 7);
+    expect(cue.outline, isFalse);
+    expect(cue.color.toARGB32(), 0xFF000000);
   });
 
   test('recognizes episode, resolution and anime name from titles', () {

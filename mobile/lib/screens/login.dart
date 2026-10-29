@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../api.dart';
@@ -22,6 +23,14 @@ class _LoginScreenState extends State<LoginScreen> {
   void didChangeDependencies() {
     super.didChangeDependencies();
     if (_server.text.isEmpty) _server.text = SessionScope.read(context).lastServer;
+    // 开发调试用：flutter run --dart-define-from-file=dart_defines.local.json（格式见 dart_defines.example.json）
+    // 只在 debug 包里生效，模拟器里打字太慢时省得手输
+    if (kDebugMode) {
+      const devServer = String.fromEnvironment('BGMCAT_DEV_SERVER');
+      const devToken = String.fromEnvironment('BGMCAT_DEV_TOKEN');
+      if (_server.text.isEmpty && devServer.isNotEmpty) _server.text = devServer;
+      if (_token.text.isEmpty && devToken.isNotEmpty) _token.text = devToken;
+    }
   }
 
   @override

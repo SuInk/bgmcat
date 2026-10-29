@@ -1,0 +1,4 @@
+{
+  "BGMCAT_DEV_SERVER": "http://127.0.0.1:3001",
+  "BGMCAT_DEV_TOKEN": "在这里填开发后端的访问口令"
+}

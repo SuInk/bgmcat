@@ -390,6 +390,8 @@ class _DetailScreenState extends State<DetailScreen> {
           child: GridView.count(
             crossAxisCount: 6,
             shrinkWrap: true,
+            // 不写 padding 会继承状态栏的安全区，标题和格子之间空出一大块
+            padding: EdgeInsets.zero,
             physics: const NeverScrollableScrollPhysics(),
             mainAxisSpacing: 8,
             crossAxisSpacing: 8,

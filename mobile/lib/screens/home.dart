@@ -222,7 +222,7 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget _buildContinueRow(List<(DownloadJob, PlaybackRecord)> entries) {
     final api = _api;
     return SizedBox(
-      height: 150,
+      height: 176,
       child: ListView.separated(
         scrollDirection: Axis.horizontal,
         padding: const EdgeInsets.symmetric(horizontal: 16),
