@@ -28,6 +28,9 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _searching = false;
   String _activeKeyword = '';
 
+  /// 关掉的那一集不再弹浮条；换了一集看再出来。
+  String? _dismissedContinue;
+
   /// null 表示「全部」，否则是 0（周日）到 6。
   int? _weekday = DateTime.now().weekday % 7;
 
@@ -115,19 +118,28 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget build(BuildContext context) {
     final session = SessionScope.of(context);
     final searching = _searchResults != null || _activeKeyword.isNotEmpty;
+    final latest = searching || _home == null ? null : _continueWatching(session).firstOrNull;
+    final showContinue = latest != null && latest.$1.gid != _dismissedContinue;
     return Scaffold(
       body: SafeArea(
         bottom: false,
-        child: RefreshIndicator(
-          onRefresh: searching ? () => _search(_activeKeyword) : _load,
-          child: CustomScrollView(
-            physics: const AlwaysScrollableScrollPhysics(),
-            slivers: [
-              SliverToBoxAdapter(child: _buildHeader()),
-              if (searching) ..._buildSearchResults() else ..._buildHome(session),
-              const SliverToBoxAdapter(child: SizedBox(height: 24)),
-            ],
-          ),
+        child: Stack(
+          children: [
+            RefreshIndicator(
+              onRefresh: searching ? () => _search(_activeKeyword) : _load,
+              child: CustomScrollView(
+                physics: const AlwaysScrollableScrollPhysics(),
+                slivers: [
+                  SliverToBoxAdapter(child: _buildHeader()),
+                  if (searching) ..._buildSearchResults() else ..._buildHome(session),
+                  // 浮条盖住的那截留出来，最后一行海报不会被挡
+                  SliverToBoxAdapter(child: SizedBox(height: showContinue ? 96 : 24)),
+                ],
+              ),
+            ),
+            if (showContinue)
+              Positioned(left: 12, right: 12, bottom: 12, child: _buildContinueBar(latest.$1, latest.$2)),
+          ],
         ),
       ),
     );
@@ -177,15 +189,19 @@ class _HomeScreenState extends State<HomeScreen> {
     final results = _searchResults ?? const <Anime>[];
     return [
       SliverToBoxAdapter(
-        child: SectionTitle('「$_activeKeyword」的搜索结果',
-            trailing: _searching
-                ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
-                : Text('${results.length} 部', style: const TextStyle(color: AppColors.muted))),
+        child: SectionTitle(
+          '「$_activeKeyword」的搜索结果',
+          trailing: _searching
+              ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
+              : Text('${results.length} 部', style: const TextStyle(color: AppColors.muted)),
+        ),
       ),
       if (results.isEmpty && !_searching)
         const SliverFillRemaining(
           hasScrollBody: false,
-          child: Center(child: Text('没找到相关番剧', style: TextStyle(color: AppColors.muted))),
+          child: Center(
+            child: Text('没找到相关番剧', style: TextStyle(color: AppColors.muted)),
+          ),
         )
       else
         _posterGrid(results),
@@ -195,23 +211,25 @@ class _HomeScreenState extends State<HomeScreen> {
   List<Widget> _buildHome(AppSession session) {
     if (_home == null) {
       if (_error != null) {
-        return [SliverFillRemaining(hasScrollBody: false, child: ErrorView(message: _error!, onRetry: _load))];
+        return [
+          SliverFillRemaining(
+            hasScrollBody: false,
+            child: ErrorView(message: _error!, onRetry: _load),
+          ),
+        ];
       }
       return [const SliverFillRemaining(hasScrollBody: false, child: Center(child: CircularProgressIndicator()))];
     }
-    final continueWatching = _continueWatching(session);
     final visible = _visibleHome;
     return [
-      if (continueWatching.isNotEmpty) ...[
-        const SliverToBoxAdapter(child: SectionTitle('继续观看')),
-        SliverToBoxAdapter(child: _buildContinueRow(continueWatching)),
-      ],
       SliverToBoxAdapter(child: _buildWeekdayBar()),
       if (visible.isEmpty)
         const SliverToBoxAdapter(
           child: Padding(
             padding: EdgeInsets.all(48),
-            child: Center(child: Text('这天没有新番', style: TextStyle(color: AppColors.muted))),
+            child: Center(
+              child: Text('这天没有新番', style: TextStyle(color: AppColors.muted)),
+            ),
           ),
         )
       else
@@ -219,63 +237,69 @@ class _HomeScreenState extends State<HomeScreen> {
     ];
   }
 
-  Widget _buildContinueRow(List<(DownloadJob, PlaybackRecord)> entries) {
-    final api = _api;
-    return SizedBox(
-      height: 176,
-      child: ListView.separated(
-        scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.symmetric(horizontal: 16),
-        itemCount: entries.length,
-        separatorBuilder: (_, _) => const SizedBox(width: 12),
-        itemBuilder: (context, index) {
-          final (job, record) = entries[index];
-          final remaining = Duration(seconds: (record.duration - record.position).round());
-          final episode = episodeOf(job.title);
-          return GestureDetector(
-            onTap: () => _openPlayer(job),
-            child: SizedBox(
-              width: 200,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+  /// B 站式「上次看到」浮条：贴在底栏上方，只放最近一集，可以关掉，不占海报墙的位置。
+  Widget _buildContinueBar(DownloadJob job, PlaybackRecord record) {
+    final remaining = Duration(seconds: (record.duration - record.position).round());
+    final episode = episodeOf(job.title);
+    return Material(
+      color: AppColors.panel.withValues(alpha: 0.96),
+      elevation: 6,
+      shadowColor: Colors.black54,
+      borderRadius: BorderRadius.circular(14),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: () => _openPlayer(job),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(8, 8, 4, 8),
+              child: Row(
                 children: [
-                  Stack(
-                    children: [
-                      CoverImage(
-                        url: api.resolveImage('/api/downloads/${Uri.encodeComponent(job.gid)}/thumbnail') ??
-                            api.resolveImage(job.imageUrl),
-                        aspectRatio: 16 / 9,
-                      ),
-                      Positioned(
-                        left: 0,
-                        right: 0,
-                        bottom: 0,
-                        child: ClipRRect(
-                          borderRadius: const BorderRadius.vertical(bottom: Radius.circular(10)),
-                          child: LinearProgressIndicator(
-                            value: record.fraction,
-                            minHeight: 3,
-                            backgroundColor: Colors.black45,
-                          ),
-                        ),
-                      ),
-                      const Positioned.fill(
-                        child: Center(child: Icon(Icons.play_circle_fill, size: 36, color: Colors.white70)),
-                      ),
-                    ],
+                  SizedBox(
+                    width: 36,
+                    child: CoverImage(url: _api.resolveImage(job.imageUrl), aspectRatio: 3 / 4, radius: 6),
                   ),
-                  const SizedBox(height: 6),
-                  Text(animeNameOf(job.title), maxLines: 1, overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
-                  Text(
-                    '${episode == null ? '' : '第 $episode 集 · '}剩余 ${formatDuration(remaining)}',
-                    style: const TextStyle(fontSize: 12, color: AppColors.muted),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          '上次看到 · ${animeNameOf(job.title)}',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w600),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          '${episode == null ? '' : '第 $episode 集 · '}剩余 ${formatDuration(remaining)}',
+                          style: const TextStyle(fontSize: 12, color: AppColors.muted),
+                        ),
+                      ],
+                    ),
+                  ),
+                  FilledButton(
+                    onPressed: () => _openPlayer(job),
+                    style: FilledButton.styleFrom(
+                      visualDensity: VisualDensity.compact,
+                      padding: const EdgeInsets.symmetric(horizontal: 14),
+                    ),
+                    child: const Text('继续播放'),
+                  ),
+                  IconButton(
+                    tooltip: '关闭',
+                    visualDensity: VisualDensity.compact,
+                    color: AppColors.muted,
+                    icon: const Icon(Icons.close, size: 18),
+                    onPressed: () => setState(() => _dismissedContinue = job.gid),
                   ),
                 ],
               ),
             ),
-          );
-        },
+            LinearProgressIndicator(value: record.fraction, minHeight: 2, backgroundColor: Colors.transparent),
+          ],
+        ),
       ),
     );
   }
@@ -305,10 +329,7 @@ class _HomeScreenState extends State<HomeScreen> {
       child: ListView(
         scrollDirection: Axis.horizontal,
         padding: const EdgeInsets.fromLTRB(16, 12, 8, 4),
-        children: [
-          chip('全部', null),
-          for (final day in order) chip(day == today ? '今天' : weekdayLabels[day], day),
-        ],
+        children: [chip('全部', null), for (final day in order) chip(day == today ? '今天' : weekdayLabels[day], day)],
       ),
     );
   }
@@ -357,17 +378,21 @@ class _PosterTile extends StatelessWidget {
                   child: Container(
                     padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                     decoration: BoxDecoration(color: Colors.black54, borderRadius: BorderRadius.circular(6)),
-                    child: Text(rating.toStringAsFixed(1),
-                        style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: Color(0xFFFFC857))),
+                    child: Text(
+                      rating.toStringAsFixed(1),
+                      style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: Color(0xFFFFC857)),
+                    ),
                   ),
                 ),
             ],
           ),
           const SizedBox(height: 8),
-          Text(anime.title,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, height: 1.25)),
+          Text(
+            anime.title,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, height: 1.25),
+          ),
         ],
       ),
     );

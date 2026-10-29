@@ -13,11 +13,15 @@ import '../session.dart';
 import '../theme.dart';
 import '../util.dart';
 import '../widgets.dart';
+import 'detail.dart';
 
 class PlayerScreen extends StatefulWidget {
-  const PlayerScreen({super.key, required this.job});
+  const PlayerScreen({super.key, required this.job, this.anime});
 
   final DownloadJob job;
+
+  /// 从详情页进来时已经知道是哪部番；从缓存页、首页进来时为空，播放页自己去认。
+  final Anime? anime;
 
   @override
   State<PlayerScreen> createState() => _PlayerScreenState();
@@ -44,7 +48,11 @@ class _PlayerScreenState extends State<PlayerScreen> {
   String? _resumeHint;
   Timer? _resumeHintTimer;
 
+  /// 同一部番的下载任务（含还在下的），用来标出哪些集能直接播。
   List<DownloadJob> _siblings = [];
+  AnimeDetail? _animeDetail;
+  final _episodeScroll = ScrollController();
+  bool _episodeScrolled = false;
   late AppSession _session;
   late ApiClient _api;
 
@@ -54,7 +62,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
     _session = SessionScope.read(context);
     _api = _session.api!;
     _open(widget.job);
-    _loadSiblings();
+    _loadEpisodes();
   }
 
   @override
@@ -65,24 +73,43 @@ class _PlayerScreenState extends State<PlayerScreen> {
     _resumeHintTimer?.cancel();
     _controller?.removeListener(_onTick);
     _controller?.dispose();
+    _episodeScroll.dispose();
     WakelockPlus.disable();
     _restoreSystemUi();
     super.dispose();
   }
 
-  Future<void> _loadSiblings() async {
+  Future<void> _loadEpisodes() async {
     try {
       final jobs = await _api.downloads();
       final cover = widget.job.imageUrl;
       final name = animeNameOf(widget.job.title);
       final siblings = jobs
-          .where((j) => j.isComplete && !j.isRemoved && (cover != null ? j.imageUrl == cover : animeNameOf(j.title) == name))
-          .toList()
-        ..sort((a, b) => (episodeOf(a.title) ?? 9999).compareTo(episodeOf(b.title) ?? 9999));
+          .where((j) => !j.isRemoved && (cover != null ? j.imageUrl == cover : animeNameOf(j.title) == name))
+          .toList();
       if (mounted) setState(() => _siblings = siblings);
     } catch (_) {
-      // 选集列表拿不到就只播当前这一集
+      // 拿不到任务列表就只标当前这一集
     }
+    try {
+      final animeId = widget.anime?.animeId ?? await _resolveAnimeId();
+      if (animeId == null) return;
+      final detail = await _api.animeDetail(animeId);
+      if (mounted) setState(() => _animeDetail = detail);
+    } catch (_) {
+      // 番剧信息拿不到时，选集退回只列已缓存的
+    }
+  }
+
+  /// 下载任务没记番剧 id：先从 bgm.tv 封面地址里取条目号（…/cover/l/xx/xx/622288_xxx.jpg），
+  /// 取不到再按标题里的番名搜一次，封面对得上的优先。
+  Future<String?> _resolveAnimeId() async {
+    final cover = widget.job.imageUrl;
+    final match = cover == null ? null : RegExp(r'bgm\.tv/.*/(\d+)_[^/]+\.\w+$').firstMatch(cover);
+    if (match != null) return match.group(1);
+    final results = await _api.search(animeNameOf(widget.job.title));
+    if (results.isEmpty) return null;
+    return (results.where((a) => a.imageUrl == cover).firstOrNull ?? results.first).animeId;
   }
 
   Future<void> _open(DownloadJob job) async {
@@ -571,31 +598,184 @@ class _PlayerScreenState extends State<PlayerScreen> {
             if (info.subtitles.isNotEmpty) _tag('${info.subtitles.length} 条字幕'),
           ]),
         ],
-        if (_siblings.length > 1) ...[
-          const SizedBox(height: 20),
-          Text('选集（${_siblings.length}）', style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
-          const SizedBox(height: 10),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              for (final job in _siblings)
-                ChoiceChip(
-                  label: Text(episodeOf(job.title)?.toString() ?? animeNameOf(job.title)),
-                  selected: job.gid == _job.gid,
-                  labelStyle: TextStyle(
-                    color: job.gid == _job.gid ? AppColors.accent : AppColors.inkSecondary,
-                    fontWeight: FontWeight.w600,
-                  ),
-                  onSelected: (_) {
-                    if (job.gid != _job.gid) _open(job);
-                  },
-                ),
-            ],
-          ),
-        ],
+        ..._buildEpisodes(),
       ],
     );
+  }
+
+  /// 选集：有番剧信息时列全部集数（B 站那种横向卡片），已缓存的点了直接切，
+  /// 没缓存的提示去详情页下载；拿不到番剧信息时只列已缓存的。
+  List<Widget> _buildEpisodes() {
+    final jobsByEpisode = <int, DownloadJob>{};
+    for (final job in _siblings) {
+      final n = episodeOf(job.title);
+      if (n == null) continue;
+      final existing = jobsByEpisode[n];
+      if (existing == null || (job.isComplete && !existing.isComplete) || job.gid == _job.gid) jobsByEpisode[n] = job;
+    }
+    final titles = <int, String>{};
+    final airDates = <int, DateTime?>{};
+    final numbers = <int>[];
+    final detail = _animeDetail;
+    if (detail != null) {
+      for (final ep in detail.episodes) {
+        final n = ep.numberValue;
+        if (n == null || numbers.contains(n)) continue;
+        numbers.add(n);
+        titles[n] = ep.title;
+        airDates[n] = DateTime.tryParse(ep.airDate ?? '');
+      }
+      if (numbers.isEmpty && (detail.totalEpisodes ?? 0) > 0) {
+        numbers.addAll(List.generate(detail.totalEpisodes!, (i) => i + 1));
+      }
+    }
+    for (final n in jobsByEpisode.keys) {
+      if (!numbers.contains(n)) numbers.add(n);
+    }
+    numbers.sort();
+    if (numbers.isEmpty) return const [];
+
+    final current = episodeOf(_job.title);
+    // 番剧信息到了以后把正在播的那集滚到可见位置，只滚一次，免得每帧重建都把列表拽回去
+    if (!_episodeScrolled && detail != null && current != null) {
+      _episodeScrolled = true;
+      final index = numbers.indexOf(current);
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!_episodeScroll.hasClients || index < 0) return;
+        final target = (index * 124.0 - 40).clamp(0.0, _episodeScroll.position.maxScrollExtent);
+        _episodeScroll.jumpTo(target);
+      });
+    }
+    final cached = jobsByEpisode.values.where((j) => j.isComplete).length;
+    final total = detail?.totalEpisodes ?? numbers.length;
+    final now = DateTime.now();
+
+    return [
+      const SizedBox(height: 22),
+      Row(
+        children: [
+          const Text('选集', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+          const SizedBox(width: 8),
+          Text('全 $total 集 · 已缓存 $cached 集', style: const TextStyle(fontSize: 12, color: AppColors.muted)),
+          const Spacer(),
+          if (detail != null)
+            TextButton(
+              style: TextButton.styleFrom(visualDensity: VisualDensity.compact),
+              onPressed: () => _openDetail(detail.anime),
+              child: const Text('番剧详情'),
+            ),
+        ],
+      ),
+      const SizedBox(height: 8),
+      SizedBox(
+        height: 68,
+        child: ListView.separated(
+          controller: _episodeScroll,
+          scrollDirection: Axis.horizontal,
+          itemCount: numbers.length,
+          separatorBuilder: (_, _) => const SizedBox(width: 8),
+          itemBuilder: (context, index) {
+            final n = numbers[index];
+            final job = jobsByEpisode[n];
+            final airDate = airDates[n];
+            return _episodeCard(
+              number: n,
+              title: titles[n],
+              job: job,
+              playing: n == current,
+              notAired: job == null && airDate != null && airDate.isAfter(now),
+              detail: detail,
+            );
+          },
+        ),
+      ),
+    ];
+  }
+
+  Widget _episodeCard({
+    required int number,
+    required String? title,
+    required DownloadJob? job,
+    required bool playing,
+    required bool notAired,
+    required AnimeDetail? detail,
+  }) {
+    final cached = job != null && job.isComplete;
+    final downloading = job != null && !job.isComplete && !job.isError;
+    final watched = cached && (_session.record(job.gid)?.fraction ?? 0) > 0.9;
+    String status;
+    if (playing) {
+      status = '正在播放';
+    } else if (cached) {
+      status = watched ? '已看完' : '已缓存';
+    } else if (downloading) {
+      status = '缓存中 ${(job.progress * 100).round()}%';
+    } else if (notAired) {
+      status = '未播出';
+    } else {
+      status = '未缓存';
+    }
+    final enabled = cached || playing;
+    return SizedBox(
+      width: 116,
+      child: Material(
+        color: playing ? AppColors.accent.withValues(alpha: 0.16) : AppColors.panel,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(10),
+          side: BorderSide(color: playing ? AppColors.accent : Colors.transparent, width: 1.2),
+        ),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(10),
+          onTap: () {
+            if (playing) return;
+            if (cached) {
+              _open(job);
+            } else if (detail != null && !notAired) {
+              showToast(context, downloading ? '第 $number 集还在缓存' : '第 $number 集还没缓存，可以去番剧详情里下载');
+            }
+          },
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  title == null || title.isEmpty ? '第 $number 集' : '$number  $title',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: playing ? AppColors.accent : (enabled ? AppColors.ink : AppColors.muted),
+                  ),
+                ),
+                Row(
+                  children: [
+                    if (playing) const Icon(Icons.graphic_eq, size: 13, color: AppColors.accent),
+                    if (!playing && cached) const Icon(Icons.check_circle, size: 12, color: AppColors.accent),
+                    if (playing || cached) const SizedBox(width: 4),
+                    Text(
+                      status,
+                      style: TextStyle(fontSize: 11.5, color: playing || cached ? AppColors.accent : AppColors.muted),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _openDetail(Anime anime) {
+    // 从详情页进来的就直接回去，别叠两层详情
+    if (widget.anime != null) {
+      Navigator.of(context).maybePop();
+      return;
+    }
+    Navigator.of(context).push(MaterialPageRoute(builder: (_) => DetailScreen(anime: anime)));
   }
 
   Widget _tag(String text) => Container(

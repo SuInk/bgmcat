@@ -161,7 +161,7 @@ class _DetailScreenState extends State<DetailScreen> {
   }
 
   void _play(DownloadJob job) {
-    Navigator.of(context).push(MaterialPageRoute(builder: (_) => PlayerScreen(job: job)));
+    Navigator.of(context).push(MaterialPageRoute(builder: (_) => PlayerScreen(job: job, anime: _anime)));
   }
 
   @override
