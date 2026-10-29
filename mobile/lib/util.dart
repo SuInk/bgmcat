@@ -70,3 +70,14 @@ String animeNameOf(String title) {
   }
   return title;
 }
+
+final _bangumiCover = RegExp(r'bgm\.tv/.*/(\d+)_[^/]+\.\w+$');
+
+/// bgm.tv 封面地址里的条目号（…/cover/l/xx/xx/622288_xxx.jpg 里的 622288），不是 bgm.tv 的图返回 null。
+String? bangumiIdFromCover(String? url) => url == null ? null : _bangumiCover.firstMatch(url)?.group(1);
+
+/// 判断两个下载任务是不是同一部番：同一张封面可能有 r/400、l 等不同尺寸的地址，按条目号比。
+String? coverKey(String? url) {
+  final id = bangumiIdFromCover(url);
+  return id == null ? url : 'bgm:$id';
+}

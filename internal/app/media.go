@@ -200,7 +200,7 @@ func (m *Media) playback(w http.ResponseWriter, r *http.Request) error {
 	gid := r.PathValue("gid")
 	release := m.hold(gid)
 	defer release()
-	_, file, e := m.source(gid)
+	job, file, e := m.source(gid)
 	if e != nil {
 		return e
 	}
@@ -229,6 +229,14 @@ func (m *Media) playback(w http.ResponseWriter, r *http.Request) error {
 		}
 	}
 	_, ffErr := exec.LookPath(m.ffmpeg())
+	complete := !downloading(job)
+	if !complete && probeErr != nil {
+		return errors.New("还没下载到能播放的部分，请稍候再试")
+	}
+	// 没下完的文件中间有空洞，只能走转码：HLS 列表只列已下好的分片，播放器不会去读空洞
+	if !complete {
+		direct = false
+	}
 	mode := "direct"
 	if !direct {
 		if ffErr != nil {
@@ -236,14 +244,78 @@ func (m *Media) playback(w http.ResponseWriter, r *http.Request) error {
 		}
 		mode = "hls-transcode"
 	}
-	ok(w, Obj{"gid": gid, "filePath": path, "fileName": filepath.Base(path), "mimeType": mimeFor(path), "durationSeconds": duration, "deliveryMode": mode, "supportsInAppPlayback": true, "supportsTranscodePlayback": ffErr == nil, "subtitleTracks": tracks, "availablePlayers": []any{}})
+	seconds, _ := duration.(float64)
+	ok(w, Obj{"gid": gid, "filePath": path, "fileName": filepath.Base(path), "mimeType": mimeFor(path), "durationSeconds": duration, "complete": complete, "playableSeconds": playableSeconds(job, file, seconds), "deliveryMode": mode, "supportsInAppPlayback": true, "supportsTranscodePlayback": ffErr == nil, "subtitleTracks": tracks, "availablePlayers": []any{}})
 	return nil
 }
-func (m *Media) hls(gid string, start int) (*hlsSession, error) {
+
+// playableSeconds 估算边下边播能放到第几秒：按连续下好的字节占比折算，再留一成余量和一个分片，
+// 码率不均匀时也不至于读到还没下的地方。任务已完成返回 -1。
+func playableSeconds(job, file Obj, duration float64) float64 {
+	if !downloading(job) {
+		return -1
+	}
+	size := num(file["size"])
+	if size <= 0 || duration <= 0 {
+		return 0
+	}
+	return max(0, duration*float64(num(job["playableBytes"]))/float64(size)*0.9-6)
+}
+
+// streamWait 是边下边播时，分片请求等下载追上来的最长时间；测试里会改短。
+var streamWait = 60 * time.Second
+
+// waitPlayable 等到边下边播能放到 need 秒，返回当时能放到的位置（下完了返回 -1）。
+// 播放器预读到还没下的分片时就在这里挂着，下好了再转码，播放器那边只是缓冲。
+func (m *Media) waitPlayable(ctx context.Context, gid string, file Obj, need float64) (float64, error) {
+	probe, e := m.probe(ctx, gid)
+	if e != nil {
+		return 0, errors.New("还没下载到这里，请稍候")
+	}
+	duration, _ := strconv.ParseFloat(str(object(probe["format"])["duration"]), 64)
+	deadline := time.Now().Add(streamWait)
+	for {
+		job, e := m.a.Store.Get("downloads", gid)
+		if e != nil || job == nil {
+			return 0, errors.New("下载任务不存在")
+		}
+		limit := playableSeconds(job, file, duration)
+		if limit < 0 || limit >= need {
+			return limit, nil
+		}
+		if time.Now().After(deadline) {
+			return 0, errors.New("还没下载到这里，请稍候")
+		}
+		select {
+		case <-ctx.Done():
+			return 0, ctx.Err()
+		case <-time.After(time.Second):
+		}
+	}
+}
+
+// downloading 判断文件是不是还没下完。只认明确的进行中状态，没写状态的旧任务、导入的任务按完整文件处理。
+func downloading(job Obj) bool {
+	switch str(job["status"]) {
+	case "queued", "active", "waiting", "paused", "error":
+		return true
+	}
+	return false
+}
+
+// hls 启动或复用一路转码。limit 是边下边播能放到的秒数（-1 表示文件完整），转码不会读过它。
+func (m *Media) hls(gid string, start int, limit float64) (*hlsSession, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if s := m.sessions[gid]; s != nil {
-		if start < 0 || start >= s.start && start < s.start+30 {
+		running := true
+		select {
+		case <-s.done:
+			running = false
+		default:
+		}
+		// 已经结束的会话（比如边下边播时只转到当时下好的位置）里没有的分片要重开一路
+		if start < 0 || running && start >= s.start && start < s.start+30 {
 			s.last = time.Now()
 			return s, nil
 		}
@@ -274,9 +346,17 @@ func (m *Media) hls(gid string, start int) (*hlsSession, error) {
 	if e != nil {
 		return nil, e
 	}
+	duration := 180.0
+	if limit >= 0 {
+		duration = min(duration, limit-float64(start*6))
+		if duration < 6 {
+			_ = os.RemoveAll(dir)
+			return nil, errors.New("还没下载到这里，请稍候")
+		}
+	}
 	ctx, cancel := context.WithCancel(m.a.ctx)
 	s := &hlsSession{dir: dir, cancel: cancel, done: make(chan struct{}), last: time.Now(), start: start}
-	args := []string{"-nostdin", "-v", "error", "-ss", fmt.Sprint(start * 6), "-i", m.inputURL(gid), "-t", "180", "-map", "0:v:0", "-map", "0:a:0?", "-c:v", "libx264", "-preset", "veryfast", "-crf", "23", "-maxrate", "4M", "-bufsize", "8M", "-pix_fmt", "yuv420p", "-c:a", "aac", "-force_key_frames", "expr:gte(t,n_forced*6)", "-f", "hls", "-hls_time", "6", "-hls_list_size", "0", "-hls_flags", "independent_segments+temp_file", "-start_number", fmt.Sprint(start), "-hls_segment_filename", filepath.Join(dir, "segment%05d.ts"), filepath.Join(dir, "master.m3u8")}
+	args := []string{"-nostdin", "-v", "error", "-ss", fmt.Sprint(start * 6), "-i", m.inputURL(gid), "-t", strconv.FormatFloat(duration, 'f', 3, 64), "-map", "0:v:0", "-map", "0:a:0?", "-c:v", "libx264", "-preset", "veryfast", "-crf", "23", "-maxrate", "4M", "-bufsize", "8M", "-pix_fmt", "yuv420p", "-c:a", "aac", "-force_key_frames", "expr:gte(t,n_forced*6)", "-f", "hls", "-hls_time", "6", "-hls_list_size", "0", "-hls_flags", "independent_segments+temp_file", "-start_number", fmt.Sprint(start), "-hls_segment_filename", filepath.Join(dir, "segment%05d.ts"), filepath.Join(dir, "master.m3u8")}
 	cmd := exec.CommandContext(ctx, m.ffmpeg(), args...)
 	if e = cmd.Start(); e != nil {
 		cancel()
@@ -347,6 +427,10 @@ func (m *Media) Routes() {
 	})
 	a.handle("GET /api/downloads/{gid}/hls/{name}", func(w http.ResponseWriter, r *http.Request) error {
 		name := r.PathValue("name")
+		job, file, e := m.source(r.PathValue("gid"))
+		if e != nil {
+			return e
+		}
 		if name == "master.m3u8" {
 			probe, e := m.probe(r.Context(), r.PathValue("gid"))
 			if e != nil {
@@ -355,6 +439,11 @@ func (m *Media) Routes() {
 			duration, _ := strconv.ParseFloat(str(object(probe["format"])["duration"]), 64)
 			if duration <= 0 || duration > 7*24*3600 {
 				return errors.New("视频时长无效")
+			}
+			// 边下边播也给完整的 VOD 列表：EVENT 列表在 AVPlayer 那里按直播处理，
+			// 下载一停、列表 9 秒不变就直接报错。没下到的分片由下面的请求等着补上
+			if limit := playableSeconds(job, file, duration); limit >= 0 && limit < 6 {
+				return errors.New("已下载的部分还不够播放，请稍候")
 			}
 			var playlist strings.Builder
 			playlist.WriteString("#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:6\n#EXT-X-PLAYLIST-TYPE:VOD\n#EXT-X-MEDIA-SEQUENCE:0\n#EXT-X-INDEPENDENT-SEGMENTS\n")
@@ -378,7 +467,13 @@ func (m *Media) Routes() {
 			}
 			start = n
 		}
-		s, e := m.hls(r.PathValue("gid"), start)
+		limit := -1.0
+		if downloading(job) {
+			if limit, e = m.waitPlayable(r.Context(), r.PathValue("gid"), file, float64((start+1)*6)); e != nil {
+				return e
+			}
+		}
+		s, e := m.hls(r.PathValue("gid"), start, limit)
 		if e != nil {
 			return e
 		}

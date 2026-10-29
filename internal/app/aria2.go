@@ -15,6 +15,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"sync"
 	"time"
 )
@@ -228,7 +229,7 @@ func (e *Aria2Engine) download(ctx context.Context, j Obj) error {
 	if err = os.MkdirAll(dir, 0700); err != nil {
 		return err
 	}
-	options := Obj{"dir": dir, "continue": "true", "auto-file-renaming": "false", "allow-overwrite": "false", "file-allocation": "none", "split": "8", "max-connection-per-server": "8", "min-split-size": "1M", "seed-time": "0", "max-tries": "3", "retry-wait": "1", "connect-timeout": "10", "timeout": "30", "follow-torrent": "false", "follow-metalink": "false", "bt-save-metadata": "true", "check-integrity": "true"}
+	options := Obj{"dir": dir, "continue": "true", "auto-file-renaming": "false", "allow-overwrite": "false", "file-allocation": "none", "split": "8", "max-connection-per-server": "8", "min-split-size": "1M", "seed-time": "0", "max-tries": "3", "retry-wait": "1", "connect-timeout": "10", "timeout": "30", "follow-torrent": "false", "follow-metalink": "false", "bt-save-metadata": "true", "check-integrity": "true", "bt-prioritize-piece": streamPriority(streamHead)}
 	source := str(j["sourceUrl"])
 	kind := str(j["sourceType"])
 	method := "addUri"
@@ -308,6 +309,10 @@ func (e *Aria2Engine) download(ctx context.Context, j Obj) error {
 			remove(id)
 		}
 	}()
+	// 边下边播的优先窗口：aria2 只会优先取 head 范围内的块，范围内部仍是乱序。
+	// 设成整个文件等于没设，所以开一个比已连续部分超前 streamAhead 的窗口，快追上了再往后挪。
+	window := int64(streamHead)
+	ticks := 0
 	tick := time.NewTicker(250 * time.Millisecond)
 	defer tick.Stop()
 	for {
@@ -340,26 +345,41 @@ func (e *Aria2Engine) download(ctx context.Context, j Obj) error {
 		}
 		files := []Obj{}
 		primary := ""
-		var largest int64
+		var largest, offset, primaryOffset int64
 		for _, raw := range list(state["files"]) {
 			f := object(raw)
 			path := str(f["path"])
+			size := parseInt(str(f["length"]))
+			// aria2 按种子里的顺序列文件，没选中的也在，主文件的偏移要把它们算进去
+			fileOffset := offset
+			offset += size
 			if path == "" {
 				continue
 			}
 			if !inside(dir, path) {
 				return errors.New("aria2 返回越界文件路径")
 			}
-			size := parseInt(str(f["length"]))
 			files = append(files, Obj{"path": path, "size": size})
 			if primary == "" || size > largest {
-				primary, largest = path, size
+				primary, largest, primaryOffset = path, size, fileOffset
 			}
 		}
 		update := Obj{"totalLength": parseInt(str(state["totalLength"])), "completedLength": parseInt(str(state["completedLength"])), "downloadSpeed": parseInt(str(state["downloadSpeed"])), "uploadSpeed": parseInt(str(state["uploadSpeed"])), "aria2Gid": gid}
 		if len(files) > 0 {
 			update["files"] = files
 			update["filePath"] = primary
+			prefix := contiguousBytes(str(state["bitfield"]), parseInt(str(state["pieceLength"])), primaryOffset, largest)
+			update["playableBytes"] = prefix
+			// 每 2 秒看一次任务是不是在边下边播。挪窗口会让 aria2 内部重启这个任务几秒，所以只在快追上时才挪
+			ticks++
+			if ticks%8 == 0 && status == "active" && window < largest && prefix+streamAhead/2 > window {
+				if current, _ := e.app.Store.Get("downloads", str(j["gid"])); current != nil && flag(current["sequential"]) {
+					window = prefix + streamAhead
+					if err := ariaCall(ctx, endpoint, secret, "changeOption", []any{gid, Obj{"bt-prioritize-piece": streamPriority(window)}}, nil); err != nil {
+						e.app.Log("warn", "调整边下边播优先范围失败："+err.Error())
+					}
+				}
+			}
 		}
 		if _, err = e.app.Store.Patch("downloads", str(j["gid"]), update); err != nil {
 			return err
@@ -379,3 +399,36 @@ func (e *Aria2Engine) download(ctx context.Context, j Obj) error {
 	}
 }
 func (a *App) httpDownload(ctx context.Context, j Obj) error { return a.aria2.Download(ctx, j) }
+
+const (
+	// 平时先取开头 32 MiB 和结尾（起播快，mkv 的索引在文件尾）
+	streamHead = 32 << 20
+	// 边下边播时优先窗口超前已连续部分的长度，追到只剩一半时往后挪
+	streamAhead = 96 << 20
+)
+
+// streamPriority 是 aria2 的取块优先级：开头 head 字节和结尾 16 MiB 先下。
+func streamPriority(head int64) string {
+	return fmt.Sprintf("head=%dM,tail=16M", max(1, head>>20))
+}
+
+// contiguousBytes 从 aria2 的块位图算出主文件从开头起连续下好了多少字节，边下边播只能放到这里。
+func contiguousBytes(bitfield string, pieceLength, offset, length int64) int64 {
+	if bitfield == "" || pieceLength <= 0 || length <= 0 {
+		return 0
+	}
+	have := func(piece int64) bool {
+		i := piece / 4
+		if i >= int64(len(bitfield)) {
+			return false
+		}
+		n, err := strconv.ParseUint(bitfield[i:i+1], 16, 8)
+		return err == nil && n>>(3-piece%4)&1 == 1
+	}
+	for piece := offset / pieceLength; piece*pieceLength < offset+length; piece++ {
+		if !have(piece) {
+			return max(0, piece*pieceLength-offset)
+		}
+	}
+	return length
+}

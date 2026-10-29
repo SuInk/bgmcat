@@ -90,7 +90,7 @@ class _DetailScreenState extends State<DetailScreen> {
   List<DownloadJob> get _animeJobs {
     final cover = _anime.imageUrl;
     if (cover == null) return const [];
-    return _jobs.where((j) => j.imageUrl == cover && !j.isRemoved).toList();
+    return _jobs.where((j) => coverKey(j.imageUrl) == coverKey(cover) && !j.isRemoved).toList();
   }
 
   Future<void> _toggleFavorite() async {

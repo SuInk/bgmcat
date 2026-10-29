@@ -136,3 +136,23 @@ func TestAria2Shutdown(t *testing.T) {
 		t.Fatal("closed engine restarted")
 	}
 }
+
+func TestContiguousBytes(t *testing.T) {
+	// 8 块、每块 10 字节：前 5 块已下好（f8 = 11111000），第 6 块缺
+	if got := contiguousBytes("f8", 10, 0, 80); got != 50 {
+		t.Fatal(got)
+	}
+	// 主文件从第 25 字节开始（第 3 块中间），连续到第 50 字节
+	if got := contiguousBytes("f8", 10, 25, 40); got != 25 {
+		t.Fatal(got)
+	}
+	if got := contiguousBytes("ff", 10, 0, 80); got != 80 {
+		t.Fatal(got)
+	}
+	if got := contiguousBytes("", 10, 0, 80); got != 0 {
+		t.Fatal(got)
+	}
+	if got := streamPriority(streamHead); got != "head=32M,tail=16M" {
+		t.Fatal(got)
+	}
+}

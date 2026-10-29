@@ -201,6 +201,12 @@ class DownloadJob {
   bool get isError => status == 'error';
   bool get isRemoved => status == 'removed';
   double get progress => totalLength <= 0 ? 0 : (completedLength / totalLength).clamp(0, 1).toDouble();
+
+  /// 主文件从开头起连续下好的字节数，边下边播只能放到这里。
+  int get playableBytes => _int(raw['playableBytes']);
+
+  /// 还在下、能点进去边下边播的任务。
+  bool get streamable => !isComplete && !isRemoved && !isError;
 }
 
 class SubtitleTrack {
@@ -220,6 +226,8 @@ class PlaybackInfo {
     required this.deliveryMode,
     required this.duration,
     required this.subtitles,
+    required this.complete,
+    required this.playableSeconds,
   });
 
   factory PlaybackInfo.fromJson(Map<String, dynamic> json) => PlaybackInfo(
@@ -232,6 +240,8 @@ class PlaybackInfo {
             .map((t) => SubtitleTrack(
                 id: t['id'].toString(), label: _str(t['label']) ?? '字幕 ${t['id']}', codec: _str(t['codec'])))
             .toList(),
+        complete: json['complete'] != false,
+        playableSeconds: _num(json['playableSeconds']) ?? -1,
       );
 
   final String gid;
@@ -239,6 +249,12 @@ class PlaybackInfo {
   final String deliveryMode;
   final double? duration;
   final List<SubtitleTrack> subtitles;
+
+  /// 文件还没下完时为 false，此时只能放到 [playableSeconds] 秒（后端按连续下好的字节折算）。
+  final bool complete;
+  final double playableSeconds;
+
+  bool get streaming => !complete;
 
   bool get usesHls => deliveryMode.startsWith('hls');
 }

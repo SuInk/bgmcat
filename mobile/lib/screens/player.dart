@@ -51,6 +51,12 @@ class _PlayerScreenState extends State<PlayerScreen> {
   /// 同一部番的下载任务（含还在下的），用来标出哪些集能直接播。
   List<DownloadJob> _siblings = [];
   AnimeDetail? _animeDetail;
+  Timer? _siblingTimer;
+
+  /// 边下边播：定时刷新能放到第几秒；起播前还没下够时显示的进度提示。
+  Timer? _streamTimer;
+  String? _waitingHint;
+  Timer? _retryTimer;
   final _episodeScroll = ScrollController();
   bool _episodeScrolled = false;
   late AppSession _session;
@@ -71,6 +77,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
     _hideTimer?.cancel();
     _saveTimer?.cancel();
     _resumeHintTimer?.cancel();
+    _siblingTimer?.cancel();
+    _streamTimer?.cancel();
+    _retryTimer?.cancel();
     _controller?.removeListener(_onTick);
     _controller?.dispose();
     _episodeScroll.dispose();
@@ -79,18 +88,26 @@ class _PlayerScreenState extends State<PlayerScreen> {
     super.dispose();
   }
 
-  Future<void> _loadEpisodes() async {
+  Future<void> _refreshSiblings() async {
     try {
       final jobs = await _api.downloads();
       final cover = widget.job.imageUrl;
       final name = animeNameOf(widget.job.title);
       final siblings = jobs
-          .where((j) => !j.isRemoved && (cover != null ? j.imageUrl == cover : animeNameOf(j.title) == name))
+          .where((j) => !j.isRemoved && (cover != null ? coverKey(j.imageUrl) == coverKey(cover) : animeNameOf(j.title) == name))
           .toList();
       if (mounted) setState(() => _siblings = siblings);
     } catch (_) {
       // 拿不到任务列表就只标当前这一集
     }
+  }
+
+  Future<void> _loadEpisodes() async {
+    await _refreshSiblings();
+    // 有集在缓存时定时刷新进度，下好的集能马上点
+    _siblingTimer = Timer.periodic(const Duration(seconds: 5), (_) {
+      if (_siblings.any((j) => !j.isComplete)) _refreshSiblings();
+    });
     try {
       final animeId = widget.anime?.animeId ?? await _resolveAnimeId();
       if (animeId == null) return;
@@ -105,8 +122,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
   /// 取不到再按标题里的番名搜一次，封面对得上的优先。
   Future<String?> _resolveAnimeId() async {
     final cover = widget.job.imageUrl;
-    final match = cover == null ? null : RegExp(r'bgm\.tv/.*/(\d+)_[^/]+\.\w+$').firstMatch(cover);
-    if (match != null) return match.group(1);
+    final fromCover = bangumiIdFromCover(cover);
+    if (fromCover != null) return fromCover;
     final results = await _api.search(animeNameOf(widget.job.title));
     if (results.isEmpty) return null;
     return (results.where((a) => a.imageUrl == cover).firstOrNull ?? results.first).animeId;
@@ -125,12 +142,14 @@ class _PlayerScreenState extends State<PlayerScreen> {
       _subtitle = null;
       _track = null;
       _resumeHint = null;
+      _waitingHint = null;
     });
+    _streamTimer?.cancel();
     await old?.dispose();
 
     try {
-      final info = await _api.playbackInfo(job.gid);
-      if (!mounted || _job.gid != job.gid) return;
+      final info = job.isComplete ? await _api.playbackInfo(job.gid) : await _waitUntilPlayable(job);
+      if (info == null || !mounted || _job.gid != job.gid) return;
       final url = info.usesHls ? _api.hlsUrl(job.gid) : _api.streamUrl(job.gid);
       final controller = VideoPlayerController.networkUrl(Uri.parse(url));
       setState(() {
@@ -146,9 +165,12 @@ class _PlayerScreenState extends State<PlayerScreen> {
       if (!mounted || _controller != controller) return;
       controller.addListener(_onTick);
 
+      if (info.streaming) {
+        _streamTimer = Timer.periodic(const Duration(seconds: 5), (_) => _refreshStreamInfo(job.gid));
+      }
       final record = _session.record(job.gid);
       if (record != null && record.resumable) {
-        await controller.seekTo(Duration(milliseconds: (record.position * 1000).round()));
+        await controller.seekTo(_clampToPlayable(Duration(milliseconds: (record.position * 1000).round())));
         _showResumeHint('已从 ${formatDuration(Duration(seconds: record.position.round()))} 继续播放');
       }
       await controller.play();
@@ -159,17 +181,106 @@ class _PlayerScreenState extends State<PlayerScreen> {
     } catch (e) {
       if (!mounted) return;
       _session.handleError(e);
+      if (!job.isComplete && e is! ApiException) {
+        _retryStreaming();
+        return;
+      }
       setState(() => _error = e is ApiException ? e.message : '视频加载失败：$e');
     } finally {
       if (mounted) setState(() => _initializing = false);
     }
   }
 
+  /// 边下边播：先让后端改成顺序下载，再等开头下够一小段（能放 12 秒以上）才起播。
+  Future<PlaybackInfo?> _waitUntilPlayable(DownloadJob job) async {
+    try {
+      await _api.makeSequential(job.gid);
+    } catch (_) {
+      // 切顺序下载失败也照样等，只是可能慢一些
+    }
+    // 点了边下边播就是要看，暂停着的任务顺手继续下（已经够起播的也一样，不然播到头就卡住）
+    var resumed = false;
+    if (job.isPaused) {
+      resumed = true;
+      await _api.resumeDownload(job.gid).catchError((_) {});
+    }
+    while (mounted && _job.gid == job.gid) {
+      try {
+        final info = await _api.playbackInfo(job.gid);
+        if (info.complete || info.playableSeconds >= 12) {
+          if (mounted) setState(() => _waitingHint = null);
+          return info;
+        }
+      } on ApiException catch (e) {
+        if (e.isAuthInvalid) rethrow;
+      }
+      // 后端说还不够播，看一眼下载进度给个提示
+      try {
+        final latest = (await _api.downloads()).where((j) => j.gid == job.gid).firstOrNull;
+        if (latest == null || latest.isRemoved) throw ApiException('下载任务已被删除');
+        if (latest.isError) throw ApiException(latest.errorMessage ?? '下载出错了');
+        if (latest.isPaused && !resumed) {
+          resumed = true;
+          await _api.resumeDownload(job.gid);
+        }
+        if (mounted) {
+          setState(() => _waitingHint = '正在缓冲：已连续下好 ${formatBytes(latest.playableBytes)} · ${formatSpeed(latest.downloadSpeed)}');
+        }
+      } on ApiException catch (e) {
+        if (e.isAuthInvalid || e.code == null) rethrow;
+      }
+      await Future<void>.delayed(const Duration(seconds: 3));
+    }
+    return null;
+  }
+
+  /// 边下边播时下载跟不上（暂停了、没速度了），播放器会报错；等几秒从刚才的位置重开，
+  /// _open 里会先等到下好够播的一段。
+  void _retryStreaming() {
+    if (_retryTimer?.isActive ?? false) return;
+    _saveProgress();
+    _controller?.removeListener(_onTick);
+    setState(() => _waitingHint = '下载跟不上播放，正在重新缓冲…');
+    final job = _job;
+    _retryTimer = Timer(const Duration(seconds: 4), () async {
+      if (!mounted || _job.gid != job.gid) return;
+      // 拿最新的任务状态：可能已经下完了
+      final latest = (await _api.downloads().catchError((_) => <DownloadJob>[]))
+          .where((j) => j.gid == job.gid)
+          .firstOrNull;
+      if (mounted && _job.gid == job.gid) _open(latest ?? job);
+    });
+  }
+
+  Future<void> _refreshStreamInfo(String gid) async {
+    try {
+      final info = await _api.playbackInfo(gid);
+      if (!mounted || _job.gid != gid || _info == null) return;
+      setState(() => _info = info);
+      if (info.complete) _streamTimer?.cancel();
+    } catch (_) {
+      // 刷新失败下次再试
+    }
+  }
+
+  /// 边下边播时不能拖到还没下好的地方。
+  Duration _clampToPlayable(Duration target) {
+    final info = _info;
+    if (info == null || !info.streaming) return target;
+    final limit = Duration(milliseconds: ((info.playableSeconds - 3) * 1000).round());
+    if (target > limit) return limit < Duration.zero ? Duration.zero : limit;
+    return target;
+  }
+
   void _onTick() {
     if (!mounted) return;
     final value = _controller?.value;
     if (value != null && value.hasError && _error == null) {
-      setState(() => _error = '播放出错：${value.errorDescription ?? '未知错误'}');
+      if (_info?.streaming ?? false) {
+        _retryStreaming();
+      } else {
+        setState(() => _error = '播放出错：${value.errorDescription ?? '未知错误'}');
+      }
       return;
     }
     setState(() {});
@@ -257,7 +368,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
   Future<void> _seekRelative(int seconds) async {
     final controller = _controller;
     if (controller == null || !controller.value.isInitialized) return;
-    final target = controller.value.position + Duration(seconds: seconds);
+    final target = _clampToPlayable(controller.value.position + Duration(seconds: seconds));
     await controller.seekTo(target < Duration.zero ? Duration.zero : target);
     _scheduleHide();
   }
@@ -357,13 +468,13 @@ class _PlayerScreenState extends State<PlayerScreen> {
             )
           else if (_initializing || (value?.isBuffering ?? false))
             const Center(child: CircularProgressIndicator(color: Colors.white70)),
-          if (_info?.usesHls == true && _initializing)
-            const Positioned(
+          if (_waitingHint != null || (_info?.usesHls == true && _initializing))
+            Positioned(
               left: 0,
               right: 0,
               bottom: 24,
-              child: Text('首次播放需要服务器实时转码，请稍候…',
-                  textAlign: TextAlign.center, style: TextStyle(color: Colors.white54, fontSize: 12)),
+              child: Text(_waitingHint ?? '首次播放需要服务器实时转码，请稍候…',
+                  textAlign: TextAlign.center, style: const TextStyle(color: Colors.white54, fontSize: 12)),
             ),
           AnimatedOpacity(
             opacity: _controlsVisible ? 1 : 0,
@@ -403,7 +514,11 @@ class _PlayerScreenState extends State<PlayerScreen> {
   Widget _buildControls(bool ready) {
     final controller = _controller;
     final value = controller?.value;
-    final duration = ready ? value!.duration : Duration(seconds: (_info?.duration ?? 0).round());
+    final info = _info;
+    // 边下边播时播放器只知道已下好的那段有多长，进度条按整集长度画
+    final duration = ready && !(info?.streaming ?? false) && value!.duration > Duration.zero
+        ? value.duration
+        : Duration(milliseconds: ((info?.duration ?? 0) * 1000).round());
     final position = ready ? value!.position : Duration.zero;
     final maxMs = duration.inMilliseconds.toDouble();
     final sliderValue = (_dragValue ?? position.inMilliseconds.toDouble()).clamp(0.0, maxMs <= 0 ? 1.0 : maxMs);
@@ -501,12 +616,16 @@ class _PlayerScreenState extends State<PlayerScreen> {
                       min: 0,
                       max: maxMs <= 0 ? 1 : maxMs,
                       value: sliderValue,
-                      secondaryTrackValue: buffered.inMilliseconds.toDouble().clamp(0.0, maxMs <= 0 ? 1.0 : maxMs),
+                      // 边下边播时浅色那截是已下载到的位置，否则是播放器的缓冲
+                      secondaryTrackValue: (info != null && info.streaming
+                              ? info.playableSeconds * 1000
+                              : buffered.inMilliseconds.toDouble())
+                          .clamp(0.0, maxMs <= 0 ? 1.0 : maxMs),
                       onChangeStart: ready ? (_) => _hideTimer?.cancel() : null,
                       onChanged: ready ? (v) => setState(() => _dragValue = v) : null,
                       onChangeEnd: ready
                           ? (v) async {
-                              await controller!.seekTo(Duration(milliseconds: v.round()));
+                              await controller!.seekTo(_clampToPlayable(Duration(milliseconds: v.round())));
                               if (mounted) setState(() => _dragValue = null);
                               _scheduleHide();
                             }
@@ -596,6 +715,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
             }),
             _tag(formatBytes(_job.totalLength)),
             if (info.subtitles.isNotEmpty) _tag('${info.subtitles.length} 条字幕'),
+            if (info.streaming && info.duration != null)
+              _tag('边下边播 · 已下载到 ${formatDuration(Duration(seconds: info.playableSeconds.round()))}'
+                  ' / ${formatDuration(Duration(seconds: info.duration!.round()))}'),
           ]),
         ],
         ..._buildEpisodes(),
@@ -709,13 +831,13 @@ class _PlayerScreenState extends State<PlayerScreen> {
     } else if (cached) {
       status = watched ? '已看完' : '已缓存';
     } else if (downloading) {
-      status = '缓存中 ${(job.progress * 100).round()}%';
+      status = job.isPaused ? '已暂停 ${(job.progress * 100).round()}%' : '边下边播 ${(job.progress * 100).round()}%';
     } else if (notAired) {
       status = '未播出';
     } else {
       status = '未缓存';
     }
-    final enabled = cached || playing;
+    final enabled = cached || playing || downloading;
     return SizedBox(
       width: 116,
       child: Material(
@@ -728,10 +850,12 @@ class _PlayerScreenState extends State<PlayerScreen> {
           borderRadius: BorderRadius.circular(10),
           onTap: () {
             if (playing) return;
-            if (cached) {
+            if (cached || downloading) {
               _open(job);
             } else if (detail != null && !notAired) {
-              showToast(context, downloading ? '第 $number 集还在缓存' : '第 $number 集还没缓存，可以去番剧详情里下载');
+              _showEpisodeResources(number, detail);
+            } else if (notAired) {
+              showToast(context, '第 $number 集还没播出');
             }
           },
           child: Padding(
@@ -754,13 +878,101 @@ class _PlayerScreenState extends State<PlayerScreen> {
                   children: [
                     if (playing) const Icon(Icons.graphic_eq, size: 13, color: AppColors.accent),
                     if (!playing && cached) const Icon(Icons.check_circle, size: 12, color: AppColors.accent),
-                    if (playing || cached) const SizedBox(width: 4),
+                    if (!playing && downloading) const Icon(Icons.downloading, size: 12, color: AppColors.accent),
+                    if (playing || cached || downloading) const SizedBox(width: 4),
                     Text(
                       status,
-                      style: TextStyle(fontSize: 11.5, color: playing || cached ? AppColors.accent : AppColors.muted),
+                      style: TextStyle(
+                          fontSize: 11.5, color: playing || cached || downloading ? AppColors.accent : AppColors.muted),
                     ),
                   ],
                 ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// 没缓存的集：列出这一集的资源，就地下载；下好开头就能点这一集边下边播。
+  Future<void> _showEpisodeResources(int number, AnimeDetail detail) async {
+    final items = detail.downloads.where((r) => (r.episode ?? episodeOf(r.title)) == number).toList();
+    final queued = <String>{};
+    await showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      isScrollControlled: true,
+      builder: (sheetContext) => StatefulBuilder(
+        builder: (sheetContext, setSheetState) => SafeArea(
+          child: ConstrainedBox(
+            constraints: BoxConstraints(maxHeight: MediaQuery.sizeOf(sheetContext).height * 0.6),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
+                  child: Text('下载第 $number 集', style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+                ),
+                if (items.isEmpty)
+                  const Padding(
+                    padding: EdgeInsets.all(32),
+                    child: Center(child: Text('这一集暂时没找到资源', style: TextStyle(color: AppColors.muted))),
+                  )
+                else
+                  Flexible(
+                    child: ListView.separated(
+                      shrinkWrap: true,
+                      itemCount: items.length,
+                      separatorBuilder: (_, _) => const Divider(indent: 20, endIndent: 20),
+                      itemBuilder: (_, index) {
+                        final item = items[index];
+                        final meta = [
+                          ?item.subgroup,
+                          ?resolutionOf(item.title, item.resolution),
+                          ?item.sizeText,
+                        ];
+                        return Padding(
+                          padding: const EdgeInsets.fromLTRB(20, 8, 12, 8),
+                          child: Row(
+                            children: [
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(item.title,
+                                        maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 13)),
+                                    const SizedBox(height: 3),
+                                    Text(meta.join(' · '), style: const TextStyle(fontSize: 12, color: AppColors.muted)),
+                                  ],
+                                ),
+                              ),
+                              queued.contains(item.id)
+                                  ? const Padding(
+                                      padding: EdgeInsets.symmetric(horizontal: 12),
+                                      child: Icon(Icons.check_circle, color: AppColors.ok),
+                                    )
+                                  : TextButton(
+                                      onPressed: () async {
+                                        setSheetState(() => queued.add(item.id));
+                                        try {
+                                          await _api.createDownload(item, detail.anime);
+                                          if (mounted) showToast(context, '已加入缓存，下好开头后点第 $number 集就能边下边播');
+                                          await _refreshSiblings();
+                                        } catch (e) {
+                                          setSheetState(() => queued.remove(item.id));
+                                          if (mounted) showToast(context, e.toString(), error: true);
+                                        }
+                                      },
+                                      child: const Text('下载'),
+                                    ),
+                            ],
+                          ),
+                        );
+                      },
+                    ),
+                  ),
               ],
             ),
           ),

@@ -26,7 +26,7 @@ List<CachedGroup> groupCachedJobs(List<DownloadJob> jobs) {
   final groups = <String, CachedGroup>{};
   for (final job in jobs) {
     final name = animeNameOf(job.title);
-    final key = job.imageUrl ?? name;
+    final key = coverKey(job.imageUrl) ?? name;
     groups.putIfAbsent(key, () => CachedGroup(key, name, job.imageUrl)).jobs.add(job);
   }
   for (final group in groups.values) {
@@ -343,12 +343,19 @@ class _DownloadingTile extends StatelessWidget {
                 ],
               ),
             ),
+            if (!error)
+              IconButton(
+                tooltip: '边下边播',
+                onPressed: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => PlayerScreen(job: job))),
+                icon: const Icon(Icons.play_circle_outline),
+              ),
             IconButton(
               tooltip: paused || error ? '继续' : '暂停',
               onPressed: busy ? null : onToggle,
               icon: busy
                   ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
-                  : Icon(paused || error ? Icons.play_arrow_rounded : Icons.pause_rounded),
+                  // 「继续下载」用下载图标，别和旁边的「边下边播」都是三角
+                  : Icon(paused || error ? Icons.download_rounded : Icons.pause_rounded),
             ),
           ],
         ),

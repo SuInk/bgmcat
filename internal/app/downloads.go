@@ -229,6 +229,28 @@ func (a *App) downloadRoutes() {
 		}
 		return e
 	})
+	// 边下边播：任务改成顺序下载并记在任务上，暂停后再继续也照样按顺序下
+	a.handle("POST /api/downloads/{gid}/sequential", func(w http.ResponseWriter, r *http.Request) error {
+		gid := r.PathValue("gid")
+		current, err := a.Store.Get("downloads", gid)
+		if err != nil {
+			return err
+		}
+		if current == nil {
+			return errors.New("任务不存在")
+		}
+		if str(current["status"]) == "complete" || flag(current["sequential"]) {
+			ok(w, publicDownloads(current))
+			return nil
+		}
+		// 下载循环每两秒看一次这个标记，自己去挪 aria2 的优先范围
+		j, err := a.Store.Patch("downloads", gid, Obj{"sequential": true})
+		if err != nil {
+			return err
+		}
+		ok(w, publicDownloads(j))
+		return nil
+	})
 	a.handle("POST /api/downloads/{gid}/resume", func(w http.ResponseWriter, r *http.Request) error {
 		gid := r.PathValue("gid")
 		j, e := a.Store.Get("downloads", gid)

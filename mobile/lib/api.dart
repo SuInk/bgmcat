@@ -187,6 +187,10 @@ class ApiClient {
   Future<void> pauseDownload(String gid) =>
       _request('POST', '/api/downloads/${Uri.encodeComponent(gid)}/pause');
 
+  /// 开始边下边播：让后端把这个任务改成按顺序下载。
+  Future<void> makeSequential(String gid) =>
+      _request('POST', '/api/downloads/${Uri.encodeComponent(gid)}/sequential');
+
   Future<void> resumeDownload(String gid) =>
       _request('POST', '/api/downloads/${Uri.encodeComponent(gid)}/resume');
 

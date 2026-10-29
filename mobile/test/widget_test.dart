@@ -53,5 +53,9 @@ Dialogue: 1,0:00:11.45,0:00:14.62,Screen,,0,0,0,,{\\pos(1419.333,717)\\fs28}说�
     expect(resolutionOf(title), '1080p');
     expect(animeNameOf(title), 'FX战士久留美');
     expect(episodeOf('[Lilith-Raws] Some Show - 07 [Baha][WEB-DL][1080p]'), 7);
+    expect(bangumiIdFromCover('https://lain.bgm.tv/r/400/pic/cover/l/d3/99/622288_nmbC3.jpg'), '622288');
+    expect(coverKey('https://lain.bgm.tv/pic/cover/l/d3/99/622288_nmbC3.jpg'),
+        coverKey('https://lain.bgm.tv/r/400/pic/cover/l/d3/99/622288_nmbC3.jpg'));
+    expect(coverKey('https://example.com/a.jpg'), 'https://example.com/a.jpg');
   });
 }
