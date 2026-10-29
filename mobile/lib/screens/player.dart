@@ -309,7 +309,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
                   children: [
                     VideoPlayer(controller),
                     // 字幕画在视频画面的矩形里，\pos 定位才能对得上
-                    if (subtitle != null && cues.isNotEmpty) AssLayer(subtitle: subtitle, cues: cues),
+                    if (subtitle != null && cues.isNotEmpty) AssLayer(subtitle: subtitle, cues: cues, liftBottom: _controlsVisible ? 44 : 0),
                   ],
                 ),
               ),
@@ -608,10 +608,13 @@ class _PlayerScreenState extends State<PlayerScreen> {
 /// 按 ASS 的 PlayRes 坐标把字幕画到视频画面上：有 \pos 的（屏幕文字翻译）放到原位，
 /// 其余按对齐方位叠在底部 / 顶部 / 中间。
 class AssLayer extends StatelessWidget {
-  const AssLayer({super.key, required this.subtitle, required this.cues});
+  const AssLayer({super.key, required this.subtitle, required this.cues, this.liftBottom = 0});
 
   final AssSubtitle subtitle;
   final List<AssCue> cues;
+
+  /// 控制条露出来时底部字幕往上让开，别压在进度条上。
+  final double liftBottom;
 
   @override
   Widget build(BuildContext context) {
@@ -647,7 +650,7 @@ class AssLayer extends StatelessWidget {
                   ),
                 ),
               ),
-            Positioned(left: margin, right: margin, bottom: margin, child: column(flowing.where((c) => c.align <= 3))),
+            Positioned(left: margin, right: margin, bottom: margin + liftBottom, child: column(flowing.where((c) => c.align <= 3))),
             Positioned(left: margin, right: margin, top: margin, child: column(flowing.where((c) => c.top))),
             Positioned.fill(
               child: Center(child: column(flowing.where((c) => c.align >= 4 && c.align <= 6))),
