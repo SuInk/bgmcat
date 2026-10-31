@@ -152,7 +152,20 @@ func TestContiguousBytes(t *testing.T) {
 	if got := contiguousBytes("", 10, 0, 80); got != 0 {
 		t.Fatal(got)
 	}
-	if got := streamPriority(streamHead); got != "head=32M,tail=16M" {
+	// fb = 1111 1011，只缺第 5 块；b8 = 1011 1000，25..70 落在第 2～6 块，缺第 5、6 块
+	if got := missingBytes("fb", 10, 0, 80); got != 10 {
+		t.Fatal(got)
+	}
+	if got := missingBytes("b8", 10, 25, 70); got != 20 {
+		t.Fatal(got)
+	}
+	if got := missingBytes("ff", 10, 30, 30); got != 0 {
+		t.Fatal(got)
+	}
+	if streamStep(0) != 16<<20 || streamStep(1<<20) != 30<<20 || streamStep(10<<20) != 96<<20 {
+		t.Fatal(streamStep(1 << 20))
+	}
+	if got := streamPriority(streamHead); got != "head=16M,tail=16M" {
 		t.Fatal(got)
 	}
 }

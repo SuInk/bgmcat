@@ -309,10 +309,10 @@ func (e *Aria2Engine) download(ctx context.Context, j Obj) error {
 			remove(id)
 		}
 	}()
-	// 边下边播的优先窗口：aria2 只会优先取 head 范围内的块，范围内部仍是乱序。
-	// 设成整个文件等于没设，所以开一个比已连续部分超前 streamAhead 的窗口，快追上了再往后挪。
+	// 边下边播的优先窗口：aria2 只会优先取 head 范围内的块，并且会把这些块打乱顺序再取，
+	// 所以窗口里的内容差不多要整段下完，连续部分才一下跳上来。窗口越大起播越慢，设成整个文件等于没设。
 	window := int64(streamHead)
-	ticks := 0
+	ticks, failures := 0, 0
 	tick := time.NewTicker(250 * time.Millisecond)
 	defer tick.Stop()
 	for {
@@ -323,8 +323,13 @@ func (e *Aria2Engine) download(ctx context.Context, j Obj) error {
 		}
 		var state Obj
 		if err = ariaCall(ctx, endpoint, secret, "tellStatus", []any{gid}, &state); err != nil {
+			// aria2 重启任务（边下边播挪窗口）或机器忙时偶尔会超时，连着失败才算下载失败
+			if failures++; failures < 5 && ctx.Err() == nil {
+				continue
+			}
 			return err
 		}
+		failures = 0
 		children := list(state["followedBy"])
 		if len(children) > 0 {
 			gid = str(children[0])
@@ -368,13 +373,16 @@ func (e *Aria2Engine) download(ctx context.Context, j Obj) error {
 		if len(files) > 0 {
 			update["files"] = files
 			update["filePath"] = primary
-			prefix := contiguousBytes(str(state["bitfield"]), parseInt(str(state["pieceLength"])), primaryOffset, largest)
+			bitfield, pieceLength := str(state["bitfield"]), parseInt(str(state["pieceLength"]))
+			prefix := contiguousBytes(bitfield, pieceLength, primaryOffset, largest)
 			update["playableBytes"] = prefix
-			// 每 2 秒看一次任务是不是在边下边播。挪窗口会让 aria2 内部重启这个任务几秒，所以只在快追上时才挪
+			// 每 2 秒看一次任务是不是在边下边播。窗口里只剩几块没下完（多半是慢节点拿着）时往后延一段，
+			// 一段约等于按当前速度下 30 秒的量：改优先范围会让 aria2 内部重启这个任务、断几秒，太小了不划算，太大了连续部分跳得慢。
+			// 慢节点拿着的块重启后还会回到它手里，窗口末端不缩，那几块照样在优先范围里。
 			ticks++
-			if ticks%8 == 0 && status == "active" && window < largest && prefix+streamAhead/2 > window {
+			if ticks%8 == 0 && status == "active" && window < largest && missingBytes(bitfield, pieceLength, primaryOffset+prefix, primaryOffset+window) <= streamStraggle {
 				if current, _ := e.app.Store.Get("downloads", str(j["gid"])); current != nil && flag(current["sequential"]) {
-					window = prefix + streamAhead
+					window += streamStep(num(update["downloadSpeed"]))
 					if err := ariaCall(ctx, endpoint, secret, "changeOption", []any{gid, Obj{"bt-prioritize-piece": streamPriority(window)}}, nil); err != nil {
 						e.app.Log("warn", "调整边下边播优先范围失败："+err.Error())
 					}
@@ -401,11 +409,16 @@ func (e *Aria2Engine) download(ctx context.Context, j Obj) error {
 func (a *App) httpDownload(ctx context.Context, j Obj) error { return a.aria2.Download(ctx, j) }
 
 const (
-	// 平时先取开头 32 MiB 和结尾（起播快，mkv 的索引在文件尾）
-	streamHead = 32 << 20
-	// 边下边播时优先窗口超前已连续部分的长度，追到只剩一半时往后挪
-	streamAhead = 96 << 20
+	// 平时先取开头 16 MiB 和结尾（起播快，mkv 的索引在文件尾）。窗口内是乱序的，开得小起播才快
+	streamHead = 16 << 20
+	// 窗口里没下完的只剩这么多时就往后延
+	streamStraggle = 8 << 20
 )
+
+// streamStep 是边下边播时优先窗口每次往后延的长度：按当前速度下 30 秒的量，限制在 16～96 MiB。
+func streamStep(speed int64) int64 {
+	return min(max(speed*30, 16<<20), 96<<20)
+}
 
 // streamPriority 是 aria2 的取块优先级：开头 head 字节和结尾 16 MiB 先下。
 func streamPriority(head int64) string {
@@ -417,18 +430,34 @@ func contiguousBytes(bitfield string, pieceLength, offset, length int64) int64 {
 	if bitfield == "" || pieceLength <= 0 || length <= 0 {
 		return 0
 	}
-	have := func(piece int64) bool {
-		i := piece / 4
-		if i >= int64(len(bitfield)) {
-			return false
-		}
-		n, err := strconv.ParseUint(bitfield[i:i+1], 16, 8)
-		return err == nil && n>>(3-piece%4)&1 == 1
-	}
 	for piece := offset / pieceLength; piece*pieceLength < offset+length; piece++ {
-		if !have(piece) {
+		if !hasPiece(bitfield, piece) {
 			return max(0, piece*pieceLength-offset)
 		}
 	}
 	return length
+}
+
+// missingBytes 是种子里 [from, to) 这段还没下好的字节数，按整块算。
+func missingBytes(bitfield string, pieceLength, from, to int64) int64 {
+	if pieceLength <= 0 || to <= from {
+		return 0
+	}
+	var missing int64
+	for piece := from / pieceLength; piece*pieceLength < to; piece++ {
+		if !hasPiece(bitfield, piece) {
+			missing += pieceLength
+		}
+	}
+	return missing
+}
+
+// hasPiece 读 aria2 的十六进制块位图，最高位是第 0 块。
+func hasPiece(bitfield string, piece int64) bool {
+	i := piece / 4
+	if i >= int64(len(bitfield)) {
+		return false
+	}
+	n, err := strconv.ParseUint(bitfield[i:i+1], 16, 8)
+	return err == nil && n>>(3-piece%4)&1 == 1
 }

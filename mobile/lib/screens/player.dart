@@ -57,6 +57,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
   Timer? _streamTimer;
   String? _waitingHint;
   Timer? _retryTimer;
+
+  /// 播到已下载的边上自动暂停了，等下好一段再自己接着放。
+  bool _edgeWaiting = false;
   final _episodeScroll = ScrollController();
   bool _episodeScrolled = false;
   late AppSession _session;
@@ -143,6 +146,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
       _track = null;
       _resumeHint = null;
       _waitingHint = null;
+      _edgeWaiting = false;
     });
     _streamTimer?.cancel();
     await old?.dispose();
@@ -258,6 +262,20 @@ class _PlayerScreenState extends State<PlayerScreen> {
       if (!mounted || _job.gid != gid || _info == null) return;
       setState(() => _info = info);
       if (info.complete) _streamTimer?.cancel();
+      final controller = _controller;
+      // 等到下好的部分超出当前位置 20 秒（或者下完了）再接着放，免得刚放两秒又停
+      if (_edgeWaiting && controller != null) {
+        final position = controller.value.position.inMilliseconds / 1000;
+        if (info.complete || info.playableSeconds >= position + 20) {
+          setState(() {
+            _edgeWaiting = false;
+            _waitingHint = null;
+          });
+          await controller.play();
+        } else {
+          setState(() => _waitingHint = _edgeHint(info));
+        }
+      }
     } catch (_) {
       // 刷新失败下次再试
     }
@@ -283,7 +301,26 @@ class _PlayerScreenState extends State<PlayerScreen> {
       }
       return;
     }
+    // 边下边播追上了下载：先停下等，不让播放器去请求还没下到的片段（会卡到超时报错）
+    final info = _info;
+    if (value != null && value.isPlaying && info != null && info.streaming && info.playableSeconds >= 0 && !_edgeWaiting) {
+      if (value.position.inMilliseconds / 1000 >= info.playableSeconds - 2) {
+        _controller!.pause();
+        setState(() {
+          _edgeWaiting = true;
+          _waitingHint = _edgeHint(info);
+        });
+        _refreshStreamInfo(_job.gid);
+        return;
+      }
+    }
     setState(() {});
+  }
+
+  String _edgeHint(PlaybackInfo info) {
+    final speed = _siblings.where((j) => j.gid == _job.gid).firstOrNull?.downloadSpeed;
+    return '已播到下载的位置，等下好一段自动继续 · 已下载到 ${formatDuration(Duration(seconds: info.playableSeconds.round()))}'
+        '${speed != null && speed > 0 ? ' · ${formatSpeed(speed)}' : ''}';
   }
 
   void _saveProgress() {
@@ -354,7 +391,14 @@ class _PlayerScreenState extends State<PlayerScreen> {
   void _togglePlay() {
     final controller = _controller;
     if (controller == null || !controller.value.isInitialized) return;
-    if (controller.value.isPlaying) {
+    if (_edgeWaiting) {
+      // 等下载时点播放键就是不想等了，停在这里
+      setState(() {
+        _edgeWaiting = false;
+        _waitingHint = null;
+      });
+      WakelockPlus.disable();
+    } else if (controller.value.isPlaying) {
       controller.pause();
       WakelockPlus.disable();
       _saveProgress();
@@ -472,7 +516,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
             Positioned(
               left: 0,
               right: 0,
-              bottom: 24,
+              // 控制条出来时让到它上面，不然压在进度条上
+              bottom: _controlsVisible ? 64 : 24,
               child: Text(_waitingHint ?? '首次播放需要服务器实时转码，请稍候…',
                   textAlign: TextAlign.center, style: const TextStyle(color: Colors.white54, fontSize: 12)),
             ),
