@@ -30,6 +30,9 @@ var defaults []byte
 
 var Version = version.Current()
 
+// userAgent 是对外请求的标识。Bangumi API 要求写明应用名和项目地址，RSS 站和 GitHub 也据此识别来源。
+var userAgent = "SuInk/bgmcat/" + Version + " (https://github.com/SuInk/bgmcat)"
+
 type Config struct {
 	DataDir, Addr, PublicURL string
 	Web                      fs.FS
@@ -442,7 +445,7 @@ func (a *App) requestJSON(ctx context.Context, method, endpoint string, payload 
 	if e != nil {
 		return nil, e
 	}
-	req.Header.Set("User-Agent", "AnimeRSS-Go/"+Version)
+	req.Header.Set("User-Agent", userAgent)
 	if payload != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}

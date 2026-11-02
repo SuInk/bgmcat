@@ -20,7 +20,7 @@ Electron 桌面版 · Go 服务 · 托管 aria2 HTTP / BitTorrent · Vue 控制�
 
 桌面版内置 Electron、Go 后端和界面，双击后自动登录，无需反复输入 token。独立 Go 服务版也继续提供，用于服务器和 Docker。下载功能需要 aria2c，由 bgmcat 自动管理；桌面包目前需系统安装 aria2，deb 可通过 apt 自动处理依赖。Vue 页面已编译并嵌入 Go 程序。FFmpeg/ffprobe 和 cloudflared 是按功能选择的外部组件，Docker 包含 aria2 和 FFmpeg。
 
-> 当前正在准备首个 Go Release，仓库为 `SuInk/bgmcat`。下面的源码启动现在可用；Release 安装须等发布资产后使用。推荐先用私有仓库验证。
+> 当前正在准备首个 Go Release，仓库为 `SuInk/bgmcat`。下面的源码启动现在可用；Release 安装须等发布资产后使用。
 
 ## 默认选择桌面版
 
@@ -95,6 +95,10 @@ python3 scripts/package.py
 版本基线在 [`internal/version/VERSION`](internal/version/VERSION)。推送匹配的 `vX.Y.Z` 标签时，CI 完成测试、五平台打包与 Docker 构建后生成 Release；预发布标签不会覆盖 Docker `latest`。目前不自动生成 Canary。完整约定见[发布文档](docs/releasing.md)。
 
 沿用原 Anime RSS 项目的 AGPL-3.0 许可，依赖声明见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。参考 Diana 的文档组织和交付流程；没有复制它的安装器实现，也没有改变本项目许可证。
+
+## 使用声明
+
+猫追番只是个人使用的追番与下载管理工具，本身不提供、不托管、不分发任何影视资源，也不内置任何资源站点。订阅哪些 RSS、下载什么内容由使用者自行决定；请遵守所在地的法律和各资源站、数据平台的服务条款，只下载你有权获取的内容。因使用者的下载或传播行为产生的责任由使用者自负。
 
 猫追番是独立项目，与番组计划（Bangumi）无隶属关系。为兼容已有数据，当前保留 `ANIME_RSS_*` 环境变量、`~/.anime-rss-go` 数据目录及已有 MCP 配置标识。
 

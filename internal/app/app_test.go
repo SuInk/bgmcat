@@ -326,3 +326,26 @@ func TestEpisodePreferenceDoesNotDownloadBoth(t *testing.T) {
 		t.Fatal("duplicate episode", n)
 	}
 }
+
+func TestOutgoingRequestsNameTheProject(t *testing.T) {
+	a := testApp(t)
+	agents := make(chan string, 2)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		agents <- r.UserAgent()
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{}`))
+	}))
+	defer srv.Close()
+	if _, e := a.requestJSON(context.Background(), "GET", srv.URL, nil, nil); e != nil {
+		t.Fatal(e)
+	}
+	if _, e := a.getAny(context.Background(), srv.URL); e != nil {
+		t.Fatal(e)
+	}
+	// Bangumi API 要求 User-Agent 写明应用名和项目地址
+	for range 2 {
+		if got := <-agents; !strings.HasPrefix(got, "SuInk/bgmcat/") || !strings.Contains(got, "https://github.com/SuInk/bgmcat") {
+			t.Fatal(got)
+		}
+	}
+}

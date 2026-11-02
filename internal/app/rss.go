@@ -182,7 +182,7 @@ func (a *App) fetchFeed(ctx context.Context, endpoint string) (*gofeed.Feed, err
 	if e != nil {
 		return nil, e
 	}
-	req.Header.Set("User-Agent", "AnimeRSS-Go/"+Version)
+	req.Header.Set("User-Agent", userAgent)
 	res, e := a.http.Do(req)
 	if e != nil {
 		return nil, e

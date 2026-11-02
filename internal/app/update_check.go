@@ -78,7 +78,7 @@ func (a *App) checkRelease(ctx context.Context) Obj {
 		return fail("无法创建版本检查请求")
 	}
 	req.Header.Set("Accept", "application/vnd.github+json")
-	req.Header.Set("User-Agent", "BangumiCat/"+Version)
+	req.Header.Set("User-Agent", userAgent)
 	token := strings.TrimSpace(os.Getenv("GH_TOKEN"))
 	if token == "" {
 		token = strings.TrimSpace(os.Getenv("GITHUB_TOKEN"))

@@ -17,7 +17,7 @@ func (a *App) getAny(ctx context.Context, endpoint string) (any, error) {
 	if e != nil {
 		return nil, e
 	}
-	req.Header.Set("User-Agent", "AnimeRSS-Go/"+Version+" (personal RSS reader)")
+	req.Header.Set("User-Agent", userAgent)
 	res, e := a.http.Do(req)
 	if e != nil {
 		return nil, e

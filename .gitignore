@@ -23,3 +23,6 @@ __pycache__/
 
 desktop/resources/
 desktop-dist/
+
+# Claude Code 的本地工作目录与设置
+.claude/
