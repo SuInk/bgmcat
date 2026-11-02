@@ -62,6 +62,8 @@ type App struct {
 	aria2          *Aria2Engine
 	media          *Media
 	start          time.Time
+	// 下载任务 gid → 最近一次有人请求播放的时间，边下边播只在有人在看时才挪优先范围
+	watching sync.Map
 }
 
 func New(cfg Config) (*App, error) {

@@ -401,8 +401,8 @@ func (m *Media) Routes() {
 		}
 		return m.stream(w, r)
 	})
-	a.handle("GET /api/downloads/{gid}/stream", m.stream)
-	a.handle("GET /api/downloads/{gid}/playback", m.playback)
+	a.handle("GET /api/downloads/{gid}/stream", a.watched(m.stream))
+	a.handle("GET /api/downloads/{gid}/playback", a.watched(m.playback))
 	a.handle("GET /api/downloads/{gid}/playback/progress", func(w http.ResponseWriter, r *http.Request) error {
 		m.mu.Lock()
 		s := m.sessions[r.PathValue("gid")]
@@ -425,7 +425,7 @@ func (m *Media) Routes() {
 		ok(w, Obj{"producedSeconds": produced * 6, "finished": finished})
 		return nil
 	})
-	a.handle("GET /api/downloads/{gid}/hls/{name}", func(w http.ResponseWriter, r *http.Request) error {
+	a.handle("GET /api/downloads/{gid}/hls/{name}", a.watched(func(w http.ResponseWriter, r *http.Request) error {
 		name := r.PathValue("name")
 		job, file, e := m.source(r.PathValue("gid"))
 		if e != nil {
@@ -483,7 +483,7 @@ func (m *Media) Routes() {
 		}
 		http.ServeFile(w, r, path)
 		return nil
-	})
+	}))
 	a.handle("GET /api/downloads/{gid}/subtitles/{track}", func(w http.ResponseWriter, r *http.Request) error {
 		track := r.PathValue("track")
 		ext := filepath.Ext(track)

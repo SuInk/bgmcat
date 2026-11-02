@@ -229,7 +229,10 @@ func (e *Aria2Engine) download(ctx context.Context, j Obj) error {
 	if err = os.MkdirAll(dir, 0700); err != nil {
 		return err
 	}
-	options := Obj{"dir": dir, "continue": "true", "auto-file-renaming": "false", "allow-overwrite": "false", "file-allocation": "none", "split": "8", "max-connection-per-server": "8", "min-split-size": "1M", "seed-time": "0", "max-tries": "3", "retry-wait": "1", "connect-timeout": "10", "timeout": "30", "follow-torrent": "false", "follow-metalink": "false", "bt-save-metadata": "true", "check-integrity": "true", "bt-prioritize-piece": streamPriority(streamHead)}
+	// 继续下载（比如暂停后点边下边播）时，优先范围从上次挪到的地方接着走。从 16 MiB 重新开始的话，
+	// 前面早就下好的部分会让窗口每次检查都满足「只剩几块」，一连挪好几次，每次都要重启任务
+	window := max(int64(streamHead), num(j["streamWindow"]), num(j["playableBytes"])+streamHead)
+	options := Obj{"dir": dir, "continue": "true", "auto-file-renaming": "false", "allow-overwrite": "false", "file-allocation": "none", "split": "8", "max-connection-per-server": "8", "min-split-size": "1M", "seed-time": "0", "max-tries": "3", "retry-wait": "1", "connect-timeout": "10", "timeout": "30", "follow-torrent": "false", "follow-metalink": "false", "bt-save-metadata": "true", "check-integrity": "true", "bt-prioritize-piece": streamPriority(window)}
 	source := str(j["sourceUrl"])
 	kind := str(j["sourceType"])
 	method := "addUri"
@@ -311,7 +314,8 @@ func (e *Aria2Engine) download(ctx context.Context, j Obj) error {
 	}()
 	// 边下边播的优先窗口：aria2 只会优先取 head 范围内的块，并且会把这些块打乱顺序再取，
 	// 所以窗口里的内容差不多要整段下完，连续部分才一下跳上来。窗口越大起播越慢，设成整个文件等于没设。
-	window := int64(streamHead)
+	// 上次挪窗口时的总进度和时间，用这段时间的平均速度定下一段多长（重启后 aria2 报的瞬时速度会虚高）
+	movedDone, movedAt := int64(-1), time.Now()
 	ticks, failures := 0, 0
 	tick := time.NewTicker(250 * time.Millisecond)
 	defer tick.Stop()
@@ -376,13 +380,19 @@ func (e *Aria2Engine) download(ctx context.Context, j Obj) error {
 			bitfield, pieceLength := str(state["bitfield"]), parseInt(str(state["pieceLength"]))
 			prefix := contiguousBytes(bitfield, pieceLength, primaryOffset, largest)
 			update["playableBytes"] = prefix
-			// 每 2 秒看一次任务是不是在边下边播。窗口里只剩几块没下完（多半是慢节点拿着）时往后延一段，
-			// 一段约等于按当前速度下 30 秒的量：改优先范围会让 aria2 内部重启这个任务、断几秒，太小了不划算，太大了连续部分跳得慢。
+			done := num(update["completedLength"])
+			if movedDone < 0 {
+				movedDone = done
+			}
+			// 每 2 秒看一次任务是不是在边下边播（标过、并且最近几分钟有人在播）。窗口里只剩几块没下完（多半是慢节点拿着）时往后延一段，
+			// 一段约等于按平均速度下 30 秒的量：改优先范围会让 aria2 内部重启这个任务、断几秒，太小了不划算，太大了连续部分跳得慢。
 			// 慢节点拿着的块重启后还会回到它手里，窗口末端不缩，那几块照样在优先范围里。
 			ticks++
-			if ticks%8 == 0 && status == "active" && window < largest && missingBytes(bitfield, pieceLength, primaryOffset+prefix, primaryOffset+window) <= streamStraggle {
+			if ticks%8 == 0 && status == "active" && window < largest && time.Since(movedAt) > streamCooldown && missingBytes(bitfield, pieceLength, primaryOffset+prefix, primaryOffset+window) <= streamStraggle && e.app.watchedWithin(str(j["gid"]), streamIdle) {
 				if current, _ := e.app.Store.Get("downloads", str(j["gid"])); current != nil && flag(current["sequential"]) {
-					window += streamStep(num(update["downloadSpeed"]))
+					window = max(window, prefix) + streamStep(averageSpeed(done-movedDone, time.Since(movedAt)))
+					movedDone, movedAt = done, time.Now()
+					update["streamWindow"] = window
 					if err := ariaCall(ctx, endpoint, secret, "changeOption", []any{gid, Obj{"bt-prioritize-piece": streamPriority(window)}}, nil); err != nil {
 						e.app.Log("warn", "调整边下边播优先范围失败："+err.Error())
 					}
@@ -413,7 +423,19 @@ const (
 	streamHead = 16 << 20
 	// 窗口里没下完的只剩这么多时就往后延
 	streamStraggle = 8 << 20
+	// 这么久没人请求播放，就当没人在看了，不再为边下边播挪优先范围（每挪一次都要重启任务）
+	streamIdle = 3 * time.Minute
+	// 两次挪窗口至少隔这么久：aria2 重启任务要几秒，没重启完又挪等于白挪
+	streamCooldown = 10 * time.Second
 )
+
+// averageSpeed 是 elapsed 时间里平均每秒下了多少字节，时间太短（不到 5 秒）算不准，返回 0 让 streamStep 取下限。
+func averageSpeed(bytes int64, elapsed time.Duration) int64 {
+	if elapsed < 5*time.Second || bytes <= 0 {
+		return 0
+	}
+	return int64(float64(bytes) / elapsed.Seconds())
+}
 
 // streamStep 是边下边播时优先窗口每次往后延的长度：按当前速度下 30 秒的量，限制在 16～96 MiB。
 func streamStep(speed int64) int64 {

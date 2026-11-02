@@ -239,6 +239,7 @@ func (a *App) downloadRoutes() {
 		if current == nil {
 			return errors.New("任务不存在")
 		}
+		a.watch(gid)
 		if str(current["status"]) == "complete" || flag(current["sequential"]) {
 			ok(w, publicDownloads(current))
 			return nil
@@ -358,4 +359,21 @@ func publicDownloads(v any) any {
 		return out
 	}
 	return v
+}
+
+// watch 记下这个任务刚有人在播，边下边播的下载循环据此判断还要不要按播放顺序挪优先范围。
+func (a *App) watch(gid string) { a.watching.Store(gid, time.Now()) }
+
+// watchedWithin 是这个任务最近 d 时间内有没有人在播。
+func (a *App) watchedWithin(gid string, d time.Duration) bool {
+	at, ok := a.watching.Load(gid)
+	return ok && time.Since(at.(time.Time)) < d
+}
+
+// watched 包一层播放相关的接口，请求进来就记一次有人在看。
+func (a *App) watched(fn func(http.ResponseWriter, *http.Request) error) func(http.ResponseWriter, *http.Request) error {
+	return func(w http.ResponseWriter, r *http.Request) error {
+		a.watch(r.PathValue("gid"))
+		return fn(w, r)
+	}
 }

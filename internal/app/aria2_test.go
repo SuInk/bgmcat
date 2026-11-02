@@ -169,3 +169,28 @@ func TestContiguousBytes(t *testing.T) {
 		t.Fatal(got)
 	}
 }
+
+func TestStreamWindowHelpers(t *testing.T) {
+	// 重启后 aria2 报的瞬时速度会虚高，步长按平均速度算；时间太短算不准，取下限
+	if got := averageSpeed(30<<20, 30*time.Second); got != 1<<20 {
+		t.Fatal(got)
+	}
+	if got := averageSpeed(30<<20, 2*time.Second); got != 0 {
+		t.Fatal(got)
+	}
+	if got := streamStep(averageSpeed(30<<20, 2*time.Second)); got != 16<<20 {
+		t.Fatal(got)
+	}
+	a := &App{}
+	if a.watchedWithin("g1", time.Minute) {
+		t.Fatal("没播过的任务不该算在看")
+	}
+	a.watch("g1")
+	if !a.watchedWithin("g1", time.Minute) || a.watchedWithin("g2", time.Minute) {
+		t.Fatal("刚播过的任务应该算在看")
+	}
+	a.watching.Store("g1", time.Now().Add(-5*time.Minute))
+	if a.watchedWithin("g1", streamIdle) {
+		t.Fatal("几分钟没人播就不算在看了")
+	}
+}
