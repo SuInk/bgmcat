@@ -137,7 +137,7 @@ func (m *Media) stream(w http.ResponseWriter, r *http.Request) error {
 	path := str(f["path"])
 	// 边下边播交给 anacrolix 的任务：从它的读取器读，读到还没下的地方会先去下、等着，所以能任意拖动
 	// 只在它真的在跑时等；暂停或出错的任务等不来读取器，照常读磁盘上已有的部分
-	if status := str(job["status"]); str(job["engine"]) == "anacrolix" && (status == "active" || status == "queued" || status == "waiting") {
+	if seekableStream(job) {
 		reader, e := m.a.stream.waitReader(r.Context(), gid, path)
 		if e != nil {
 			return e
@@ -258,7 +258,7 @@ func (m *Media) playback(w http.ResponseWriter, r *http.Request) error {
 		mode = "hls-transcode"
 	}
 	seconds, _ := duration.(float64)
-	ok(w, Obj{"gid": gid, "filePath": path, "fileName": filepath.Base(path), "mimeType": mimeFor(path), "durationSeconds": duration, "complete": complete, "seekable": str(job["engine"]) == "anacrolix", "playableSeconds": playableSeconds(job, file, seconds), "deliveryMode": mode, "supportsInAppPlayback": true, "supportsTranscodePlayback": ffErr == nil, "subtitleTracks": tracks, "availablePlayers": []any{}})
+	ok(w, Obj{"gid": gid, "filePath": path, "fileName": filepath.Base(path), "mimeType": mimeFor(path), "durationSeconds": duration, "complete": complete, "seekable": seekableStream(job), "playableSeconds": playableSeconds(job, file, seconds), "deliveryMode": mode, "supportsInAppPlayback": true, "supportsTranscodePlayback": ffErr == nil, "subtitleTracks": tracks, "availablePlayers": []any{}})
 	return nil
 }
 
@@ -268,8 +268,8 @@ func playableSeconds(job, file Obj, duration float64) float64 {
 	if !downloading(job) {
 		return -1
 	}
-	// anacrolix 接管的任务读到哪下到哪，整段都能播
-	if str(job["engine"]) == "anacrolix" {
+	// anacrolix 接管、正在下的任务读到哪下到哪，整段都能播；暂停了就只能播连续下好的部分
+	if seekableStream(job) {
 		return duration
 	}
 	size := num(file["size"])
@@ -309,6 +309,15 @@ func (m *Media) waitPlayable(ctx context.Context, gid string, file Obj, need flo
 		case <-time.After(time.Second):
 		}
 	}
+}
+
+// seekableStream 判断任务是不是由 anacrolix 接管且正在下：这时读到哪下到哪，可以任意拖动。
+func seekableStream(job Obj) bool {
+	switch str(job["status"]) {
+	case "active", "queued", "waiting":
+		return str(job["engine"]) == "anacrolix"
+	}
+	return false
 }
 
 // downloading 判断文件是不是还没下完。只认明确的进行中状态，没写状态的旧任务、导入的任务按完整文件处理。
@@ -497,7 +506,7 @@ func (m *Media) Routes() {
 		path := filepath.Join(s.dir, name)
 		// anacrolix 接管的任务拖到还没下的地方时，转码要等那一段现下，给到和边下边播等数据一样长
 		wait := 25 * time.Second
-		if str(job["engine"]) == "anacrolix" && downloading(job) {
+		if seekableStream(job) {
 			wait = streamWait
 		}
 		if e = waitFile(r.Context(), path, s.done, wait); e != nil {

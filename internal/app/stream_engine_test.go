@@ -68,8 +68,24 @@ func TestStreamEngineTakesOverPartialDownload(t *testing.T) {
 	if e != nil || !bytes.Equal(got, payload) {
 		t.Fatal("下完的文件不对", e)
 	}
-	if j, _ := a.Store.Get("downloads", "stream-1"); num(j["completedLength"]) != int64(len(payload)) {
-		t.Fatal(j["completedLength"])
+	if j, _ := a.Store.Get("downloads", "stream-1"); num(j["completedLength"]) != int64(len(payload)) || num(j["playableBytes"]) != int64(len(payload)) {
+		t.Fatal(j["completedLength"], j["playableBytes"])
+	}
+}
+
+// 接管的任务只有正在下时才能任意拖动；暂停后没有读取器，只能按连续下好的部分算
+func TestSeekableStreamOnlyWhileRunning(t *testing.T) {
+	file := Obj{"size": 1000}
+	running := Obj{"engine": "anacrolix", "status": "active", "playableBytes": 500}
+	if !seekableStream(running) || playableSeconds(running, file, 100) != 100 {
+		t.Fatal(playableSeconds(running, file, 100))
+	}
+	paused := Obj{"engine": "anacrolix", "status": "paused", "playableBytes": 500}
+	if seekableStream(paused) || playableSeconds(paused, file, 100) != 100*0.5*0.9-6 {
+		t.Fatal(playableSeconds(paused, file, 100))
+	}
+	if seekableStream(Obj{"status": "active"}) {
+		t.Fatal("aria2 的任务不能任意拖动")
 	}
 }
 

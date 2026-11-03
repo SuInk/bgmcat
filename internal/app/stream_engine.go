@@ -118,15 +118,15 @@ func (s *StreamEngine) Download(ctx context.Context, j Obj) error {
 	}
 	files := []Obj{}
 	primary := ""
-	var largest int64
+	var main *torrent.File
 	for _, f := range t.Files() {
 		path := filepath.Join(dir, f.Path())
 		if !inside(dir, path) {
 			return errors.New("种子里的文件路径越界")
 		}
 		files = append(files, Obj{"path": path, "size": f.Length()})
-		if f.Length() > largest {
-			primary, largest = path, f.Length()
+		if main == nil || f.Length() > main.Length() {
+			primary, main = path, f
 		}
 	}
 	s.mu.Lock()
@@ -138,6 +138,9 @@ func (s *StreamEngine) Download(ctx context.Context, j Obj) error {
 		s.mu.Unlock()
 	}()
 	t.DownloadAll()
+	if main != nil {
+		prioritizeEnds(t, main, streamHead)
+	}
 	last, lastAt := t.BytesCompleted(), time.Now()
 	tick := time.NewTicker(time.Second)
 	defer tick.Stop()
@@ -150,7 +153,11 @@ func (s *StreamEngine) Download(ctx context.Context, j Obj) error {
 		done := t.BytesCompleted()
 		speed := int64(float64(done-last) / time.Since(lastAt).Seconds())
 		last, lastAt = done, time.Now()
-		update := Obj{"files": files, "filePath": primary, "totalLength": t.Length(), "completedLength": done, "downloadSpeed": max(0, speed), "uploadSpeed": 0, "playableBytes": done}
+		update := Obj{"files": files, "filePath": primary, "totalLength": t.Length(), "completedLength": done, "downloadSpeed": max(0, speed), "uploadSpeed": 0}
+		if main != nil {
+			// 和 aria2 那边一样记「从头连续下好多少」，暂停后没有读取器时还能按它估算能播到哪
+			update["playableBytes"] = filePrefix(t, main)
+		}
 		if _, err = s.app.Store.Patch("downloads", gid, update); err != nil {
 			return err
 		}
@@ -160,6 +167,33 @@ func (s *StreamEngine) Download(ctx context.Context, j Obj) error {
 			return nil
 		}
 	}
+}
+
+// prioritizeEnds 让主文件开头和结尾各 size 字节先下：开头用来起播，mkv 的索引在文件尾，
+// 有了它往后拖时 ffmpeg 才能直接定位。读取器正在读的位置优先级更高，不受影响。
+func prioritizeEnds(t *torrent.Torrent, f *torrent.File, size int64) {
+	pieceLength := t.Info().PieceLength
+	if pieceLength <= 0 {
+		return
+	}
+	begin, end := f.BeginPieceIndex(), f.EndPieceIndex()
+	span := int(size/pieceLength) + 1
+	for i := begin; i < end; i++ {
+		if i < begin+span || i >= end-span {
+			t.Piece(i).SetPriority(torrent.PiecePriorityHigh)
+		}
+	}
+}
+
+// filePrefix 是文件从开头起连续下好的字节数。
+func filePrefix(t *torrent.Torrent, f *torrent.File) int64 {
+	pieceLength := t.Info().PieceLength
+	for i := f.BeginPieceIndex(); i < f.EndPieceIndex(); i++ {
+		if !t.Piece(i).State().Complete {
+			return max(0, min(f.Length(), int64(i)*pieceLength-f.Offset()))
+		}
+	}
+	return f.Length()
 }
 
 // waitReader 等刚切过来的任务准备好（拿到种子信息、校验完已有数据）再开读取器，最多等 30 秒。
