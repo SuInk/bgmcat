@@ -130,11 +130,24 @@ func (m *Media) stream(w http.ResponseWriter, r *http.Request) error {
 	gid := r.PathValue("gid")
 	release := m.hold(gid)
 	defer release()
-	_, f, e := m.source(gid)
+	job, f, e := m.source(gid)
 	if e != nil {
 		return e
 	}
 	path := str(f["path"])
+	// 边下边播交给 anacrolix 的任务：从它的读取器读，读到还没下的地方会先去下、等着，所以能任意拖动
+	// 只在它真的在跑时等；暂停或出错的任务等不来读取器，照常读磁盘上已有的部分
+	if status := str(job["status"]); str(job["engine"]) == "anacrolix" && (status == "active" || status == "queued" || status == "waiting") {
+		reader, e := m.a.stream.waitReader(r.Context(), gid, path)
+		if e != nil {
+			return e
+		}
+		defer reader.Close()
+		reader.SetContext(r.Context())
+		w.Header().Set("Content-Type", mimeFor(path))
+		http.ServeContent(w, r, filepath.Base(path), time.Time{}, reader)
+		return nil
+	}
 	if local, e := os.Open(path); e == nil {
 		defer local.Close()
 		info, e := local.Stat()
@@ -245,7 +258,7 @@ func (m *Media) playback(w http.ResponseWriter, r *http.Request) error {
 		mode = "hls-transcode"
 	}
 	seconds, _ := duration.(float64)
-	ok(w, Obj{"gid": gid, "filePath": path, "fileName": filepath.Base(path), "mimeType": mimeFor(path), "durationSeconds": duration, "complete": complete, "playableSeconds": playableSeconds(job, file, seconds), "deliveryMode": mode, "supportsInAppPlayback": true, "supportsTranscodePlayback": ffErr == nil, "subtitleTracks": tracks, "availablePlayers": []any{}})
+	ok(w, Obj{"gid": gid, "filePath": path, "fileName": filepath.Base(path), "mimeType": mimeFor(path), "durationSeconds": duration, "complete": complete, "seekable": str(job["engine"]) == "anacrolix", "playableSeconds": playableSeconds(job, file, seconds), "deliveryMode": mode, "supportsInAppPlayback": true, "supportsTranscodePlayback": ffErr == nil, "subtitleTracks": tracks, "availablePlayers": []any{}})
 	return nil
 }
 
@@ -254,6 +267,10 @@ func (m *Media) playback(w http.ResponseWriter, r *http.Request) error {
 func playableSeconds(job, file Obj, duration float64) float64 {
 	if !downloading(job) {
 		return -1
+	}
+	// anacrolix 接管的任务读到哪下到哪，整段都能播
+	if str(job["engine"]) == "anacrolix" {
+		return duration
 	}
 	size := num(file["size"])
 	if size <= 0 || duration <= 0 {
@@ -367,8 +384,8 @@ func (m *Media) hls(gid string, start int, limit float64) (*hlsSession, error) {
 	go func() { s.err = cmd.Wait(); close(s.done) }()
 	return s, nil
 }
-func waitFile(ctx context.Context, path string, done <-chan struct{}) error {
-	timer := time.NewTimer(25 * time.Second)
+func waitFile(ctx context.Context, path string, done <-chan struct{}, timeout time.Duration) error {
+	timer := time.NewTimer(timeout)
 	defer timer.Stop()
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
@@ -478,7 +495,12 @@ func (m *Media) Routes() {
 			return e
 		}
 		path := filepath.Join(s.dir, name)
-		if e = waitFile(r.Context(), path, s.done); e != nil {
+		// anacrolix 接管的任务拖到还没下的地方时，转码要等那一段现下，给到和边下边播等数据一样长
+		wait := 25 * time.Second
+		if str(job["engine"]) == "anacrolix" && downloading(job) {
+			wait = streamWait
+		}
+		if e = waitFile(r.Context(), path, s.done, wait); e != nil {
 			return e
 		}
 		http.ServeFile(w, r, path)

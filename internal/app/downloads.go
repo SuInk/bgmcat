@@ -117,6 +117,8 @@ func (a *App) startJob(gid string) {
 			e = a.qbitDownload(ctx, job)
 		} else if str(job["sourceType"]) == "direct" {
 			e = a.httpDownload(ctx, job)
+		} else if str(job["engine"]) == "anacrolix" {
+			e = a.stream.Download(ctx, job)
 		} else {
 			e = a.aria2.Download(ctx, job)
 		}
@@ -244,9 +246,12 @@ func (a *App) downloadRoutes() {
 			ok(w, publicDownloads(current))
 			return nil
 		}
-		// 下载循环每两秒看一次这个标记，自己去挪 aria2 的优先范围
+		// BT 任务切给 anacrolix，按播放位置取块、能任意拖动；其他情况（HTTP、用 qBittorrent）还是由 aria2 挪优先范围
 		j, err := a.Store.Patch("downloads", gid, Obj{"sequential": true})
 		if err != nil {
+			return err
+		}
+		if err = a.takeOver(gid); err != nil {
 			return err
 		}
 		ok(w, publicDownloads(j))

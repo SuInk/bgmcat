@@ -60,6 +60,7 @@ type App struct {
 	mcpSessions    map[string]chan Obj
 	tunnel         Tunnel
 	aria2          *Aria2Engine
+	stream         *StreamEngine
 	media          *Media
 	start          time.Time
 	// 下载任务 gid → 最近一次有人请求播放的时间，边下边播只在有人在看时才挪优先范围
@@ -115,6 +116,7 @@ func New(cfg Config) (*App, error) {
 	}
 	_ = os.MkdirAll(str(s["downloadDir"]), 0700)
 	a.aria2 = &Aria2Engine{app: a}
+	a.stream = &StreamEngine{app: a}
 	a.media = NewMedia(a)
 	a.routes()
 	return a, nil
@@ -270,6 +272,7 @@ func (a *App) Close() error {
 	a.wg.Wait()
 	a.media.Close()
 	a.aria2.Close()
+	a.stream.Close()
 	a.driveNetworkMu.Lock()
 	if a.driveIPHTTP != nil {
 		a.driveIPHTTP.CloseIdleConnections()

@@ -29,10 +29,11 @@ func localTorrentConfig(dir string) *torrent.ClientConfig {
 	cfg.NoDefaultPortForwarding = true
 	return cfg
 }
-func TestNativeTorrentLocalPeer(t *testing.T) {
-	a := testApp(t)
+
+// localSeed 在本机起一个只做种的 BT 客户端和一个只返回它的 tracker，返回种子文件地址和磁力链接。
+func localSeed(t *testing.T, payload []byte) (string, string) {
+	t.Helper()
 	seedDir := t.TempDir()
-	payload := bytes.Repeat([]byte("local fixture torrent"), 16000)
 	path := filepath.Join(seedDir, "fixture.mp4")
 	if e := os.WriteFile(path, payload, 0600); e != nil {
 		t.Fatal(e)
@@ -52,7 +53,7 @@ func TestNativeTorrentLocalPeer(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	defer seed.Close()
+	t.Cleanup(func() { seed.Close() })
 	st, e := seed.AddTorrent(&mi)
 	if e != nil {
 		t.Fatal(e)
@@ -68,20 +69,27 @@ func TestNativeTorrentLocalPeer(t *testing.T) {
 		data, _ := bencode.Marshal(map[string]any{"interval": 1, "peers": peers})
 		w.Write(data)
 	}))
-	defer tracker.Close()
+	t.Cleanup(tracker.Close)
 	mi.Announce = tracker.URL
 	var buf bytes.Buffer
 	if e = mi.Write(&buf); e != nil {
 		t.Fatal(e)
 	}
 	source := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.Write(buf.Bytes()) }))
-	defer source.Close()
+	t.Cleanup(source.Close)
+	return source.URL + "/fixture.torrent", mi.Magnet(nil, &info).String()
+}
+
+func TestNativeTorrentLocalPeer(t *testing.T) {
+	a := testApp(t)
+	payload := bytes.Repeat([]byte("local fixture torrent"), 16000)
+	torrentURL, magnet := localSeed(t, payload)
 	for _, kind := range []string{"torrent-url", "magnet"} {
 		t.Run(kind, func(t *testing.T) {
 			dir := t.TempDir()
-			link := source.URL + "/fixture.torrent"
+			link := torrentURL
 			if kind == "magnet" {
-				link = mi.Magnet(nil, &info).String()
+				link = magnet
 			}
 			j := Obj{"gid": "bt-" + kind, "directory": dir, "sourceType": kind, "sourceUrl": link}
 			a.Store.Put("downloads", str(j["gid"]), j)

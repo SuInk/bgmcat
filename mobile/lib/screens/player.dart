@@ -284,7 +284,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
   /// 边下边播时不能拖到还没下好的地方。
   Duration _clampToPlayable(Duration target) {
     final info = _info;
-    if (info == null || !info.streaming) return target;
+    if (info == null || !info.edgeLimited) return target;
     final limit = Duration(milliseconds: ((info.playableSeconds - 3) * 1000).round());
     if (target > limit) return limit < Duration.zero ? Duration.zero : limit;
     return target;
@@ -303,7 +303,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
     }
     // 边下边播追上了下载：先停下等，不让播放器去请求还没下到的片段（会卡到超时报错）
     final info = _info;
-    if (value != null && value.isPlaying && info != null && info.streaming && info.playableSeconds >= 0 && !_edgeWaiting) {
+    if (value != null && value.isPlaying && info != null && info.edgeLimited && info.playableSeconds >= 0 && !_edgeWaiting) {
       if (value.position.inMilliseconds / 1000 >= info.playableSeconds - 2) {
         _controller!.pause();
         setState(() {
@@ -661,8 +661,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
                       min: 0,
                       max: maxMs <= 0 ? 1 : maxMs,
                       value: sliderValue,
-                      // 边下边播时浅色那截是已下载到的位置，否则是播放器的缓冲
-                      secondaryTrackValue: (info != null && info.streaming
+                      // 只能播到连续下好位置的边下边播，浅色那截是已下载到的位置；其他情况是播放器的缓冲
+                      secondaryTrackValue: (info != null && info.edgeLimited
                               ? info.playableSeconds * 1000
                               : buffered.inMilliseconds.toDouble())
                           .clamp(0.0, maxMs <= 0 ? 1.0 : maxMs),
@@ -760,7 +760,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
             }),
             _tag(formatBytes(_job.totalLength)),
             if (info.subtitles.isNotEmpty) _tag('${info.subtitles.length} 条字幕'),
-            if (info.streaming && info.duration != null)
+            if (info.streaming && info.seekable)
+              _tag('边下边播 · 可任意拖动')
+            else if (info.streaming && info.duration != null)
               _tag('边下边播 · 已下载到 ${formatDuration(Duration(seconds: info.playableSeconds.round()))}'
                   ' / ${formatDuration(Duration(seconds: info.duration!.round()))}'),
           ]),

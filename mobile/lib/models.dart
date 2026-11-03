@@ -228,6 +228,7 @@ class PlaybackInfo {
     required this.subtitles,
     required this.complete,
     required this.playableSeconds,
+    this.seekable = false,
   });
 
   factory PlaybackInfo.fromJson(Map<String, dynamic> json) => PlaybackInfo(
@@ -242,6 +243,7 @@ class PlaybackInfo {
             .toList(),
         complete: json['complete'] != false,
         playableSeconds: _num(json['playableSeconds']) ?? -1,
+        seekable: json['seekable'] == true,
       );
 
   final String gid;
@@ -254,7 +256,13 @@ class PlaybackInfo {
   final bool complete;
   final double playableSeconds;
 
+  /// 边下边播由服务器的 anacrolix 引擎接管：读到哪下到哪，可以拖到任意位置，不受 [playableSeconds] 限制。
+  final bool seekable;
+
   bool get streaming => !complete;
+
+  /// 边下边播且只能播到已连续下好的位置（aria2 下载的任务）。
+  bool get edgeLimited => streaming && !seekable;
 
   bool get usesHls => deliveryMode.startsWith('hls');
 }
