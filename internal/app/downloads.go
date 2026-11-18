@@ -207,15 +207,27 @@ func (a *App) startJob(gid string) {
 	}
 	ctx, cancel := context.WithCancel(a.ctx)
 	a.jobs[gid] = cancel
+	bypass := a.slotBypass[gid]
+	if bypass == nil {
+		bypass = make(chan struct{})
+		a.slotBypass[gid] = bypass
+	}
 	a.wg.Add(1)
 	a.jobsMu.Unlock()
 	go func() {
 		defer a.wg.Done()
 		defer cancel()
-		defer func() { a.jobsMu.Lock(); delete(a.jobs, gid); a.jobsMu.Unlock() }()
+		defer func() {
+			a.jobsMu.Lock()
+			delete(a.jobs, gid)
+			delete(a.slotBypass, gid)
+			a.jobsMu.Unlock()
+		}()
 		select {
 		case a.downloadSlots <- struct{}{}:
 			defer func() { <-a.downloadSlots }()
+		case <-bypass:
+			// 边下边播：用户正在等着看这一集，不再排队等并发名额。
 		case <-ctx.Done():
 			return
 		}
@@ -258,6 +270,35 @@ func (a *App) startJob(gid string) {
 		}
 	}()
 }
+
+// startJobNow starts (or resumes) a job for 边下边播 and lets it skip the
+// concurrent-download queue, so playback does not wait for other tasks.
+func (a *App) startJobNow(gid string) {
+	a.jobsMu.Lock()
+	bypass := a.slotBypass[gid]
+	if bypass == nil {
+		bypass = make(chan struct{})
+		a.slotBypass[gid] = bypass
+	}
+	select {
+	case <-bypass:
+	default:
+		close(bypass)
+	}
+	a.jobsMu.Unlock()
+	a.startJob(gid)
+}
+
+// streamableSource reports whether the native engine can stream this job while
+// it is still downloading (BitTorrent only; direct HTTP tasks play once done).
+func streamableSource(j Obj) bool {
+	kind := strings.TrimSpace(str(j["sourceType"]))
+	if kind == "" {
+		kind = inferSource(str(j["sourceUrl"]))
+	}
+	return kind == "magnet" || kind == "torrent-url" || strings.HasPrefix(str(j["sourceUrl"]), "magnet:?")
+}
+
 func (a *App) stopJob(gid string) error {
 	a.jobsMu.Lock()
 	cancel := a.jobs[gid]
@@ -806,6 +847,34 @@ func (a *App) downloadRoutes() {
 		j, _ = a.Store.Patch("downloads", gid, Obj{"status": "queued", "errorMessage": nil, "updatedAt": now()})
 		a.notifyDownloads()
 		a.startJob(gid)
+		ok(w, a.publicDownloads(j))
+		return nil
+	})
+	a.handle("POST /api/downloads/{gid}/stream-now", func(w http.ResponseWriter, r *http.Request) error {
+		gid := r.PathValue("gid")
+		j, e := a.Store.Get("downloads", gid)
+		if e != nil {
+			return e
+		}
+		if j == nil {
+			return errors.New("任务不存在")
+		}
+		if str(j["status"]) == "complete" {
+			ok(w, a.publicDownloads(j))
+			return nil
+		}
+		if client := str(a.Settings()["downloadClient"]); client != "" && client != "native" {
+			return errors.New("边下边播需要使用内置下载引擎，请在「设置 → 下载」把下载器切换为内置引擎")
+		}
+		if !streamableSource(j) {
+			return errors.New("直链任务暂不支持边下边播，下载完成后即可播放")
+		}
+		switch str(j["status"]) {
+		case "paused", "error":
+			j, _ = a.Store.Patch("downloads", gid, Obj{"status": "queued", "errorMessage": nil, "updatedAt": now()})
+			a.notifyDownloads()
+		}
+		a.startJobNow(gid)
 		ok(w, a.publicDownloads(j))
 		return nil
 	})

@@ -54,6 +54,7 @@ import {
 } from "../../stores/favorites";
 import { hideAnime, isAnimeHidden, unhideAnime } from "../../stores/hiddenAnime";
 import { activeTab } from "../../stores/router";
+import { streamMikanDownload } from "../../stores/streamPlay";
 import { subscriptions } from "../../stores/subscriptions";
 import AppNavIcon from "../layout/AppNavIcon.vue";
 
@@ -205,6 +206,7 @@ function handleToggleHidden(anime: HomepageAnime): void {
         @select-provider="selectedProvider = $event"
         @update:download-page="setDownloadPage"
         @queue-download="queueMikanDownload($event)"
+        @stream-download="streamMikanDownload($event)"
         @queue-cloud-download="queueMikanDownload($event, { saveTo: 'cloud' })"
         @queue-batch="queueMikanDownloadsBatch($event.items, { saveTo: $event.saveTo })"
         @play-download="openPlayback"

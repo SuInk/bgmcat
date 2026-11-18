@@ -315,3 +315,60 @@ func TestSpeedWindowSmoothing(t *testing.T) {
 		t.Fatalf("expected speed to decay near 0 after prolonged stall, got %d", stalled)
 	}
 }
+
+func TestStreamNowSkipsDownloadQueue(t *testing.T) {
+	a := testApp(t)
+	// 占满全部并发名额，模拟后台已有其它任务在下载。
+	for i := 0; i < cap(a.downloadSlots); i++ {
+		a.downloadSlots <- struct{}{}
+	}
+	defer func() {
+		for i := 0; i < cap(a.downloadSlots); i++ {
+			<-a.downloadSlots
+		}
+	}()
+	block := make(chan struct{})
+	torrentSrc := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-block:
+		case <-r.Context().Done():
+		}
+	}))
+	defer torrentSrc.Close()
+	defer close(block)
+
+	job, err := a.enqueue(Obj{"url": torrentSrc.URL + "/Queued_Ep02.torrent", "title": "Queued Ep02"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	gid := str(job["gid"])
+	time.Sleep(150 * time.Millisecond)
+	if cur, _ := a.Store.Get("downloads", gid); str(cur["status"]) != "queued" {
+		t.Fatalf("expected job to wait for a free slot, got %v", cur["status"])
+	}
+
+	if w := apiTest(a, "POST", "/api/downloads/"+gid+"/stream-now", nil, true); w.Code != 200 {
+		t.Fatalf("stream-now failed: %d %s", w.Code, w.Body.String())
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if cur, _ := a.Store.Get("downloads", gid); str(cur["status"]) == "active" {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if cur, _ := a.Store.Get("downloads", gid); str(cur["status"]) != "active" {
+		t.Fatalf("expected stream-now to start the job immediately, got %v", cur["status"])
+	}
+	if len(a.downloadSlots) != cap(a.downloadSlots) {
+		t.Fatalf("stream-now must not consume a regular slot, slots=%d", len(a.downloadSlots))
+	}
+
+	direct, err := a.enqueue(Obj{"url": torrentSrc.URL + "/movie.mp4", "title": "Direct"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if w := apiTest(a, "POST", "/api/downloads/"+str(direct["gid"])+"/stream-now", nil, true); w.Code == 200 || !strings.Contains(w.Body.String(), "直链") {
+		t.Fatalf("expected direct task to be rejected, got %d %s", w.Code, w.Body.String())
+	}
+}
