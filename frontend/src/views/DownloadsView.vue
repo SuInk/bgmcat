@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import type { DownloadJob, ExternalPlayerId, MikanDownloadItem, Subscription } from "@shared/index";
-import { resolveDownloadArtworkUrl } from "../api";
+import { resolveDownloadArtworkUrl, streamDownloadNow } from "../api";
 import AppSelect from "../components/common/AppSelect.vue";
 import DownloadDialogs from "../components/downloads/DownloadDialogs.vue";
 import DownloadPlaybackSection from "../components/downloads/DownloadPlaybackSection.vue";
@@ -72,7 +72,9 @@ import {
   triggerCloudArchive,
   updateDownloadState
 } from "../stores/downloads";
+import { canStreamDownload, pendingStreamGid, streamDownloadJob } from "../stores/streamPlay";
 import { subscriptions } from "../stores/subscriptions";
+import { toastError } from "../stores/toasts";
 import {
   activeSharesCount,
   canShareSeriesGroup,
@@ -214,6 +216,19 @@ function selectDownloadingForAutoPlay(gid: string): void {
     return;
   }
   pendingAutoPlayGid.value = pendingAutoPlayGid.value === gid ? null : gid;
+  if (pendingAutoPlayGid.value && target) {
+    void jumpQueueForPlayback(target);
+  }
+}
+
+/** 播放页里等某集：排队/暂停中的 BT 任务立即开始并优先拉开头，别干等并发名额。 */
+async function jumpQueueForPlayback(job: DownloadJob): Promise<void> {
+  if (!canStreamDownload(job) || job.status === "active") return;
+  try {
+    await streamDownloadNow(job.gid);
+  } catch (error) {
+    toastError(error, "无法边下边播");
+  }
 }
 
 async function handleQueueMikanEpisode(item: MikanDownloadItem): Promise<void> {
@@ -227,6 +242,7 @@ async function handleQueueMikanEpisode(item: MikanDownloadItem): Promise<void> {
       void openPlayback(job);
     } else {
       pendingAutoPlayGid.value = job.gid;
+      void jumpQueueForPlayback(job);
     }
   } finally {
     queueingMikanId.value = null;
@@ -908,6 +924,17 @@ watch(groupedDownloads, () => {
                         <AppNavIcon :name="canResumeDownload(group.primary) ? 'download' : 'pause'" />
                       </button>
                       <button
+                        v-if="!group.playable && canStreamDownload(group.primary)"
+                        type="button"
+                        class="play-btn is-stream"
+                        :title="`边下边播 ${group.primary.status === 'active' ? '' : '（立即开始下载）'}`.trim()"
+                        :aria-label="`边下边播 ${group.title}`"
+                        :disabled="isDownloadRowBusy(group.primary.gid) || pendingStreamGid === group.primary.gid"
+                        @click.stop="streamDownloadJob(group.primary)"
+                      >
+                        <AppNavIcon name="play" class="size-3.5" />
+                      </button>
+                      <button
                         v-if="group.playable"
                         type="button"
                         class="play-btn"
@@ -1096,7 +1123,7 @@ watch(groupedDownloads, () => {
           :detail-error="animeDetailError"
           :detail-loading="detailLoading"
           @conflict="handleDownloadConflict($event.gid, $event.strategy)"
-          @playback="openPlayback"
+          @playback="streamDownloadJob"
           @pause="updateDownloadState('pause', $event)"
           @resume="updateDownloadState('resume', $event)"
           @remove="requestDelete"

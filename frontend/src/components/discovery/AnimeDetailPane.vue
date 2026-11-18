@@ -34,6 +34,7 @@ import RightDetailPane from "../common/RightDetailPane.vue";
 import AppNavIcon from "../layout/AppNavIcon.vue";
 import AnimeSubscribeDialog from "./AnimeSubscribeDialog.vue";
 import MikanResourcePane from "./MikanResourcePane.vue";
+import { isStreamingMikanItem, streamLabelOf } from "../../stores/streamPlay";
 
 export type { MikanDownloadGroup };
 
@@ -84,6 +85,7 @@ const emit = defineEmits<{
   (event: "select-provider", value: string): void;
   (event: "update:downloadPage", value: number): void;
   (event: "queue-download", item: MikanDownloadItem): void;
+  (event: "stream-download", item: MikanDownloadItem): void;
   (event: "play-download", download: DownloadJob): void;
   (event: "copy-text", value: string): void;
   (event: "open-link", value: string): void;
@@ -1127,6 +1129,8 @@ watch(
                 :busy-key="busyKey"
                 :is-download-busy="isDownloadBusy"
                 :is-download-queued="isDownloadQueued"
+                :is-stream-busy="isStreamingMikanItem"
+                :stream-label="streamLabelOf"
                 :anime-titles="allAnimeTitles"
                 :anime-title="animeDetail.anime.title"
                 :streaming-links="activeStreamingLinks"
@@ -1135,6 +1139,7 @@ watch(
                 @select-provider="emit('select-provider', $event)"
                 @select-download-group="selectDownloadGroup"
                 @queue-download="emit('queue-download', $event)"
+                @stream-download="emit('stream-download', $event)"
                 @open-link="emit('open-link', $event)"
               />
             </div>

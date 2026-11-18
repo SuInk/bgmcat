@@ -44,6 +44,8 @@ const props = defineProps<{
   busyKey: string | null;
   isDownloadBusy?: (item: MikanDownloadItem) => boolean;
   isDownloadQueued: (item: MikanDownloadItem) => boolean;
+  isStreamBusy?: (item: MikanDownloadItem) => boolean;
+  streamLabel?: (item: MikanDownloadItem) => string;
   animeTitles?: string[];
   animeTitle?: string;
   streamingLinks?: AnimeStreamingLink[];
@@ -55,6 +57,7 @@ const emit = defineEmits<{
   (event: "select-provider", value: string): void;
   (event: "select-download-group", value: string | null): void;
   (event: "queue-download", item: MikanDownloadItem): void;
+  (event: "stream-download", item: MikanDownloadItem): void;
   (event: "open-link", url: string): void;
 }>();
 
@@ -1063,8 +1066,8 @@ function downloadLabel(item: MikanDownloadItem): string {
               <span class="text-[11px] text-[var(--muted)]">{{ friendlyTime(row.item.publishedAt) }}</span>
             </div>
 
-            <!-- 6. 下载操作 -->
-            <div class="flex justify-end">
+            <!-- 6. 下载与边下边播 -->
+            <div class="flex flex-col items-stretch justify-center gap-1">
               <button
                 v-if="hasDownloadSource(row.item)"
                 type="button"
@@ -1078,6 +1081,17 @@ function downloadLabel(item: MikanDownloadItem): string {
                 @click="emit('queue-download', row.item)"
               >
                 {{ downloadLabel(row.item) }}
+              </button>
+              <button
+                v-if="hasDownloadSource(row.item)"
+                type="button"
+                class="dl-btn stream-btn"
+                :disabled="isBusyItem(row.item) || Boolean(isStreamBusy?.(row.item))"
+                :title="isDownloadQueued(row.item) ? '直接播放已加入的任务，未下完的部分边下边播' : '加入下载并立即开始播放'"
+                :aria-label="`边下边播 ${row.info.subgroup} ${row.episodeBadge}`"
+                @click="emit('stream-download', row.item)"
+              >
+                <span aria-hidden="true" class="stream-icon">▶</span>{{ streamLabel ? streamLabel(row.item) : "边下边播" }}
               </button>
             </div>
           </div>
@@ -1460,7 +1474,7 @@ function downloadLabel(item: MikanDownloadItem): string {
 }
 @container (min-width: 42rem) {
   .r-row {
-    grid-template-columns: 68px minmax(0, 1fr) 156px 84px 106px 70px;
+    grid-template-columns: 68px minmax(0, 1fr) 156px 84px 106px 88px;
     gap: 10px;
     padding: 7.5px 12px;
   }
@@ -1597,6 +1611,17 @@ function downloadLabel(item: MikanDownloadItem): string {
   border-color: var(--line);
   background: var(--panel);
   color: var(--muted);
+}
+.dl-btn.stream-btn {
+  min-height: 28px;
+  gap: 4px;
+  padding: 0 10px;
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--line));
+  color: var(--accent-vivid, var(--accent));
+}
+.stream-icon {
+  font-size: 9px;
+  line-height: 1;
 }
 .dl-btn:disabled {
   cursor: not-allowed;

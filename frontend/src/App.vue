@@ -293,7 +293,7 @@ onUnmounted(() => {
     />
 
     <section class="app-main h-full min-h-0 min-w-0 overflow-hidden" :inert="isMobileViewport && mobileSidebarOpen">
-      <section class="relative grid h-full min-h-0 grid-rows-[auto_minmax(0,1fr)] overflow-hidden">
+      <section class="relative grid h-full min-h-0 grid-cols-[minmax(0,1fr)] grid-rows-[auto_minmax(0,1fr)] overflow-hidden">
         <header
           v-if="hasConsoleAccess"
           class="app-topbar"
@@ -317,7 +317,7 @@ onUnmounted(() => {
           <a
             v-if="isDemoMode"
             href="../"
-            class="topbar-badge transition hover:opacity-85"
+            class="topbar-badge topbar-demo transition hover:opacity-85"
             title="当前为纯前端演示环境，点击返回产品官网与下载页"
           >
             演示环境 · 返回官网
@@ -331,7 +331,7 @@ onUnmounted(() => {
           </span>
           <span
             v-if="downloadClientOnline !== null"
-            class="topbar-badge"
+            class="topbar-badge topbar-client"
             :class="downloadClientOnline ? 'ok' : 'err'"
             :title="`${downloadClientLabel} ${downloadClientOnline ? '在线' : '离线，请检查设置'}`"
           >
@@ -427,7 +427,7 @@ onUnmounted(() => {
 .startup-loading { min-height:100dvh; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:14px; background:var(--shell-bg); padding:24px; }
 .app-shell { transition:grid-template-columns .2s ease; }
 /* 顶栏尺寸、字号对齐 Diana 控制台（.app-topbar / .badge / .btn.ghost.small.icon-only） */
-.app-topbar { position:relative; z-index:30; display:flex; align-items:center; gap:12px; height:56px; padding:0 24px; border-bottom:1px solid var(--line); background:color-mix(in srgb,var(--shell-bg) 82%,transparent); backdrop-filter:blur(10px); }
+.app-topbar { position:relative; z-index:30; display:flex; min-width:0; align-items:center; gap:12px; height:56px; padding:0 24px; border-bottom:1px solid var(--line); background:color-mix(in srgb,var(--shell-bg) 82%,transparent); backdrop-filter:blur(10px); }
 .topbar-title { min-width:0; overflow:hidden; color:var(--ink); font-size:16px; font-weight:650; text-overflow:ellipsis; white-space:nowrap; }
 .topbar-badge { display:inline-flex; flex:none; align-items:center; gap:5px; padding:3px 10px; border-radius:999px; background:var(--panel); color:var(--ink-secondary); font-size:11.5px; font-weight:600; white-space:nowrap; }
 .topbar-badge.ok { background:var(--ok-soft); color:var(--ok); }.topbar-badge.warn { background:var(--warn-soft); color:var(--warn); }.topbar-badge.err { background:var(--err-soft); color:var(--err); }
@@ -457,6 +457,8 @@ onUnmounted(() => {
 @media(max-width:960px) { .app-topbar { padding:0 14px; } }
 @media(max-width:768px) { .topbar-stream { display:none; } }
 @media(max-width:700px) { .topbar-logout-text { display:none; } .topbar-logout { width:34px; height:34px; padding:8px; } }
+/* 手机宽度：顶栏只留菜单、标题、网速和操作键，状态徽标收成圆点，别把整页撑出横向滚动 */
+@media(max-width:480px) { .topbar-demo { display:none; }.topbar-client { padding:3px 6px; font-size:0; gap:0; } }
 @media(max-width:640px) { .app-topbar { height:48px; padding:0 12px; gap:8px; }.app-content { padding:8px 10px 12px; }.topbar-repo, .download-client-label, .topbar-speeds.is-idle { display:none; }.topbar-speeds { padding:2px 8px; gap:6px; font-size:11px; } }
 
 .sync-overlay-enter-active,
