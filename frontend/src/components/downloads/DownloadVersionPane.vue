@@ -15,6 +15,7 @@ import { extractResolutionLabel } from "../../lib/mikan";
 import { computeDownloadsTotalProgress } from "../../lib/downloadGrouping";
 import { formatSpeed } from "../../lib/format";
 import AppNavIcon from "../layout/AppNavIcon.vue";
+import { canStreamDownload } from "../../stores/streamPlay";
 
 export interface DownloadEpisodeGroup {
   key: string;
@@ -232,9 +233,9 @@ function openEpisode(episode: DownloadEpisodeGroup): void {
     toggleEpisode(episode.key);
     return;
   }
-  const playable = playableForDownloads(episode.downloads);
-  if (playable) {
-    emit("playback", playable);
+  const target = playTargetFor(episode.downloads);
+  if (target) {
+    emit("playback", target);
   }
 }
 
@@ -409,7 +410,19 @@ function canResume(download: DownloadJob): boolean {
 }
 
 function canPlay(download: DownloadJob): boolean {
-  return download.canPlayExistingFile || download.status === "complete";
+  return download.canPlayExistingFile || download.status === "complete" || canStreamDownload(download);
+}
+
+function playLabel(download: DownloadJob): string {
+  return download.canPlayExistingFile || download.status === "complete" ? "播放" : "边下边播";
+}
+
+/** 一集里可以点播放的任务：先挑能直接播的，否则挑能边下边播的主任务（排队/暂停中也行）。 */
+function playTargetFor(downloads: DownloadJob[]): DownloadJob | null {
+  const playable = playableForDownloads(downloads);
+  if (playable) return playable;
+  const primary = primaryForDownloads(downloads);
+  return primary && canStreamDownload(primary) ? primary : null;
 }
 
 function triggerTransfer(download: DownloadJob): void {
@@ -709,12 +722,12 @@ function formatDateTime(value: string): string {
                 <AppNavIcon :name="canResume(primaryForDownloads(episode.downloads)!) ? 'download' : 'pause'" />
               </button>
               <button
-                v-if="playableForDownloads(episode.downloads)"
+                v-if="playTargetFor(episode.downloads)"
                 type="button"
                 class="play-btn"
-                :title="`播放 ${episode.episodeLabel ?? '该集'}`"
-                :aria-label="`播放 ${episode.episodeLabel ?? '该集'}`"
-                @click="emit('playback', playableForDownloads(episode.downloads)!)"
+                :title="`${playLabel(playTargetFor(episode.downloads)!)} ${episode.episodeLabel ?? '该集'}`"
+                :aria-label="`${playLabel(playTargetFor(episode.downloads)!)} ${episode.episodeLabel ?? '该集'}`"
+                @click="emit('playback', playTargetFor(episode.downloads)!)"
               >
                 <AppNavIcon name="play" class="size-3.5" />
               </button>
@@ -778,8 +791,8 @@ function formatDateTime(value: string): string {
                 <button
                   type="button"
                   class="icon-btn"
-                  title="播放"
-                  aria-label="播放"
+                  :title="playLabel(download)"
+                  :aria-label="playLabel(download)"
                   :disabled="!canPlay(download)"
                   @click="emit('playback', download)"
                 >
@@ -874,7 +887,7 @@ function formatDateTime(value: string): string {
             >
               <AppNavIcon name="close" />
             </button>
-            <button type="button" class="icon-btn" title="播放" aria-label="播放" :disabled="!canPlay(download)" @click="emit('playback', download)">
+            <button type="button" class="icon-btn" :title="playLabel(download)" :aria-label="playLabel(download)" :disabled="!canPlay(download)" @click="emit('playback', download)">
               <AppNavIcon name="play" />
             </button>
             <button

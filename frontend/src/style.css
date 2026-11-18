@@ -258,6 +258,18 @@
     filter: brightness(1.08);
   }
 
+  /* 还没缓冲好的任务：描边样式，点了才立即开始并缓冲开头 */
+  .play-btn.is-stream {
+    border: 1.5px solid var(--accent);
+    background: transparent;
+    color: var(--accent);
+  }
+
+  .play-btn:disabled {
+    cursor: progress;
+    opacity: 0.6;
+  }
+
   .play-btn:active {
     transform: scale(0.94);
   }

@@ -8,6 +8,7 @@ import { selectTab } from "./boot";
 import { findQueuedMikanDownload, queueMikanDownload } from "./discovery";
 import { downloads, openPlayback } from "./downloads";
 import { activeTab } from "./router";
+import { settings } from "./session";
 import { toastError, updateFeedback } from "./toasts";
 
 /** 正在等待开头片段缓冲完成、就绪后自动打开播放页的任务。 */
@@ -47,41 +48,60 @@ export function streamLabelOf(item: MikanDownloadItem): string {
   return job?.status === "complete" ? "播放" : "边下边播";
 }
 
+/** 任务能否边下边播：内置引擎下的 BT 任务（磁力 / 种子），且还没下完。 */
+export function canStreamDownload(job: DownloadJob): boolean {
+  if (canPlayDownload(job) || !["queued", "waiting", "active", "paused", "error"].includes(job.status)) {
+    return false;
+  }
+  const client = settings.value?.downloadClient;
+  if (client && client !== "native") {
+    return false;
+  }
+  const source = `${job.sourceUrl ?? ""} ${job.fallbackUrl ?? ""}`.toLowerCase();
+  return source.includes("magnet:") || source.includes(".torrent");
+}
+
 /**
- * 边下边播：资源没加入就先加入下载，然后让任务插队立即开始、优先拉媒体开头的片段，
- * 一旦第一个片段校验通过就打开播放页；播放器拖动进度时后端会把对应片段提到最高优先级。
+ * 已有任务边下边播：让任务插队立即开始（暂停/出错的会恢复），优先拉媒体开头的片段，
+ * 第一个片段校验通过就打开播放页；播放器拖动进度时后端会把对应片段提到最高优先级。
  */
+export async function streamDownloadJob(job: DownloadJob): Promise<void> {
+  if (canPlayDownload(job)) {
+    playNow(job);
+    return;
+  }
+  try {
+    await streamDownloadNow(job.gid);
+  } catch (error) {
+    toastError(error, "无法边下边播");
+    return;
+  }
+  clearPending();
+  pendingStreamGid.value = job.gid;
+  waitTimer = setTimeout(() => {
+    if (pendingStreamGid.value === job.gid) {
+      clearPending();
+      updateFeedback("暂时没有连上做种用户，开头片段还没缓冲好；任务会继续下载，可稍后在下载管理里播放。", "info");
+    }
+  }, STREAM_WAIT_MS);
+  updateFeedback("正在连接做种用户并缓冲开头片段，就绪后自动开始播放…", "info", {
+    label: "取消",
+    onClick: clearPending
+  });
+  const latest = downloads.value.find((d) => d.gid === job.gid);
+  if (latest && canPlayDownload(latest)) {
+    playNow(latest);
+  }
+}
+
+/** 资源行的边下边播：资源没加入就先加入下载，再按已有任务处理。 */
 export async function streamMikanDownload(item: MikanDownloadItem): Promise<void> {
   if (streamingMikanId.value) return;
   streamingMikanId.value = item.id;
   try {
     const job = findQueuedMikanDownload(item) ?? (await queueMikanDownload(item));
-    if (!job) return;
-    if (canPlayDownload(job)) {
-      playNow(job);
-      return;
-    }
-    try {
-      await streamDownloadNow(job.gid);
-    } catch (error) {
-      toastError(error, "无法边下边播");
-      return;
-    }
-    clearPending();
-    pendingStreamGid.value = job.gid;
-    waitTimer = setTimeout(() => {
-      if (pendingStreamGid.value === job.gid) {
-        clearPending();
-        updateFeedback("暂时没有连上做种用户，开头片段还没缓冲好；任务会继续下载，可稍后在下载管理里播放。", "info");
-      }
-    }, STREAM_WAIT_MS);
-    updateFeedback("正在连接做种用户并缓冲开头片段，就绪后自动开始播放…", "info", {
-      label: "取消",
-      onClick: clearPending
-    });
-    const latest = downloads.value.find((d) => d.gid === job.gid);
-    if (latest && canPlayDownload(latest)) {
-      playNow(latest);
+    if (job) {
+      await streamDownloadJob(job);
     }
   } finally {
     streamingMikanId.value = null;
