@@ -278,7 +278,7 @@
         var stateEl = document.querySelector("[data-release-state]");
         if (stateEl) {
           stateEl.className = "status-chip warn";
-          stateEl.textContent = "v" + DEFAULT_VER + " · 当前为私有仓库验证阶段（使用下方 gh release download 或公开后直链下载）";
+          stateEl.textContent = "v" + DEFAULT_VER + " · 可前往 GitHub Releases 获取安装包或使用下方一键脚本安装";
         }
       });
   }

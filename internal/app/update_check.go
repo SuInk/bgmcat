@@ -7,7 +7,6 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"os/exec"
 	"regexp"
 	"runtime"
 	"strconv"
@@ -79,17 +78,9 @@ func (a *App) checkRelease(ctx context.Context) Obj {
 	}
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("User-Agent", "BangumiCat/"+Version)
-	token := strings.TrimSpace(os.Getenv("GH_TOKEN"))
+	token := strings.TrimSpace(os.Getenv("GITHUB_TOKEN"))
 	if token == "" {
-		token = strings.TrimSpace(os.Getenv("GITHUB_TOKEN"))
-	}
-	if token == "" {
-		authCtx, authCancel := context.WithTimeout(ctx, 2*time.Second)
-		output, e := exec.CommandContext(authCtx, "gh", "auth", "token").Output()
-		authCancel()
-		if e == nil {
-			token = strings.TrimSpace(string(output))
-		}
+		token = strings.TrimSpace(os.Getenv("GH_TOKEN"))
 	}
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
@@ -102,7 +93,7 @@ func (a *App) checkRelease(ctx context.Context) Obj {
 	}
 	defer res.Body.Close()
 	if res.StatusCode == 401 || res.StatusCode == 403 || res.StatusCode == 404 {
-		return fail(fmt.Sprintf("GitHub 返回 HTTP %d。私有仓库需要服务端 gh 登录或 GH_TOKEN 的仓库读取权限；也可能触发访问限额。", res.StatusCode))
+		return fail(fmt.Sprintf("GitHub 返回 HTTP %d（仓库暂未发布公开 Release，或触发了 GitHub 访问频率限制）。", res.StatusCode))
 	}
 	if res.StatusCode != 200 {
 		return fail(fmt.Sprintf("检查版本失败：GitHub HTTP %d", res.StatusCode))

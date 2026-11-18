@@ -6,8 +6,7 @@
 
 | 方式 | 安装前准备 | 运行时依赖 |
 | --- | --- | --- |
-| 公开 Release 安装脚本 | `curl` + `sh` 或 Windows PowerShell | **零必需外部依赖**（内置纯 Go 下载引擎）；可选 `ffmpeg`、`cloudflared` |
-| 私有 Release 安装脚本 | GitHub CLI (`gh auth login`) + 仓库读取权限 | 同上 |
+| 一键安装脚本 | `curl` + `sh` 或 Windows PowerShell | **零必需外部依赖**（内置纯 Go 下载引擎）；可选 `ffmpeg`、`cloudflared` |
 | Release 完整包手动解压 | 对应平台归档包 + SHA-256 校验工具 | 同上 |
 | Docker Compose 部署 | Docker + Docker Compose | 容器镜像已预装 `ffmpeg` |
 | 从源码构建 | Go 1.26+、Node.js 22+、npm | 构建后同 Release 单二进制 |
@@ -15,8 +14,6 @@
 ## 命令行一键安装
 
 `bgmcat` 将前端静态页面与纯 Go HTTP / BitTorrent 下载引擎完整嵌入单个无 CGO 二进制中，安装器会自动检测当前系统与 CPU 架构、校验 `SHA256SUMS` 并保留旧版本备份。
-
-### 公开仓库安装（切换 Public 并发布 Release 后）
 
 macOS / Linux：
 
@@ -27,25 +24,7 @@ curl -fsSL https://raw.githubusercontent.com/SuInk/bgmcat/main/scripts/install.s
 Windows PowerShell：
 
 ```powershell
-irm https://raw.githubusercontent.com/SuInk/bgmcat/main/scripts/install.ps1 | iex; .\install.ps1 -Start
-```
-
-### 私有仓库验证安装（当前 Private 阶段）
-
-先运行一次 `gh auth login` 登录具备 `SuInk/bgmcat` 读取权限的账号，无需克隆源码即可拉取安装：
-
-macOS / Linux：
-
-```sh
-gh api repos/SuInk/bgmcat/contents/scripts/install.sh -H 'Accept: application/vnd.github.raw+json' | sh -s -- --private --start
-```
-
-Windows PowerShell：
-
-```powershell
-$installer = gh api repos/SuInk/bgmcat/contents/scripts/install.ps1 -H 'Accept: application/vnd.github.raw+json'
-if ($LASTEXITCODE -ne 0) { throw '下载安装脚本失败' }
-& ([scriptblock]::Create(($installer -join "`n"))) -Private -Start
+irm https://raw.githubusercontent.com/SuInk/bgmcat/main/scripts/install.ps1 | iex
 ```
 
 ### 常用安装参数与默认目录
@@ -55,11 +34,11 @@ if ($LASTEXITCODE -ne 0) { throw '下载安装脚本失败' }
 - 指定版本与自定义安装目录：
 
 ```sh
-sh scripts/install.sh --repository SuInk/bgmcat --private --version v0.2.0 --dir "$HOME/.local/bin"
+curl -fsSL https://raw.githubusercontent.com/SuInk/bgmcat/main/scripts/install.sh | sh -s -- --version v0.2.0 --dir "$HOME/.local/bin"
 ```
 
 ```powershell
-.\scripts\install.ps1 -Repository SuInk/bgmcat -Private -Version v0.2.0 -InstallDir "$env:LOCALAPPDATA\AnimeRSS\bin"
+.\scripts\install.ps1 -Version v0.2.0 -InstallDir "$env:LOCALAPPDATA\AnimeRSS\bin"
 ```
 
 ## 手动解压完整包

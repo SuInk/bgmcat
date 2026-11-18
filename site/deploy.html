@@ -30,16 +30,13 @@
       <div class="code-card" data-code-tabs>
         <div class="code-head">
           <div class="code-tabs" role="tablist">
-            <button class="code-tab" type="button" role="tab" aria-selected="true" data-tab="pub-sh">macOS / Linux（公开）</button>
-            <button class="code-tab" type="button" role="tab" aria-selected="false" data-tab="pub-ps">Windows（公开）</button>
-            <button class="code-tab" type="button" role="tab" aria-selected="false" data-tab="priv-sh">私有仓库验证（gh CLI）</button>
+            <button class="code-tab" type="button" role="tab" aria-selected="true" data-tab="pub-sh">macOS / Linux</button>
+            <button class="code-tab" type="button" role="tab" aria-selected="false" data-tab="pub-ps">Windows PowerShell</button>
           </div>
           <button class="copy-btn" type="button" data-copy-btn>复制命令</button>
         </div>
         <pre data-panel="pub-sh"><code>curl -fsSL https://raw.githubusercontent.com/SuInk/bgmcat/main/scripts/install.sh | sh -s -- --start</code></pre>
-        <pre data-panel="pub-ps" hidden><code>irm https://raw.githubusercontent.com/SuInk/bgmcat/main/scripts/install.ps1 | iex; .\install.ps1 -Start</code></pre>
-        <pre data-panel="priv-sh" hidden><code>gh auth login
-gh api repos/SuInk/bgmcat/contents/scripts/install.sh -H 'Accept: application/vnd.github.raw+json' | sh -s -- --private --start</code></pre>
+        <pre data-panel="pub-ps" hidden><code>irm https://raw.githubusercontent.com/SuInk/bgmcat/main/scripts/install.ps1 | iex</code></pre>
       </div>
 
       <ul>

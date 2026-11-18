@@ -53,7 +53,7 @@
 
 当 `main` 分支的 `site/`、`frontend/` 或安装脚本更新时，自动以 `VITE_DEMO_MODE=true` 构建纯前端交互式演示至 `/demo/`，与 `site/` 下的产品落地页、设备自适应下载中心及可搜索文档中心组装后发布至 GitHub Pages。
 
-> **关于私有仓库的 GitHub Pages 说明**：GitHub Free 个人免费账号下，私有仓库可以正常免费运行 `build.yml` 并生成私有 GitHub Release（使用 `gh release download` 验证），而 GitHub Pages 要求仓库公开（Public）或账号具备 GitHub Pro / Team 权限。可在私有仓库验证完 CI 与首个 Release 资产后，再将仓库切为 Public 并开启 Pages（Settings → Pages → Source 选择 **GitHub Actions**），届时官网下载页也会自动通过 GitHub Releases API 将所有下载按钮升级为一键直链。
+> **关于 GitHub Pages 说明**：仓库公开（Public）并开启 Pages（Settings → Pages → Source 选择 **GitHub Actions**）后，`pages.yml` 会自动部署产品落地页与纯前端交互演示，下载中心也会自动通过 GitHub Releases API 将下载按钮关联为直链。
 
 ## 发布后核验
 

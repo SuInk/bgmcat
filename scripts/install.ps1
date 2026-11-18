@@ -19,20 +19,13 @@ try {
     Copy-Item -LiteralPath (Join-Path $LocalDir $asset) -Destination $temp
     Copy-Item -LiteralPath (Join-Path $LocalDir 'SHA256SUMS') -Destination $temp
   } else {
+    $null = $Private
     if ($Repository -notmatch '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$') { throw 'Specify -Repository OWNER/REPO' }
     if ($Version -ne 'latest' -and $Version -notmatch '^v\d+\.\d+\.\d+(-[A-Za-z0-9.-]+)?$') { throw 'Invalid version' }
-    if ($Private) {
-      if (-not (Get-Command gh -ErrorAction SilentlyContinue)) { throw 'Install GitHub CLI and run gh auth login' }
-      $argsList = @('release','download','--repo',$Repository,'--pattern',$asset,'--pattern','SHA256SUMS','--dir',$temp)
-      if ($Version -ne 'latest') { $argsList += $Version }
-      & gh @argsList
-      if ($LASTEXITCODE -ne 0) { throw 'Release download failed' }
-    } else {
-      $base = if ($Version -eq 'latest') { "https://github.com/$Repository/releases/latest/download" } else { "https://github.com/$Repository/releases/download/$Version" }
-      [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-      Invoke-WebRequest -UseBasicParsing "$base/$asset" -OutFile (Join-Path $temp $asset)
-      Invoke-WebRequest -UseBasicParsing "$base/SHA256SUMS" -OutFile (Join-Path $temp 'SHA256SUMS')
-    }
+    $base = if ($Version -eq 'latest') { "https://github.com/$Repository/releases/latest/download" } else { "https://github.com/$Repository/releases/download/$Version" }
+    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+    Invoke-WebRequest -UseBasicParsing "$base/$asset" -OutFile (Join-Path $temp $asset)
+    Invoke-WebRequest -UseBasicParsing "$base/SHA256SUMS" -OutFile (Join-Path $temp 'SHA256SUMS')
   }
   $lines = @(Get-Content (Join-Path $temp 'SHA256SUMS') | Where-Object { $_ -match ('^[a-fA-F0-9]{64}\s+' + [regex]::Escape($asset) + '$') })
   if ($lines.Count -ne 1) { throw 'Missing or ambiguous checksum' }

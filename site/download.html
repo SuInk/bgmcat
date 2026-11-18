@@ -112,44 +112,22 @@
   <section class="sec" style="margin-top: 32px;">
     <div class="sec-head">
       <h2>服务端部署与命令行下载（NAS / Linux / 私有阶段验证）</h2>
-      <p>如果你在 24 小时开机的迷你主机、NAS 或云服务器上运行猫追番，可使用无界面单二进制服务版或 Docker；私有仓库验证阶段可通过 GitHub CLI（<code>gh</code>）直接拉取任意安装包并自动校验 SHA-256。</p>
+      <p>如果你在 24 小时开机的迷你主机、NAS 或云服务器上运行猫追番，可使用无界面单二进制服务版一键安装脚本（自动匹配架构并校验 SHA-256）或 Docker Compose 部署。</p>
     </div>
 
     <div class="code-card" data-code-tabs>
       <div class="code-head">
         <div class="code-tabs" role="tablist">
-          <button class="code-tab" type="button" role="tab" aria-selected="true" data-tab="gh-client">私有阶段拉取桌面/APK 包</button>
-          <button class="code-tab" type="button" role="tab" aria-selected="false" data-tab="unix-srv">Linux / macOS 服务版</button>
-          <button class="code-tab" type="button" role="tab" aria-selected="false" data-tab="win-srv">Windows 服务版</button>
+          <button class="code-tab" type="button" role="tab" aria-selected="true" data-tab="unix-srv">Linux / macOS 一键安装</button>
+          <button class="code-tab" type="button" role="tab" aria-selected="false" data-tab="win-srv">Windows PowerShell</button>
           <button class="code-tab" type="button" role="tab" aria-selected="false" data-tab="docker">Docker Compose</button>
         </div>
         <button class="copy-btn" type="button" data-copy-btn>复制</button>
       </div>
 
-      <pre data-panel="gh-client"># 先登录有 SuInk/bgmcat 读取权限的 GitHub 账号：
-gh auth login
+      <pre data-panel="unix-srv">curl -fsSL https://raw.githubusercontent.com/SuInk/bgmcat/main/scripts/install.sh | sh -s -- --start</pre>
 
-# 下载 macOS Apple Silicon 桌面版 + Android 手机端 APK + SHA256 校验表：
-gh release download --repo SuInk/bgmcat \
-  --pattern "bgmcat-desktop-*-mac-arm64.dmg" \
-  --pattern "bgmcat-android-*-universal.apk" \
-  --pattern "SHA256SUMS"
-
-# 校验安装包完整性：
-shasum -a 256 --ignore-missing -c SHA256SUMS</pre>
-
-      <pre data-panel="unix-srv"># 仓库公开后一键安装：
-curl -fsSL https://raw.githubusercontent.com/SuInk/bgmcat/main/scripts/install.sh | sh -s -- --start
-
-# 私有验证阶段（需先 gh auth login）：
-gh api repos/SuInk/bgmcat/contents/scripts/install.sh -H 'Accept: application/vnd.github.raw+json' | sh -s -- --private --start</pre>
-
-      <pre data-panel="win-srv"># 仓库公开后（PowerShell）：
-irm https://raw.githubusercontent.com/SuInk/bgmcat/main/scripts/install.ps1 | iex
-
-# 私有验证阶段（需先 gh auth login）：
-$s = gh api repos/SuInk/bgmcat/contents/scripts/install.ps1 -H 'Accept: application/vnd.github.raw+json'
-&amp; ([scriptblock]::Create(($s -join "`n"))) -Private -Start</pre>
+      <pre data-panel="win-srv">irm https://raw.githubusercontent.com/SuInk/bgmcat/main/scripts/install.ps1 | iex</pre>
 
       <pre data-panel="docker">git clone https://github.com/SuInk/bgmcat.git
 cd bgmcat

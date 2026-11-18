@@ -1,11 +1,10 @@
 #!/bin/sh
 # Install a verified release binary without touching application data.
 set -eu
-repo=${ANIME_RSS_REPOSITORY:-SuInk/bgmcat}
+repo=${BGMCAT_REPOSITORY:-${ANIME_RSS_REPOSITORY:-SuInk/bgmcat}}
 version=latest
-dest=${ANIME_RSS_BIN_DIR:-"$HOME/.local/bin"}
+dest=${BGMCAT_BIN_DIR:-${ANIME_RSS_BIN_DIR:-"$HOME/.local/bin"}}
 local_dir=
-private=false
 start=false
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -13,10 +12,9 @@ while [ "$#" -gt 0 ]; do
       [ "$#" -ge 2 ] || { echo "Missing option value" >&2; exit 1; }
       case "$1" in --repository) repo=$2;; --version) version=$2;; --dir) dest=$2;; --local-dir) local_dir=$2;; esac
       shift 2;;
-    --private) private=true; shift;;
+    --private|--skip-aria2) shift;;
     --start) start=true; shift;;
-    --skip-aria2) shift;;
-    --help|-h) echo 'Usage: sh install.sh --repository OWNER/REPO [--private] [--version vX.Y.Z] [--dir PATH] [--local-dir RELEASE_DIR] [--start]'; exit 0;;
+    --help|-h) echo 'Usage: sh install.sh [--repository OWNER/REPO] [--version vX.Y.Z] [--dir PATH] [--local-dir RELEASE_DIR] [--start]'; exit 0;;
     *) echo "Unknown option: $1" >&2; exit 1;;
   esac
 done
@@ -33,18 +31,9 @@ else
   if [ "$version" != latest ]; then
     printf '%s\n' "$version" | LC_ALL=C grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.-]+)?$' || { echo 'Invalid version' >&2; exit 1; }
   fi
-  if [ "$private" = true ]; then
-    command -v gh >/dev/null || { echo 'Install GitHub CLI, then run gh auth login' >&2; exit 1; }
-    if [ "$version" = latest ]; then
-      gh release download --repo "$repo" --pattern "$asset" --pattern SHA256SUMS --dir "$tmp"
-    else
-      gh release download "$version" --repo "$repo" --pattern "$asset" --pattern SHA256SUMS --dir "$tmp"
-    fi
-  else
-    if [ "$version" = latest ]; then base="https://github.com/$repo/releases/latest/download"; else base="https://github.com/$repo/releases/download/$version"; fi
-    curl --fail --location --proto '=https' --proto-redir '=https' --output "$tmp/$asset" "$base/$asset"
-    curl --fail --location --proto '=https' --proto-redir '=https' --output "$tmp/SHA256SUMS" "$base/SHA256SUMS"
-  fi
+  if [ "$version" = latest ]; then base="https://github.com/$repo/releases/latest/download"; else base="https://github.com/$repo/releases/download/$version"; fi
+  curl -fsSL --proto '=https' --proto-redir '=https' --output "$tmp/$asset" "$base/$asset"
+  curl -fsSL --proto '=https' --proto-redir '=https' --output "$tmp/SHA256SUMS" "$base/SHA256SUMS"
 fi
 expected=$(awk -v name="$asset" '$2==name {print $1}' "$tmp/SHA256SUMS")
 printf '%s\n' "$expected" | LC_ALL=C grep -Eq '^[a-fA-F0-9]{64}$' || { echo 'Missing or ambiguous checksum' >&2; exit 1; }

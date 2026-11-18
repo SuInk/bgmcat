@@ -13,9 +13,15 @@ const copyError = ref("");
 const versionLabel = computed(() => `v${(updateVersion.value?.version || status.value?.appVersion || "未知").replace(/^v/, "")}`);
 const phaseLabel = computed(() => updateBusy.value ? "检查中…" : updateStatus.value?.kind === "error" ? "检查失败" : updateStatusLabel.value);
 const windows = computed(() => updateVersion.value?.platform === "windows");
-const installCommand = computed(() => deployment.value === "source" ? "git pull --ff-only\nsh scripts/build.sh" : deployment.value === "docker" ? "docker compose pull\ndocker compose up -d" : windows.value
- ? '$installer = gh api repos/SuInk/bgmcat/contents/scripts/install.ps1 -H \'Accept: application/vnd.github.raw+json\'\nif ($LASTEXITCODE -ne 0) { throw \'下载安装脚本失败\' }\n& ([scriptblock]::Create(($installer -join "`n"))) -Private -Start'
- : "gh api repos/SuInk/bgmcat/contents/scripts/install.sh -H 'Accept: application/vnd.github.raw+json' | sh -s -- --private --start");
+const installCommand = computed(() =>
+  deployment.value === "source"
+    ? "git pull --ff-only\nsh scripts/build.sh"
+    : deployment.value === "docker"
+      ? "docker compose pull\ndocker compose up -d"
+      : windows.value
+        ? "irm https://raw.githubusercontent.com/SuInk/bgmcat/main/scripts/install.ps1 | iex"
+        : "curl -fsSL https://raw.githubusercontent.com/SuInk/bgmcat/main/scripts/install.sh | sh -s -- --start"
+);
 function date(value: string | null | undefined) { return value ? new Date(value).toLocaleString() : ""; }
 async function copyCommand() { copyError.value = ""; try { await copyText(installCommand.value); copied.value = true; } catch { copyError.value = "复制失败，请手动选择命令复制。"; } }
 onMounted(async () => { try { await refreshUpdateOverview(); } finally { loading.value = false; } });
@@ -41,7 +47,7 @@ onMounted(async () => { try { await refreshUpdateOverview(); } finally { loading
    <label class="deployment-label">当前安装方式<AppSelect size="sm" :model-value="deployment" aria-label="当前安装方式" :options="[{ value: 'desktop', label: '桌面安装包' }, { value: 'server', label: '服务端安装包' }, { value: 'source', label: '源码运行' }, { value: 'docker', label: 'Docker' }]" @update:model-value="deployment = String($event)" @change="copied = false" /></label>
    <template v-if="deployment === 'desktop'"><p>退出 Bangumi Cat，下载与你系统和架构匹配的桌面安装包，校验 SHA-256 后覆盖安装。保留应用数据目录，重新打开即可继续使用。</p><button class="version-button primary" @click="openExternalLink('https://github.com/SuInk/bgmcat/releases')">下载桌面安装包</button></template>
    <template v-else>
-    <p v-if="deployment === 'server'">先停止原服务，再用安装脚本升级；保持原来的安装目录和数据目录。私有仓库需先执行 gh auth login，并拥有仓库读取权限。需要仓库已有正式 Release。</p>
+    <p v-if="deployment === 'server'">先停止原服务，再执行下方一键安装脚本升级；保持原有的安装目录和数据目录不变。</p>
     <p v-else-if="deployment === 'source'">在项目目录中操作，先处理未提交改动并停止服务。拉取代码、重新构建后，用原数据目录和启动参数启动新程序。</p>
     <p v-else>在 Compose 文件所在目录操作，保留数据卷。以下命令适用于已配置发布镜像的部署；如果使用本地源码构建，请拉取代码后执行 docker compose up -d --build。</p>
     <pre><code>{{ installCommand }}</code></pre><button class="version-button" @click="copyCommand">{{ copied ? '已复制' : '复制升级命令' }}</button><p v-if="copyError" class="version-error">{{ copyError }}</p>

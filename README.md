@@ -43,7 +43,7 @@ irm https://raw.githubusercontent.com/SuInk/bgmcat/main/scripts/install.ps1 | ie
 docker compose up -d --build
 ```
 
-若仓库处于私有验证阶段，可先执行 `gh auth login` 后通过 `--private` 安装，详见 [安装文档](docs/install.md)。电脑日常使用可直接安装打包好的 `bgmcat-desktop`（`.dmg` / `.exe` / `.deb` / `.AppImage`），详见 [桌面版说明](docs/desktop.md)。
+原生一键安装不需要管理员权限，**升级也是重跑同一条命令**（自动校验 SHA-256 并保留上一版 `.previous` 备份），详见 [安装文档](docs/install.md)。电脑日常使用可直接安装打包好的 `bgmcat-desktop`（`.dmg` / `.exe` / `.deb` / `.AppImage`），详见 [桌面版说明](docs/desktop.md)。
 
 **② 登录控制台：**
 
