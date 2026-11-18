@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -39,6 +40,8 @@ type activeBTStream struct {
 	ready      atomic.Bool
 	completed  atomic.Bool
 	dropped    atomic.Bool
+	boostMu    sync.Mutex
+	boostGen   atomic.Uint64
 }
 
 func (s *activeBTStream) checkReady() bool {
@@ -72,18 +75,61 @@ func (s *activeBTStream) boostOffset(fileRelOffset int64) {
 	if targetPiece < 0 || targetPiece >= s.numPieces {
 		return
 	}
-	highPieces := max(int((2<<20)/s.pieceLen), 2)
-	endPiece := min(s.numPieces, targetPiece+2+highPieces)
-	for idx := targetPiece; idx < endPiece; idx++ {
-		st := s.torrent.PieceState(idx)
-		if st.Complete {
+	// 拖动进度后，新位置必须压过开播时给片头/索引区设的静态优先级，也不能和后面一大片
+	// 预读区平分带宽，否则低速时要卡几十秒（实测 256 KB/s 下拖动从 ~48s 降到 ~16s）。分两步：
+	//   1. 只要目标后 ~1 MiB（Now），其余未完成片段暂设 None，让引擎撤回不急的请求；
+	//   2. 这 1 MiB 下完（或超时、又拖动了）后，其余恢复 Normal 继续全量下载；紧接着的内容由
+	//      播放器 Reader 的预读按顺序要。
+	// 播放器正在读的区域由 torrent.Reader 的 readahead 维持优先级，不受这里影响。
+	nowEnd := min(s.numPieces, targetPiece+max(int((1<<20)/s.pieceLen), 2))
+	gen := s.boostGen.Add(1)
+	s.applyBoost(targetPiece, nowEnd, torrent.PiecePriorityNone)
+	go func() {
+		deadline := time.Now().Add(15 * time.Second)
+		ticker := time.NewTicker(100 * time.Millisecond)
+		defer ticker.Stop()
+		for range ticker.C {
+			if s.boostGen.Load() != gen || s.dropped.Load() || s.completed.Load() {
+				return
+			}
+			if time.Now().After(deadline) || s.piecesComplete(targetPiece, nowEnd) {
+				break
+			}
+		}
+		if s.boostGen.Load() == gen && !s.dropped.Load() {
+			// 不再给后面整片设 Next：同优先级的一大片会被并行下载，紧挨播放位置的字节反而最后才到。
+			// 往后的顺序由播放器 Reader 的自适应预读（随连续播放增长）负责。
+			s.applyBoost(targetPiece, nowEnd, torrent.PiecePriorityNormal)
+		}
+	}()
+}
+
+func (s *activeBTStream) piecesComplete(from, to int) bool {
+	for idx := from; idx < to; idx++ {
+		if !s.torrent.PieceState(idx).Complete {
+			return false
+		}
+	}
+	return true
+}
+
+// applyBoost sets [targetPiece, nowEnd) to PiecePriorityNow and every other
+// incomplete piece to rest.
+func (s *activeBTStream) applyBoost(targetPiece, nowEnd int, rest torrent.PiecePriority) {
+	s.boostMu.Lock()
+	defer s.boostMu.Unlock()
+	if s.dropped.Load() {
+		return
+	}
+	for idx := 0; idx < s.numPieces; idx++ {
+		if s.torrent.PieceState(idx).Complete {
 			continue
 		}
-		if idx <= targetPiece+1 {
-			s.torrent.Piece(idx).SetPriority(torrent.PiecePriorityNow)
-		} else if st.Priority < torrent.PiecePriorityHigh {
-			s.torrent.Piece(idx).SetPriority(torrent.PiecePriorityHigh)
+		want := rest
+		if idx >= targetPiece && idx < nowEnd {
+			want = torrent.PiecePriorityNow
 		}
+		s.torrent.Piece(idx).SetPriority(want)
 	}
 }
 
@@ -104,7 +150,11 @@ func (s *activeBTStream) newReader(ctx context.Context) (io.ReadSeekCloser, bool
 	tr := s.mediaFile.NewReader()
 	tr.SetContext(ctx)
 	tr.SetResponsive()
-	tr.SetReadahead(8 << 20)
+	// 预读随连续播放增长：刚拖动时只要 1 MiB，别让 8 MiB 预读和拖动目标抢带宽；
+	// 连续往下播后逐步放大到 16 MiB，保证顺序播放的缓冲。
+	tr.SetReadaheadFunc(func(rc torrent.ReadaheadContext) int64 {
+		return min(max(rc.CurrentPos-rc.ContiguousReadStartPos, 1<<20), 16<<20)
+	})
 	return &btStreamReader{
 		ctx:       ctx,
 		stream:    s,
@@ -416,11 +466,12 @@ func prioritizeMediaForStreaming(t *torrent.Torrent, mediaTF *torrent.File) {
 
 	// 1. First 1 MiB at PiecePriorityNow (container magic + initial video/audio headers).
 	setRangePriority(fileStart, fileStart+(1<<20), torrent.PiecePriorityNow)
-	// 2. 1 MiB .. 4 MiB and last 2 MiB at PiecePriorityHigh (MP4 moov atom / MKV Cues index).
-	setRangePriority(fileStart+(1<<20), fileStart+(4<<20), torrent.PiecePriorityHigh)
-	setRangePriority(fileEnd-(2<<20), fileEnd, torrent.PiecePriorityHigh)
-	// 3. 4 MiB .. 16 MiB at PiecePriorityNext for smooth opening playback buffer.
-	setRangePriority(fileStart+(4<<20), fileStart+(16<<20), torrent.PiecePriorityNext)
+	// 2. 1 MiB .. 4 MiB and last 2 MiB at PiecePriorityNext (MP4 moov atom / MKV Cues index).
+	setRangePriority(fileStart+(1<<20), fileStart+(4<<20), torrent.PiecePriorityNext)
+	setRangePriority(fileEnd-(2<<20), fileEnd, torrent.PiecePriorityNext)
+	// 3. 4 MiB .. 16 MiB at PiecePriorityHigh for smooth opening playback buffer.
+	//    注意 anacrolix 的顺序是 Normal < High < Readahead < Next < Now，开播缓冲必须低于索引区。
+	setRangePriority(fileStart+(4<<20), fileStart+(16<<20), torrent.PiecePriorityHigh)
 }
 
 func shouldVerifyExistingDiskData(dir string, t *torrent.Torrent) bool {
