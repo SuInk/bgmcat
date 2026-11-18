@@ -41,7 +41,6 @@ type activeBTStream struct {
 	completed  atomic.Bool
 	dropped    atomic.Bool
 	boostMu    sync.Mutex
-	boostGen   atomic.Uint64
 }
 
 func (s *activeBTStream) checkReady() bool {
@@ -76,41 +75,12 @@ func (s *activeBTStream) boostOffset(fileRelOffset int64) {
 		return
 	}
 	// 拖动进度后，新位置必须压过开播时给片头/索引区设的静态优先级，也不能和后面一大片
-	// 预读区平分带宽，否则低速时要卡几十秒（实测 256 KB/s 下拖动从 ~48s 降到 ~16s）。分两步：
-	//   1. 只要目标后 ~1 MiB（Now），其余未完成片段暂设 None，让引擎撤回不急的请求；
-	//   2. 这 1 MiB 下完（或超时、又拖动了）后，其余恢复 Normal 继续全量下载；紧接着的内容由
-	//      播放器 Reader 的预读按顺序要。
-	// 播放器正在读的区域由 torrent.Reader 的 readahead 维持优先级，不受这里影响。
+	// 同优先级区域平分带宽（anacrolix 会并行填充，紧挨播放位置的字节反而最后到），否则低速时
+	// 要卡几十秒（实测 256 KB/s 下拖动从 ~48s 降到 ~16s）。做法：目标后 ~1 MiB 设 Now，其余
+	// 未完成片段的手动优先级退回 Normal（不设 None：什么都不要时引擎会对 peer 失去兴趣，恢复慢）。
+	// 再往后的顺序由播放器 torrent.Reader 的自适应预读负责。
 	nowEnd := min(s.numPieces, targetPiece+max(int((1<<20)/s.pieceLen), 2))
-	gen := s.boostGen.Add(1)
-	s.applyBoost(targetPiece, nowEnd, torrent.PiecePriorityNone)
-	go func() {
-		deadline := time.Now().Add(15 * time.Second)
-		ticker := time.NewTicker(100 * time.Millisecond)
-		defer ticker.Stop()
-		for range ticker.C {
-			if s.boostGen.Load() != gen || s.dropped.Load() || s.completed.Load() {
-				return
-			}
-			if time.Now().After(deadline) || s.piecesComplete(targetPiece, nowEnd) {
-				break
-			}
-		}
-		if s.boostGen.Load() == gen && !s.dropped.Load() {
-			// 不再给后面整片设 Next：同优先级的一大片会被并行下载，紧挨播放位置的字节反而最后才到。
-			// 往后的顺序由播放器 Reader 的自适应预读（随连续播放增长）负责。
-			s.applyBoost(targetPiece, nowEnd, torrent.PiecePriorityNormal)
-		}
-	}()
-}
-
-func (s *activeBTStream) piecesComplete(from, to int) bool {
-	for idx := from; idx < to; idx++ {
-		if !s.torrent.PieceState(idx).Complete {
-			return false
-		}
-	}
-	return true
+	s.applyBoost(targetPiece, nowEnd, torrent.PiecePriorityNormal)
 }
 
 // applyBoost sets [targetPiece, nowEnd) to PiecePriorityNow and every other
