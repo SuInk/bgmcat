@@ -31,37 +31,63 @@ var defaults []byte
 var Version = version.Current()
 
 type Config struct {
-	DataDir, Addr, PublicURL string
-	Web                      fs.FS
+	DataDir, Addr, PublicURL     string
+	AdminUsername, AdminPassword string
+	Desktop                      bool
+	Web                          fs.FS
 }
+type liveTransferProgress struct {
+	fileIndex     int
+	inFlightBytes int64
+	uploadSpeed   int64
+}
+
 type App struct {
-	discoveryGroup singleflight.Group
-	Store          *Store
-	cfg            Config
-	mux            *http.ServeMux
-	ctx            context.Context
-	cancel         context.CancelFunc
-	wg             sync.WaitGroup
-	http           *http.Client
-	refreshMu      sync.Mutex
-	enqueueMu      sync.Mutex
-	jobsMu         sync.Mutex
-	jobs           map[string]context.CancelFunc
-	downloadSlots  chan struct{}
-	driveNetworkMu sync.Mutex
-	driveScanMu    sync.Mutex
-	driveIP        string
-	driveTLSKey    string
-	driveIPHTTP    *http.Transport
-	driveMu        sync.Mutex
-	oauthMu        sync.Mutex
-	oauth          map[string]Obj
-	mcpMu          sync.Mutex
-	mcpSessions    map[string]chan Obj
-	tunnel         Tunnel
-	aria2          *Aria2Engine
-	media          *Media
-	start          time.Time
+	discoveryGroup  singleflight.Group
+	bgmData         bangumiDataStore
+	staticAssets    staticAssetStore
+	resourceMu      sync.Mutex
+	resourceFlights map[string]*resourceFlight
+	Store           *Store
+	cfg             Config
+	mux             *http.ServeMux
+	ctx             context.Context
+	cancel          context.CancelFunc
+	wg              sync.WaitGroup
+	http            *http.Client
+	refreshMu       sync.Mutex
+	enqueueMu       sync.Mutex
+	jobsMu          sync.Mutex
+	jobs            map[string]context.CancelFunc
+	downloadSlots   chan struct{}
+	archiveMu       sync.Mutex
+	archiveJobs     map[string]context.CancelFunc
+	archiveSlots    chan struct{}
+	archiveWake     chan struct{}
+	liveTransferMu  sync.RWMutex
+	liveTransfers   map[string]liveTransferProgress
+	dlSubMu         sync.Mutex
+	dlSubs          map[chan struct{}]struct{}
+	driveNetworkMu  sync.Mutex
+	driveScanMu     sync.Mutex
+	driveIP         string
+	driveTLSKey     string
+	driveIPHTTP     *http.Transport
+	directRoutes    map[string]*cachedDirectRoute
+	driveMu         sync.Mutex
+	oauthMu         sync.Mutex
+	oauth           map[string]Obj
+	mcpMu           sync.Mutex
+	mcpSessions     map[string]chan Obj
+	lanMu           sync.Mutex
+	lanServers      map[string]*lanServerEntry
+	tunnel          Tunnel
+	engine          *NativeEngine
+	media           *Media
+	throttle        *authThrottle
+	authFailDelay   time.Duration
+	bootstrap       AuthBootstrapResult
+	start           time.Time
 }
 
 func New(cfg Config) (*App, error) {
@@ -84,7 +110,34 @@ func New(cfg Config) (*App, error) {
 		return nil, e
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	a := &App{Store: store, cfg: cfg, mux: http.NewServeMux(), ctx: ctx, cancel: cancel, http: &http.Client{Timeout: 45 * time.Second}, jobs: map[string]context.CancelFunc{}, downloadSlots: make(chan struct{}, 4), oauth: map[string]Obj{}, mcpSessions: map[string]chan Obj{}, start: time.Now()}
+	baseTransport := http.DefaultTransport.(*http.Transport).Clone()
+	baseTransport.MaxIdleConns = 128
+	baseTransport.MaxIdleConnsPerHost = 32
+	baseTransport.IdleConnTimeout = 90 * time.Second
+	baseTransport.ReadBufferSize = 256 << 10
+	baseTransport.WriteBufferSize = 256 << 10
+	a := &App{
+		Store:           store,
+		cfg:             cfg,
+		mux:             http.NewServeMux(),
+		ctx:             ctx,
+		cancel:          cancel,
+		jobs:            map[string]context.CancelFunc{},
+		downloadSlots:   make(chan struct{}, 6),
+		archiveJobs:     map[string]context.CancelFunc{},
+		archiveSlots:    make(chan struct{}, 3),
+		archiveWake:     make(chan struct{}, 1),
+		liveTransfers:   map[string]liveTransferProgress{},
+		dlSubs:          map[chan struct{}]struct{}{},
+		directRoutes:    map[string]*cachedDirectRoute{},
+		oauth:           map[string]Obj{},
+		mcpSessions:     map[string]chan Obj{},
+		resourceFlights: map[string]*resourceFlight{},
+		throttle:        newAuthThrottle(),
+		authFailDelay:   defaultAuthFailureDelay,
+		start:           time.Now(),
+	}
+	a.http = &http.Client{Timeout: 45 * time.Second, Transport: &smartDirectRoundTripper{app: a, base: baseTransport}}
 	s, e := store.Get("config", "settings")
 	if e != nil {
 		store.Close()
@@ -101,7 +154,7 @@ func New(cfg Config) (*App, error) {
 		s["cloudDeleteLocal"] = false
 		s["googleClientId"] = ""
 		s["googleClientSecret"] = ""
-		s["googleRedirectUri"] = cfg.PublicURL + "/api/cloud/callback"
+		s["googleRedirectUri"] = ""
 		for _, key := range []string{"gdirectBinaryPath", "gdirectDbPath", "cloudMountDir"} {
 			delete(s, key)
 		}
@@ -110,13 +163,21 @@ func New(cfg Config) (*App, error) {
 			cancel()
 			return nil, e
 		}
-	} else if s, e = backfillSettings(store, s); e != nil {
+	} else if s, e = backfillSettings(store, cfg.DataDir, s); e != nil {
 		store.Close()
 		cancel()
 		return nil, e
 	}
-	_ = os.MkdirAll(str(s["downloadDir"]), 0700)
-	a.aria2 = &Aria2Engine{app: a}
+	boot, e := a.BootstrapAdmin(cfg.AdminUsername, cfg.AdminPassword)
+	if e != nil {
+		store.Close()
+		cancel()
+		return nil, e
+	}
+	a.bootstrap = boot
+	a.migrateDataDirLayout()
+	_ = os.MkdirAll(a.downloadsDir(), 0700)
+	a.engine = NewNativeEngine(a)
 	a.media = NewMedia(a)
 	a.routes()
 	return a, nil
@@ -135,7 +196,7 @@ var removedSettings = map[string]bool{"gdirectBinaryPath": true, "gdirectDbPath"
 // backfillSettings adds keys introduced after the settings row was first saved.
 // updateSettings only accepts keys that already exist, so without this a new
 // option (e.g. btTrackers) could never be edited on an upgraded install.
-func backfillSettings(store *Store, s Obj) (Obj, error) {
+func backfillSettings(store *Store, dataDir string, s Obj) (Obj, error) {
 	var base Obj
 	if e := json.Unmarshal(defaults, &base); e != nil {
 		return s, e
@@ -144,6 +205,49 @@ func backfillSettings(store *Store, s Obj) (Obj, error) {
 	for k, v := range base {
 		if _, exists := s[k]; !exists && !removedSettings[k] {
 			missing[k] = v
+		}
+	}
+	if curClient := str(s["downloadClient"]); curClient == "" || curClient == "aria2" {
+		missing["downloadClient"] = "native"
+	}
+	if strings.TrimSpace(str(s["downloadDir"])) == "" && dataDir != "" {
+		missing["downloadDir"] = filepath.Join(dataDir, "downloads")
+	}
+	// Clear legacy hardcoded loopback /api/cloud/callback default on unconnected installs
+	// so Desktop OAuth clients resolve dynamically to http://127.0.0.1:<active_port>.
+	if curRedirect := strings.TrimSpace(str(s["googleRedirectUri"])); strings.HasPrefix(curRedirect, "http://127.0.0.1:") && strings.HasSuffix(curRedirect, "/api/cloud/callback") {
+		if secret, _ := store.Get("secrets", "google"); secret == nil {
+			missing["googleRedirectUri"] = ""
+		}
+	}
+	// Backfill newly added resource providers into resourceProviderOrder
+	// and upgrade untouched legacy 1-provider default ("mikan" only with 3-item order).
+	if rawOrder, exists := s["resourceProviderOrder"]; exists {
+		curOrder := list(rawOrder)
+		seen := map[string]bool{}
+		mergedOrder := make([]string, 0, len(allResourceProviders))
+		for _, item := range curOrder {
+			id := str(item)
+			if id != "" && !seen[id] {
+				seen[id] = true
+				mergedOrder = append(mergedOrder, id)
+			}
+		}
+		addedNew := false
+		for _, item := range list(base["resourceProviderOrder"]) {
+			id := str(item)
+			if id != "" && !seen[id] {
+				seen[id] = true
+				mergedOrder = append(mergedOrder, id)
+				addedNew = true
+			}
+		}
+		if addedNew {
+			missing["resourceProviderOrder"] = mergedOrder
+			curEnabled := list(s["enabledResourceProviders"])
+			if len(curOrder) <= 3 && len(curEnabled) == 1 && str(curEnabled[0]) == "mikan" {
+				missing["enabledResourceProviders"] = base["enabledResourceProviders"]
+			}
 		}
 	}
 	if len(missing) == 0 {
@@ -182,13 +286,18 @@ func ok(w http.ResponseWriter, v any) {
 	_ = json.NewEncoder(w).Encode(Obj{"ok": true, "data": v})
 }
 func fail(w http.ResponseWriter, status int, msg string) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
 	code := "REQUEST_FAILED"
 	if status == 401 {
 		code = "AUTH_INVALID"
+	} else if status == 429 {
+		code = "AUTH_RATE_LIMITED"
 	}
-	_ = json.NewEncoder(w).Encode(Obj{"ok": false, "error": Obj{"code": code, "message": msg, "source": "go", "retryable": status >= 500}})
+	failWithCode(w, status, code, msg)
+}
+func failWithCode(w http.ResponseWriter, status int, code, msg string) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(Obj{"ok": false, "error": Obj{"code": code, "message": msg, "source": "go", "retryable": status >= 500 || status == 429}})
 }
 func body(w http.ResponseWriter, r *http.Request) (Obj, error) {
 	r.Body = http.MaxBytesReader(w, r.Body, 2<<20)
@@ -206,30 +315,92 @@ func (a *App) handle(pattern string, fn func(http.ResponseWriter, *http.Request)
 		}
 	})
 }
+func (a *App) allowedCORSOrigin(origin string) bool {
+	trimmed := strings.TrimRight(strings.TrimSpace(origin), "/")
+	if pub := a.tunnelPublicURL(); pub != "" && strings.EqualFold(pub, trimmed) {
+		return true
+	}
+	for _, item := range list(a.Settings()["corsOrigins"]) {
+		if strings.EqualFold(strings.TrimRight(strings.TrimSpace(str(item)), "/"), trimmed) {
+			return true
+		}
+	}
+	return false
+}
+func isPublicAuthRoute(path string) bool {
+	switch path {
+	case "/api/health",
+		"/api/bootstrap",
+		"/api/system/status",
+		"/api/auth/status",
+		"/api/auth/login",
+		"/api/auth/token-login",
+		"/api/auth/github/start",
+		"/api/auth/github/exchange",
+		"/api/auth/google/start",
+		"/api/auth/oidc/start",
+		"/api/auth/oauth/exchange",
+		"/api/auth/diana/login",
+		"/api/auth/diana/pair",
+		"/api/auth/diana/pair/status",
+		"/api/auth/diana/pair/claim":
+		return true
+	}
+	return strings.HasPrefix(path, "/api/public/shares/")
+}
 func (a *App) Handler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Referrer-Policy", "no-referrer")
-		if r.URL.Path == "/api/health" || r.URL.Path == "/api/system/status" || r.URL.Path == "/api/auth/token-login" || r.URL.Path == "/api/auth/github/start" || r.URL.Path == "/api/auth/github/exchange" || r.URL.Path == "/api/cloud/callback" || r.URL.Path == "/api/auth/github/callback" {
-			a.mux.ServeHTTP(w, r)
-			return
-		}
-		if strings.HasPrefix(r.URL.Path, "/api/") || (r.URL.Path == "/mcp" && r.Method != "GET") || strings.HasPrefix(r.URL.Path, "/mcp/") {
-			token := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
-			if token == "" && strings.HasPrefix(r.URL.Path, "/api/downloads/") && (strings.HasSuffix(r.URL.Path, "/stream") || strings.Contains(r.URL.Path, "/hls/") || strings.Contains(r.URL.Path, "/subtitles/") || strings.HasSuffix(r.URL.Path, "/thumbnail")) {
-				token = r.URL.Query().Get("token")
-			}
-			if !a.validToken(token) {
-				fail(w, 401, "需要有效的访问口令")
+		if r.Method == http.MethodGet && r.URL.Path == "/" {
+			st := r.URL.Query().Get("state")
+			if strings.HasPrefix(st, "gdrive:") || strings.HasPrefix(st, "onedrive:") {
+				a.serveCloudOAuthCallback(w, r)
 				return
 			}
+		}
+		isAPIRoute := strings.HasPrefix(r.URL.Path, "/api/") || (r.URL.Path == "/mcp" && r.Method != "GET") || strings.HasPrefix(r.URL.Path, "/mcp/")
+		isCallback := r.URL.Path == "/api/cloud/callback" ||
+			r.URL.Path == "/api/auth/github/callback" ||
+			r.URL.Path == "/api/auth/google/callback" ||
+			r.URL.Path == "/api/auth/oidc/callback"
+		if isAPIRoute && !isCallback {
 			if origin := r.Header.Get("Origin"); origin != "" {
 				u, _ := url.Parse(origin)
-				if u == nil || !strings.EqualFold(u.Host, r.Host) {
+				fwdHost := ""
+				remoteHost, _, rErr := net.SplitHostPort(strings.TrimSpace(r.RemoteAddr))
+				if rErr != nil {
+					remoteHost = strings.TrimSpace(r.RemoteAddr)
+				}
+				if isLoopbackIPStr(remoteHost) {
+					fwdHost = strings.TrimSpace(strings.Split(r.Header.Get("X-Forwarded-Host"), ",")[0])
+				}
+				if u == nil || (!strings.EqualFold(u.Host, r.Host) && (fwdHost == "" || !strings.EqualFold(u.Host, fwdHost)) && !a.allowedCORSOrigin(origin)) {
 					fail(w, 403, "不允许跨站访问")
 					return
 				}
 			}
+		}
+		if isCallback || isPublicAuthRoute(r.URL.Path) {
+			if isAPIRoute {
+				serveMuxWithAPIGzip(a.mux, w, r)
+			} else {
+				a.mux.ServeHTTP(w, r)
+			}
+			return
+		}
+		if isAPIRoute {
+			allowQueryToken := r.URL.Path == "/api/downloads/events" ||
+				r.URL.Path == "/api/files/local/content" ||
+				r.URL.Path == "/api/files/cloud/content" ||
+				r.URL.Path == "/api/manga/image" ||
+				(strings.HasPrefix(r.URL.Path, "/api/downloads/") && (strings.HasSuffix(r.URL.Path, "/stream") || strings.Contains(r.URL.Path, "/hls/") || strings.Contains(r.URL.Path, "/subtitles/") || strings.HasSuffix(r.URL.Path, "/thumbnail")))
+			if authed, _ := a.authenticateRequest(r, allowQueryToken); !authed {
+				fail(w, 401, "未登录或会话已过期，请重新登录")
+				return
+			}
+			serveMuxWithAPIGzip(a.mux, w, r)
+			return
 		}
 		a.mux.ServeHTTP(w, r)
 	})
@@ -242,22 +413,15 @@ func (a *App) validToken(token string) bool {
 	return subtle.ConstantTimeCompare([]byte(token), []byte(expected)) == 1 || a.validSession(token)
 }
 func (a *App) Start() {
-	if str(a.Settings()["downloadClient"]) != "qbittorrent" {
-		a.wg.Add(1)
-		go func() {
-			defer a.wg.Done()
-			if _, _, err := a.aria2.ensure(a.ctx); err != nil && a.ctx.Err() == nil {
-				a.Log("warn", err.Error())
-			}
-		}()
-	}
 	a.resumeJobs()
+	a.syncLANListeners()
+	go a.warmBangumiDataIndex()
 	if flag(a.Settings()["tunnelEnabled"]) {
 		if e := a.startTunnel(); e != nil {
 			a.Log("warn", e.Error())
 		}
 	}
-	for _, work := range []func(){a.pollSubscriptions, a.archiveCompleted, a.housekeeping} {
+	for _, work := range []func(){a.pollSubscriptions, a.housekeeping} {
 		a.wg.Add(1)
 		go func(work func()) {
 			defer a.wg.Done()
@@ -273,6 +437,23 @@ func (a *App) Start() {
 			}
 		}(work)
 	}
+	a.wg.Add(1)
+	go func() {
+		defer a.wg.Done()
+		ticker := time.NewTicker(10 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-a.ctx.Done():
+				return
+			case <-a.archiveWake:
+				a.archiveCompleted()
+			case <-ticker.C:
+				a.archiveCompleted()
+			}
+		}
+	}()
+	a.triggerArchive()
 }
 func (a *App) housekeeping() {
 	a.media.Prune()
@@ -284,23 +465,61 @@ func (a *App) housekeeping() {
 	}
 	a.oauthMu.Unlock()
 	_, _ = a.Store.db.Exec("DELETE FROM documents WHERE kind='logs' AND rowid NOT IN (SELECT rowid FROM documents WHERE kind='logs' ORDER BY rowid DESC LIMIT 2000)")
+	_, _ = a.Store.db.Exec("DELETE FROM ids WHERE id < (SELECT MAX(id) FROM ids)")
+	a.pruneExpiredSessions()
+	a.pruneOldExpiredShares()
+}
+
+func (a *App) pruneExpiredSessions() {
+	a.Store.mu.Lock()
+	rows, err := a.Store.db.Query("SELECT key,value FROM documents WHERE kind='sessions'")
+	if err != nil {
+		a.Store.mu.Unlock()
+		return
+	}
+	var expired []string
+	nowUnix := time.Now().Unix()
+	for rows.Next() {
+		var key, raw string
+		if rows.Scan(&key, &raw) == nil {
+			var s Obj
+			if json.Unmarshal([]byte(raw), &s) == nil && num(s["expires"]) <= nowUnix {
+				expired = append(expired, key)
+			}
+		}
+	}
+	rows.Close()
+	a.Store.mu.Unlock()
+	for _, key := range expired {
+		_ = a.Store.Delete("sessions", key)
+	}
+	if flag(a.Settings()["lanAccessEnabled"]) {
+		a.syncLANListeners()
+	}
 }
 func (a *App) Close() error {
 	a.cancel()
+	a.closeLANListeners()
 	a.tunnel.stop()
 	a.jobsMu.Lock()
 	for _, cancel := range a.jobs {
 		cancel()
 	}
 	a.jobsMu.Unlock()
+	a.archiveMu.Lock()
+	for _, cancel := range a.archiveJobs {
+		cancel()
+	}
+	a.archiveMu.Unlock()
 	a.wg.Wait()
 	a.media.Close()
-	a.aria2.Close()
+	a.engine.Close()
 	a.driveNetworkMu.Lock()
 	if a.driveIPHTTP != nil {
 		a.driveIPHTTP.CloseIdleConnections()
 	}
 	a.driveNetworkMu.Unlock()
+	a.closeDirectRoutes()
 	return a.Store.Close()
 }
 func (a *App) status() Obj {
@@ -308,32 +527,79 @@ func (a *App) status() Obj {
 	host, port, _ := net.SplitHostPort(a.cfg.Addr)
 	p, _ := strconv.Atoi(port)
 	t := a.tunnelStatus()
+	client := str(s["downloadClient"])
 	qbit := false
-	if str(s["downloadClient"]) == "qbittorrent" {
+	if client == "qbittorrent" {
 		qbit = a.qbitOnline()
 	}
-	return Obj{"appVersion": Version, "activeHost": host, "activePort": p, "configuredHost": host, "configuredPort": p, "apiBaseUrl": a.cfg.PublicURL, "mcpSseUrl": a.cfg.PublicURL + "/mcp/sse", "tokenHeaderName": "Authorization", "tokenConfigured": true, "localAuthBypassEnabled": false, "aria2Online": a.aria2.online(), "qbittorrentOnline": qbit, "downloadClient": s["downloadClient"], "rssPollingEnabled": true, "restartRequired": false, "tunnelEnabled": t["enabled"], "tunnelState": t["state"], "tunnelPublicUrl": t["publicUrl"], "publicExposureActive": str(t["state"]) == "online"}
+	clientOnline := a.downloadClientOnline(client)
+	cloudProv := a.activeCloudProvider()
+	lanURLs := a.lanURLs()
+	return Obj{
+		"appVersion":             Version,
+		"activeHost":             host,
+		"activePort":             p,
+		"configuredHost":         host,
+		"configuredPort":         p,
+		"lanAccessEnabled":       flag(s["lanAccessEnabled"]) || isWildcardBindHost(host),
+		"lanUrls":                lanURLs,
+		"apiBaseUrl":             a.cfg.PublicURL,
+		"mcpSseUrl":              a.cfg.PublicURL + "/mcp/sse",
+		"tokenHeaderName":        "Authorization",
+		"tokenConfigured":        true,
+		"localAuthBypassEnabled": false,
+		"aria2Online":            a.engine.online(),
+		"qbittorrentOnline":      qbit,
+		"downloadClient":         client,
+		"downloadClientOnline":   clientOnline,
+		"downloadClientName":     downloadClientDisplayName(client),
+		"cloudProvider":          cloudProv,
+		"cloudProviderName":      cloudProviderDisplayName(cloudProv),
+		"cloudConnected":         a.cloudProviderConnected(cloudProv),
+		"rssPollingEnabled":      true,
+		"restartRequired":        false,
+		"tunnelEnabled":          t["enabled"],
+		"tunnelState":            t["state"],
+		"tunnelPublicUrl":        t["publicUrl"],
+		"publicExposureActive":   str(t["state"]) == "online",
+	}
 }
 func (a *App) routes() {
 	a.handle("GET /api/health", func(w http.ResponseWriter, r *http.Request) error {
 		ok(w, Obj{"status": "ok", "runtime": "go", "version": Version})
 		return nil
 	})
+	a.handle("GET /api/bootstrap", func(w http.ResponseWriter, r *http.Request) error {
+		ok(w, a.buildBootstrapPayload(r))
+		return nil
+	})
 	a.handle("GET /api/system/status", func(w http.ResponseWriter, r *http.Request) error {
-		ok(w, Obj{"ok": true, "appVersion": Version, "githubOAuthAvailable": flag(a.Settings()["githubOAuthEnabled"])})
+		resp := Obj{"ok": true, "appVersion": Version}
+		for k, v := range a.publicAuthFlags() {
+			resp[k] = v
+		}
+		ok(w, resp)
 		return nil
 	})
 	a.handle("GET /api/system/status/full", func(w http.ResponseWriter, r *http.Request) error { ok(w, a.status()); return nil })
+	a.registerStorageRoutes()
 	a.handle("POST /api/auth/token-login", func(w http.ResponseWriter, r *http.Request) error {
+		ip := a.clientIP(r)
+		if wait := a.throttle.check(ip); wait > 0 {
+			writeRateLimited(w, wait)
+			return nil
+		}
 		o, e := body(w, r)
 		if e != nil {
 			return e
 		}
 		if !a.validToken(str(o["token"])) {
-			time.Sleep(300 * time.Millisecond)
+			a.throttle.recordFailure(ip)
+			a.sleepOnAuthFailure()
 			fail(w, 401, "口令错误")
 			return nil
 		}
+		a.throttle.recordSuccess(ip)
 		ok(w, a.status())
 		return nil
 	})
@@ -347,14 +613,11 @@ func (a *App) routes() {
 		return e
 	})
 	a.handle("GET /api/logs/recent", func(w http.ResponseWriter, r *http.Request) error {
-		o, e := a.Store.List("logs")
 		limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
 		if limit <= 0 || limit > 2000 {
 			limit = 200
 		}
-		if len(o) > limit {
-			o = o[:limit]
-		}
+		o, e := a.Store.ListLimit("logs", limit)
 		if e == nil {
 			ok(w, o)
 		}
@@ -363,40 +626,20 @@ func (a *App) routes() {
 	a.handle("GET /api/logs/file-info", func(w http.ResponseWriter, r *http.Request) error { ok(w, Obj{"path": a.Store.Path}); return nil })
 	a.subscriptionRoutes()
 	a.downloadRoutes()
+	a.registerEngineRoutes()
+	a.fileRoutes()
+	a.shareRoutes()
 	a.discoveryRoutes()
+	a.mangaRoutes()
 	a.cloudRoutes()
 	a.driveNetworkRoutes()
+	a.networkProbeRoutes()
 	a.integrationRoutes()
 	a.backupRoutes()
 	a.authRoutes()
+	a.remoteRoutes()
 	a.mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) { fail(w, 404, "接口不存在") })
-	a.mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		if a.cfg.Web == nil {
-			http.Error(w, "frontend not built", 503)
-			return
-		}
-		path := strings.TrimPrefix(r.URL.Path, "/")
-		if path == "" {
-			path = "index.html"
-		}
-		b, e := fs.ReadFile(a.cfg.Web, path)
-		if e != nil {
-			b, e = fs.ReadFile(a.cfg.Web, "index.html")
-			path = "index.html"
-		}
-		if e != nil {
-			http.Error(w, "frontend missing", 503)
-			return
-		}
-		if strings.HasSuffix(path, ".html") {
-			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			w.Header().Set("Cache-Control", "no-cache")
-		}
-		if strings.HasPrefix(path, "assets/") {
-			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
-		}
-		http.ServeContent(w, r, path, time.Time{}, strings.NewReader(string(b)))
-	})
+	a.mux.HandleFunc("/", a.serveWebAsset)
 }
 func (a *App) updateSettings(w http.ResponseWriter, r *http.Request) error {
 	o, e := body(w, r)
@@ -437,21 +680,53 @@ func (a *App) updateSettings(w http.ResponseWriter, r *http.Request) error {
 					return fmt.Errorf("%s 必须是字符串列表", k)
 				}
 			}
+		case map[string]any:
+			m, ok := v.(map[string]any)
+			if !ok {
+				return fmt.Errorf("%s 必须是键值映射", k)
+			}
+			cleaned := map[string]any{}
+			for mk, mv := range m {
+				sv, isStr := mv.(string)
+				if !isStr {
+					return fmt.Errorf("%s.%s 必须是字符串", k, mk)
+				}
+				sv = strings.TrimSpace(sv)
+				if k == "providerMirrors" && sv != "" {
+					sv = strings.TrimRight(sv, "/")
+					if !httpURL(sv) {
+						return fmt.Errorf("镜像地址无效：%s（需以 http:// 或 https:// 开头）", sv)
+					}
+				}
+				if sv != "" {
+					cleaned[mk] = sv
+				}
+			}
+			o[k] = cleaned
 		}
 		if k == "token" && len(str(v)) < 24 {
 			return errors.New("口令至少 24 位")
 		}
-		if k == "downloadClient" && str(v) != "native" && str(v) != "qbittorrent" {
-			return errors.New("请选择托管 aria2 下载器或 qBittorrent")
+		if k == "downloadClient" && !validDownloadClient(str(v)) {
+			return errors.New("请选择受支持的下载引擎")
+		}
+		if k == "cloudProvider" && !validCloudProvider(str(v)) {
+			return errors.New("请选择受支持的云盘服务")
 		}
 		if k == "pollIntervalMinutes" && (num(v) < 1 || num(v) > 1440) {
 			return errors.New("轮询间隔为 1–1440 分钟")
 		}
 		if k == "defaultSaveTo" && str(v) != "local" && str(v) != "cloud" {
-			return errors.New("保存位置只能是本机或 Google Drive")
+			return errors.New("保存位置只能是本机或云盘")
 		}
 		if k == "downloadDir" && !filepath.IsAbs(str(v)) {
 			return errors.New("下载目录必须是绝对路径")
+		}
+		if k == "dianaAuthBaseUrl" && strings.TrimSpace(str(v)) != "" && !httpURL(strings.TrimSpace(str(v))) {
+			return errors.New("Diana 服务地址无效（需以 http:// 或 https:// 开头）")
+		}
+		if k == "oidcIssuerUrl" && strings.TrimSpace(str(v)) != "" && !httpURL(strings.TrimSpace(str(v))) {
+			return errors.New("OIDC Issuer 地址无效（需以 https:// 或 http:// 开头）")
 		}
 		if k == "btTrackers" {
 			for _, tracker := range list(v) {
@@ -461,9 +736,35 @@ func (a *App) updateSettings(w http.ResponseWriter, r *http.Request) error {
 			}
 		}
 	}
+	if o["providerMirrors"] != nil && o["mikanBaseUrl"] == nil {
+		mirrors := object(o["providerMirrors"])
+		if mikanMirror := strings.TrimSpace(str(mirrors["mikan"])); mikanMirror != "" {
+			o["mikanBaseUrl"] = mikanMirror
+		} else {
+			o["mikanBaseUrl"] = "https://mikanani.me"
+		}
+	} else if o["mikanBaseUrl"] != nil && o["providerMirrors"] == nil {
+		curMirrors := clone(object(s["providerMirrors"]))
+		if curMirrors == nil {
+			curMirrors = Obj{}
+		}
+		mb := strings.TrimRight(strings.TrimSpace(str(o["mikanBaseUrl"])), "/")
+		if mb == "" || mb == "https://mikanani.me" || mb == "https://mikanime.tv" {
+			delete(curMirrors, "mikan")
+		} else {
+			curMirrors["mikan"] = mb
+		}
+		o["providerMirrors"] = curMirrors
+	}
 	s, e = a.Store.Patch("config", "settings", o)
 	if e == nil {
-		ok(w, s)
+		if o["lanAccessEnabled"] != nil {
+			a.syncLANListeners()
+		}
+		if o["cloudArchiveEnabled"] != nil || o["cloudDeleteLocal"] != nil || o["cloudDriveFolderId"] != nil || o["cloudProvider"] != nil || o["onedriveFolderId"] != nil || o["webdavRootPath"] != nil {
+			a.triggerArchive()
+		}
+		ok(w, a.Settings())
 	}
 	return e
 }
@@ -480,7 +781,7 @@ func (a *App) requestJSON(ctx context.Context, method, endpoint string, payload 
 	if e != nil {
 		return nil, e
 	}
-	req.Header.Set("User-Agent", "AnimeRSS-Go/"+Version)
+	req.Header.Set("User-Agent", "bgmcat/"+Version)
 	if payload != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}

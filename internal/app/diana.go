@@ -68,5 +68,7 @@ func (a *App) dianaServerConfig() (Obj, error) {
 	if e != nil {
 		return nil, e
 	}
-	return Obj{"command": exe, "args": []string{"--mcp-stdio"}, "env": Obj{"ANIME_RSS_MCP_URL": a.cfg.PublicURL + "/mcp", "ANIME_RSS_MCP_TOKEN": str(a.Settings()["token"])}, "enabled": true}, nil
+	mcpURL := a.cfg.PublicURL + "/mcp"
+	token := str(a.Settings()["token"])
+	return Obj{"command": exe, "args": []string{"--mcp-stdio"}, "env": Obj{"BGMCAT_MCP_URL": mcpURL, "BGMCAT_MCP_TOKEN": token}, "enabled": true}, nil
 }

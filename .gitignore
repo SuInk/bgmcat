@@ -20,6 +20,17 @@ __pycache__/
 *.key
 
 .native/
+.claude/
+_site/
 
 desktop/resources/
 desktop-dist/
+
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+*.apk
+*.idsig
+*.keystore
+*.jks

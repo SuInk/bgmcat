@@ -1,12 +1,27 @@
 import { ref } from "vue";
 
-export type TabKey = "home" | "favorites" | "subscriptions" | "downloads" | "logs" | "settings" | "integrations";
+import type { SettingsPageKey } from "../components/settings/context";
+
+export type TabKey =
+  | "home"
+  | "manga"
+  | "favorites"
+  | "history"
+  | "subscriptions"
+  | "downloads"
+  | "files"
+  | "logs"
+  | "settings"
+  | "integrations";
 
 export const TABS: Array<{ key: TabKey; label: string; hint: string; icon: string; subtitle: string }> = [
-  { key: "home", label: "首页新番", hint: "Bangumi", icon: "🌸", subtitle: "当季新番与番剧搜索" },
+  { key: "home", label: "番剧发现", hint: "Bangumi", icon: "🌸", subtitle: "新番时间表与全库番剧索引" },
+  { key: "manga", label: "漫画阅读", hint: "Manga", icon: "📖", subtitle: "在线漫画检索与沉浸式阅读" },
   { key: "favorites", label: "我的收藏", hint: "Watch", icon: "⭐", subtitle: "收藏的番剧与追番订阅" },
+  { key: "history", label: "观看历史", hint: "History", icon: "🕒", subtitle: "本地与云盘播放进度及观看记录" },
   { key: "subscriptions", label: "订阅配置", hint: "RSS", icon: "📡", subtitle: "RSS 源与自动下载规则" },
-  { key: "downloads", label: "下载管理", hint: "托管 aria2", icon: "📥", subtitle: "下载任务与在线播放" },
+  { key: "downloads", label: "下载管理", hint: "Downloads", icon: "📥", subtitle: "下载任务与边下边播" },
+  { key: "files", label: "文件管理", hint: "Files", icon: "📁", subtitle: "本地下载目录与云盘浏览播放" },
   { key: "logs", label: "运行日志", hint: "Logs", icon: "📋", subtitle: "后端服务运行记录" },
   { key: "integrations", label: "MCP", hint: "Agent", icon: "🔌", subtitle: "AI 客户端接入配置" },
   { key: "settings", label: "设置", hint: "服务", icon: "⚙️", subtitle: "服务、下载与数据源设置" }
@@ -14,9 +29,12 @@ export const TABS: Array<{ key: TabKey; label: string; hint: string; icon: strin
 
 const TAB_PATH_BY_KEY: Record<TabKey, string> = {
   home: "/",
+  manga: "/manga",
   favorites: "/watch",
+  history: "/history",
   subscriptions: "/rss",
   downloads: "/downloads",
+  files: "/files",
   logs: "/logs",
   settings: "/service",
   integrations: "/mcp"
@@ -27,8 +45,12 @@ const LEGACY_PATH_TABS: Array<[string, TabKey]> = [
   ["/bangumi", "home"],
   ["/aria2", "downloads"],
   ["/status", "settings"],
+  ["/probe", "settings"],
   ["/feed", "subscriptions"]
 ];
+
+/** 从旧路径（如 /probe）或其他视图跳进设置页时，指定直接打开的设置子分类 */
+export const requestedSettingsPage = ref<SettingsPageKey | null>(null);
 
 export const activeTab = ref<TabKey>(resolveTabFromPath(window.location.pathname));
 
@@ -40,6 +62,24 @@ export const playbackRouteLabel = ref("");
 
 export function resolveTabFromPath(pathname: string): TabKey {
   const normalizedPath = pathname.replace(/\/+$/g, "") || "/";
+  if (normalizedPath === "/probe" || normalizedPath.startsWith("/probe/")) {
+    requestedSettingsPage.value = "probe";
+    try {
+      window.localStorage.setItem("bgmcat.settings.page", "probe");
+    } catch {
+      // 忽略无痕或受限环境下的存储异常
+    }
+  } else if (normalizedPath === "/service") {
+    const params = new URLSearchParams(window.location.search);
+    if (params.has("cloud") || params.has("cloudError")) {
+      requestedSettingsPage.value = "download";
+      try {
+        window.localStorage.setItem("bgmcat.settings.page", "download");
+      } catch {
+        // 忽略无痕或受限环境下的存储异常
+      }
+    }
+  }
   for (const [prefix, tab] of LEGACY_PATH_TABS) {
     if (normalizedPath === prefix || normalizedPath.startsWith(`${prefix}/`)) {
       return tab;
@@ -63,13 +103,32 @@ export function hasTokenInLocation(): boolean {
   return new URLSearchParams(window.location.search).has("token");
 }
 
-/** GitHub 回调把一次性兑换码放在 `?login=`，换到 token 后立刻从地址栏抹掉。 */
+/** OAuth 回调把一次性兑换码放在 `?login=`，换到 token 后立刻从地址栏抹掉。 */
 export function readLoginCodeFromLocation(): string {
   return new URLSearchParams(window.location.search).get("login")?.trim() ?? "";
 }
 
 export function hasLoginCodeInLocation(): boolean {
   return new URLSearchParams(window.location.search).has("login");
+}
+
+export function readAuthErrorFromLocation(): string {
+  return new URLSearchParams(window.location.search).get("authError")?.trim() ?? "";
+}
+
+export function hasAuthErrorInLocation(): boolean {
+  return new URLSearchParams(window.location.search).has("authError");
+}
+
+/** 读取扫码预填参数（优先读取不进网络请求的 #u=...&p=...，也兼容 ?u=...）。 */
+export function readAutofillFromLocation(): { username: string; password: string; hadAutofill: boolean } {
+  const searchParams = new URLSearchParams(window.location.search);
+  const hashRaw = window.location.hash.replace(/^#/, "");
+  const hashParams = new URLSearchParams(hashRaw);
+  const username = (hashParams.get("u") ?? searchParams.get("u") ?? "").trim();
+  const password = hashParams.get("p") ?? "";
+  const hadAutofill = searchParams.has("u") || hashParams.has("u") || hashParams.has("p");
+  return { username, password, hadAutofill };
 }
 
 export function readPlaybackGidFromLocation(): string {
@@ -100,6 +159,8 @@ function buildLocationUrl(
   if (options.clearToken) {
     searchParams.delete("token");
     searchParams.delete("login");
+    searchParams.delete("authError");
+    searchParams.delete("u");
   }
   if (options.playbackGid !== undefined) {
     if (options.playbackGid) {
@@ -109,7 +170,10 @@ function buildLocationUrl(
     }
   }
   const search = searchParams.toString();
-  return `${pathname}${search ? `?${search}` : ""}${window.location.hash}`;
+  const hashParams = new URLSearchParams(window.location.hash.replace(/^#/, ""));
+  const preserveHash = !(options.clearToken && (hashParams.has("u") || hashParams.has("p")));
+  const hash = preserveHash ? window.location.hash : "";
+  return `${pathname}${search ? `?${search}` : ""}${hash}`;
 }
 
 export function syncLocationWithTab(

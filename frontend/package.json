@@ -1,6 +1,7 @@
 {
   "name": "bgmcat-frontend",
   "private": true,
+  "author": "SuInk",
   "license": "SEE LICENSE IN ../LICENSE",
   "version": "0.1.0",
   "type": "module",

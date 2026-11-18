@@ -1,11 +1,18 @@
 import { computed, ref } from "vue";
 
-import type { FavoriteAnime, HomepageAnime } from "@shared/index";
+import type { AnimeSubscriptionOptions, FavoriteAnime, HomepageAnime } from "@shared/index";
 
-import { createFavoriteAnime, createFavoriteSubscription, deleteFavoriteAnime, listFavoriteAnime } from "../api";
+import {
+  createFavoriteAnime,
+  createFavoriteSubscription,
+  deleteFavoriteAnime,
+  listFavoriteAnime,
+  unsubscribeFavoriteAnime
+} from "../api";
 import { t } from "../i18n";
 import { withBusy } from "./busy";
-import { refreshSubscriptionList } from "./subscriptions";
+import { refreshDownloads } from "./downloads";
+import { refreshFeedItems, refreshSubscriptionList } from "./subscriptions";
 import { toastError, updateFeedback } from "./toasts";
 
 export const favorites = ref<FavoriteAnime[]>([]);
@@ -54,19 +61,42 @@ export async function removeFavoriteAnime(animeId: string): Promise<void> {
 export async function createSubscriptionFromAnime(
   anime: HomepageAnime,
   mikanKeyword?: string,
-  providerIds?: string[]
-): Promise<void> {
-  await withBusy(`favorite-subscribe:${anime.animeId}`, async () => {
+  providerIds?: string[],
+  options?: AnimeSubscriptionOptions
+): Promise<boolean> {
+  return withBusy(`favorite-subscribe:${anime.animeId}`, async () => {
     try {
       await createFavoriteSubscription({
         anime,
         mikanKeyword: mikanKeyword ?? anime.searchKeyword ?? anime.title,
-        ...(providerIds?.length ? { providerIds } : {})
+        ...(providerIds?.length ? { providerIds } : {}),
+        ...(options ? { options } : {})
       });
       await refreshFavoriteData();
-      updateFeedback(t("subscriptions.createdFromAnime"), "success");
+      const subgroupLabel =
+        options?.subgroup && options.subgroup !== "all" ? ` · ${options.subgroup}` : "";
+      updateFeedback(`已开启追更${subgroupLabel}`, "success");
+      setTimeout(() => {
+        void Promise.allSettled([refreshSubscriptionList(), refreshFeedItems(), refreshDownloads()]);
+      }, 1800);
+      return true;
     } catch (error) {
       toastError(error, t("subscriptions.createFromAnimeFailed"));
+      return false;
+    }
+  });
+}
+
+export async function cancelSubscriptionForAnime(animeId: string): Promise<boolean> {
+  return withBusy(`favorite-unsubscribe:${animeId}`, async () => {
+    try {
+      await unsubscribeFavoriteAnime(animeId);
+      await Promise.allSettled([refreshFavoriteData(), refreshFeedItems()]);
+      updateFeedback("已取消自动追更", "success");
+      return true;
+    } catch (error) {
+      toastError(error, "取消追更失败");
+      return false;
     }
   });
 }

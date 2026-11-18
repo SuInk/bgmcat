@@ -24,11 +24,12 @@ import (
 )
 
 type Media struct {
-	a        *App
-	mu       sync.Mutex
-	readers  map[string]int
-	sessions map[string]*hlsSession
-	secret   []byte
+	a          *App
+	mu         sync.Mutex
+	readers    map[string]int
+	sessions   map[string]*hlsSession
+	probeCache map[string]Obj
+	secret     []byte
 }
 type hlsSession struct {
 	dir    string
@@ -40,7 +41,7 @@ type hlsSession struct {
 }
 
 func NewMedia(a *App) *Media {
-	return &Media{a: a, readers: map[string]int{}, sessions: map[string]*hlsSession{}, secret: []byte(randomID(32))}
+	return &Media{a: a, readers: map[string]int{}, sessions: map[string]*hlsSession{}, probeCache: map[string]Obj{}, secret: []byte(randomID(32))}
 }
 func (m *Media) Busy(gid string) bool {
 	m.mu.Lock()
@@ -102,7 +103,7 @@ func mediaFile(j Obj) (Obj, error) {
 	for _, v := range list(j["files"]) {
 		f := object(v)
 		ext := strings.ToLower(filepath.Ext(str(f["path"])))
-		if !strings.Contains("|.mp4|.mkv|.webm|.avi|.ts|.mov|.m4v|.mp3|.flac|", "|"+ext+"|") {
+		if !isPlayableExt(ext) {
 			continue
 		}
 		if num(f["size"]) > size {
@@ -116,6 +117,22 @@ func mediaFile(j Obj) (Obj, error) {
 	return best, nil
 }
 func (m *Media) source(gid string) (Obj, Obj, error) {
+	if relSlash, ok := decodeLocalMediaID(gid); ok {
+		_, _, realPath, info, err := m.a.resolveExistingLocalPath(relSlash)
+		if err != nil {
+			return nil, nil, err
+		}
+		if !info.Mode().IsRegular() || !isPlayableExt(filepath.Ext(realPath)) {
+			return nil, nil, errors.New("不是可播放的媒体文件")
+		}
+		return Obj{"status": "complete"}, Obj{"path": realPath, "size": info.Size()}, nil
+	}
+	if provider, fileID, safeName, ok := decodeCloudMediaID(gid); ok {
+		if !m.a.cloudProviderConnected(provider) {
+			return nil, nil, fmt.Errorf("%s 未连接", cloudProviderDisplayName(provider))
+		}
+		return Obj{"status": "complete", "cloudProvider": provider}, Obj{"path": safeName, "remoteId": fileID, "remoteProvider": provider, "verified": true, "remoteOnly": true}, nil
+	}
 	j, e := m.a.Store.Get("downloads", gid)
 	if e != nil {
 		return nil, nil, e
@@ -127,31 +144,46 @@ func (m *Media) source(gid string) (Obj, Obj, error) {
 	return j, f, e
 }
 func (m *Media) stream(w http.ResponseWriter, r *http.Request) error {
-	gid := r.PathValue("gid")
+	return m.serveStreamByGID(w, r, r.PathValue("gid"))
+}
+func (m *Media) serveStreamByGID(w http.ResponseWriter, r *http.Request, gid string) error {
 	release := m.hold(gid)
 	defer release()
-	_, f, e := m.source(gid)
+	j, f, e := m.source(gid)
 	if e != nil {
 		return e
 	}
 	path := str(f["path"])
-	if local, e := os.Open(path); e == nil {
-		defer local.Close()
-		info, e := local.Stat()
-		if e != nil {
-			return e
+	if !flag(f["remoteOnly"]) && m.a.engine != nil {
+		if rc, modTime, ok := m.a.engine.OpenStream(r.Context(), gid, path); ok {
+			defer rc.Close()
+			http.ServeContent(w, r, filepath.Base(path), modTime, rc)
+			return nil
 		}
-		if !info.Mode().IsRegular() {
-			return errors.New("不是普通媒体文件")
+	}
+	if st := str(j["status"]); st != "" && st != "complete" {
+		return errors.New("下载尚未完成，继续下载后即可边下边播")
+	}
+	if !flag(f["remoteOnly"]) {
+		if local, e := os.Open(path); e == nil {
+			defer local.Close()
+			info, e := local.Stat()
+			if e != nil {
+				return e
+			}
+			if !info.Mode().IsRegular() {
+				return errors.New("不是普通媒体文件")
+			}
+			http.ServeContent(w, r, filepath.Base(path), info.ModTime(), local)
+			return nil
 		}
-		http.ServeContent(w, r, filepath.Base(path), info.ModTime(), local)
-		return nil
 	}
 	id := str(f["remoteId"])
 	if id == "" || !flag(f["verified"]) {
 		return errors.New("本地文件不存在，且没有已校验的云端副本")
 	}
-	res, e := m.a.driveRequest(r.Context(), r.Method, driveBase+"/files/"+url.PathEscape(id)+"?alt=media", nil, map[string]string{"Range": r.Header.Get("Range"), "Accept-Encoding": "identity"})
+	provider := firstNonEmpty(str(f["remoteProvider"]), str(j["cloudProvider"]), "google")
+	res, e := m.a.openCloudRangeResponse(r.Context(), provider, id, r.Method, r.Header.Get("Range"))
 	if e != nil {
 		return e
 	}
@@ -179,6 +211,12 @@ func (m *Media) ffmpeg() string {
 	return "ffmpeg"
 }
 func (m *Media) probe(ctx context.Context, gid string) (Obj, error) {
+	m.mu.Lock()
+	if cached, ok := m.probeCache[gid]; ok {
+		m.mu.Unlock()
+		return cached, nil
+	}
+	m.mu.Unlock()
 	binary := "ffprobe"
 	if p := str(m.a.Settings()["ffmpegPath"]); p != "" {
 		binary = filepath.Join(filepath.Dir(p), "ffprobe")
@@ -193,11 +231,39 @@ func (m *Media) probe(ctx context.Context, gid string) (Obj, error) {
 		return nil, e
 	}
 	var o Obj
-	e = json.Unmarshal(out, &o)
-	return o, e
+	if e = json.Unmarshal(out, &o); e != nil {
+		return nil, e
+	}
+	m.mu.Lock()
+	if len(m.probeCache) > 256 {
+		m.probeCache = map[string]Obj{}
+	}
+	m.probeCache[gid] = o
+	m.mu.Unlock()
+	return o, nil
+}
+
+func (m *Media) EnsureLocalThumbnail(ctx context.Context, gid, localPath string) {
+	if localPath == "" {
+		return
+	}
+	if info, err := os.Stat(localPath); err != nil || !info.Mode().IsRegular() {
+		return
+	}
+	dir := m.a.thumbnailsDir()
+	_ = os.MkdirAll(dir, 0700)
+	thumbPath := filepath.Join(dir, hash(gid)+".jpg")
+	if _, err := os.Stat(thumbPath); err == nil {
+		return
+	}
+	tCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	_ = exec.CommandContext(tCtx, m.ffmpeg(), "-nostdin", "-y", "-v", "error", "-ss", "8", "-i", localPath, "-frames:v", "1", "-vf", "scale=640:-1", thumbPath).Run()
 }
 func (m *Media) playback(w http.ResponseWriter, r *http.Request) error {
-	gid := r.PathValue("gid")
+	return m.servePlaybackByGID(w, r, r.PathValue("gid"), false)
+}
+func (m *Media) servePlaybackByGID(w http.ResponseWriter, r *http.Request, gid string, hideLocalPath bool) error {
 	release := m.hold(gid)
 	defer release()
 	_, file, e := m.source(gid)
@@ -206,7 +272,7 @@ func (m *Media) playback(w http.ResponseWriter, r *http.Request) error {
 	}
 	path := str(file["path"])
 	ext := strings.ToLower(filepath.Ext(path))
-	direct := ext == ".mp4" || ext == ".webm" || ext == ".mp3" || ext == ".m4v"
+	direct := strings.Contains("|.mp4|.webm|.m4v|.mp3|.flac|.m4a|.ogg|.opus|.wav|", "|"+ext+"|")
 	probe, probeErr := m.probe(r.Context(), gid)
 	tracks := []Obj{}
 	var duration any
@@ -236,7 +302,13 @@ func (m *Media) playback(w http.ResponseWriter, r *http.Request) error {
 		}
 		mode = "hls-transcode"
 	}
-	ok(w, Obj{"gid": gid, "filePath": path, "fileName": filepath.Base(path), "mimeType": mimeFor(path), "durationSeconds": duration, "deliveryMode": mode, "supportsInAppPlayback": true, "supportsTranscodePlayback": ffErr == nil, "subtitleTracks": tracks, "availablePlayers": []any{}})
+	exposedPath := path
+	exposedGID := gid
+	if hideLocalPath {
+		exposedPath = filepath.Base(path)
+		exposedGID = ""
+	}
+	ok(w, Obj{"gid": exposedGID, "filePath": exposedPath, "fileName": filepath.Base(path), "mimeType": mimeFor(path), "durationSeconds": duration, "deliveryMode": mode, "supportsInAppPlayback": true, "supportsTranscodePlayback": ffErr == nil, "subtitleTracks": tracks, "availablePlayers": []any{}})
 	return nil
 }
 func (m *Media) hls(gid string, start int) (*hlsSession, error) {
@@ -270,7 +342,11 @@ func (m *Media) hls(gid string, start int) (*hlsSession, error) {
 	if start < 0 {
 		start = 0
 	}
-	dir, e := os.MkdirTemp(filepath.Join(m.a.cfg.DataDir), "hls-")
+	hlsRoot := m.a.hlsCacheDir()
+	if e := os.MkdirAll(hlsRoot, 0700); e != nil {
+		return nil, e
+	}
+	dir, e := os.MkdirTemp(hlsRoot, "hls-")
 	if e != nil {
 		return nil, e
 	}
@@ -310,6 +386,95 @@ func waitFile(ctx context.Context, path string, done <-chan struct{}) error {
 		}
 	}
 }
+func (m *Media) serveProgressByGID(w http.ResponseWriter, gid string) error {
+	m.mu.Lock()
+	s := m.sessions[gid]
+	produced := 0
+	finished := false
+	if s != nil {
+		entries, _ := os.ReadDir(s.dir)
+		for _, entry := range entries {
+			if strings.HasSuffix(entry.Name(), ".ts") {
+				produced++
+			}
+		}
+		select {
+		case <-s.done:
+			finished = true
+		default:
+		}
+	}
+	m.mu.Unlock()
+	ok(w, Obj{"producedSeconds": produced * 6, "bufferedSeconds": produced * 6, "finished": finished})
+	return nil
+}
+
+func (m *Media) serveHLSByGID(w http.ResponseWriter, r *http.Request, gid, name, querySuffix string) error {
+	if name == "master.m3u8" {
+		probe, e := m.probe(r.Context(), gid)
+		if e != nil {
+			return errors.New("无法读取视频时长，请检查 FFmpeg/ffprobe")
+		}
+		duration, _ := strconv.ParseFloat(str(object(probe["format"])["duration"]), 64)
+		if duration <= 0 || duration > 7*24*3600 {
+			return errors.New("视频时长无效")
+		}
+		var playlist strings.Builder
+		playlist.WriteString("#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:6\n#EXT-X-PLAYLIST-TYPE:VOD\n#EXT-X-MEDIA-SEQUENCE:0\n#EXT-X-INDEPENDENT-SEGMENTS\n")
+		for i := 0; i < int(math.Ceil(duration/6)); i++ {
+			fmt.Fprintf(&playlist, "#EXTINF:%.3f,\nsegment%05d.ts%s\n", math.Min(6, duration-float64(i)*6), i, querySuffix)
+		}
+		playlist.WriteString("#EXT-X-ENDLIST\n")
+		w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
+		w.Header().Set("Cache-Control", "no-store")
+		_, e = io.WriteString(w, playlist.String())
+		return e
+	}
+	if !strings.HasPrefix(name, "segment") || !strings.HasSuffix(name, ".ts") {
+		return errors.New("无效分片")
+	}
+	n, e := strconv.Atoi(strings.TrimSuffix(strings.TrimPrefix(name, "segment"), ".ts"))
+	if e != nil || n < 0 || n > 100000 {
+		return errors.New("无效分片")
+	}
+	s, e := m.hls(gid, n)
+	if e != nil {
+		return e
+	}
+	path := filepath.Join(s.dir, name)
+	if e = waitFile(r.Context(), path, s.done); e != nil {
+		return e
+	}
+	http.ServeFile(w, r, path)
+	return nil
+}
+
+func (m *Media) serveSubtitleByGID(w http.ResponseWriter, r *http.Request, gid, track string) error {
+	ext := filepath.Ext(track)
+	id := strings.TrimSuffix(track, ext)
+	n, e := strconv.Atoi(id)
+	if e != nil || n < 0 || n > 100 || ext != ".ass" && ext != ".vtt" {
+		return errors.New("字幕轨道无效")
+	}
+	format, codec, content := "webvtt", "webvtt", "text/vtt"
+	if ext == ".ass" {
+		format = "ass"
+		codec = "ass"
+		content = "text/x-ssa"
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Minute)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, m.ffmpeg(), "-nostdin", "-v", "error", "-i", m.inputURL(gid), "-map", "0:"+id, "-c:s", codec, "-f", format, "pipe:1")
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	if e = cmd.Run(); e != nil {
+		return errors.New("字幕提取失败")
+	}
+	w.Header().Set("Content-Type", content+"; charset=utf-8")
+	_, e = w.Write(out.Bytes())
+	return e
+}
+
 func (m *Media) Routes() {
 	a := m.a
 	a.handle("GET /internal/media/{gid}", func(w http.ResponseWriter, r *http.Request) error {
@@ -324,103 +489,25 @@ func (m *Media) Routes() {
 	a.handle("GET /api/downloads/{gid}/stream", m.stream)
 	a.handle("GET /api/downloads/{gid}/playback", m.playback)
 	a.handle("GET /api/downloads/{gid}/playback/progress", func(w http.ResponseWriter, r *http.Request) error {
-		m.mu.Lock()
-		s := m.sessions[r.PathValue("gid")]
-		produced := 0
-		finished := false
-		if s != nil {
-			entries, _ := os.ReadDir(s.dir)
-			for _, entry := range entries {
-				if strings.HasSuffix(entry.Name(), ".ts") {
-					produced++
-				}
-			}
-			select {
-			case <-s.done:
-				finished = true
-			default:
-			}
-		}
-		m.mu.Unlock()
-		ok(w, Obj{"producedSeconds": produced * 6, "finished": finished})
-		return nil
+		return m.serveProgressByGID(w, r.PathValue("gid"))
 	})
 	a.handle("GET /api/downloads/{gid}/hls/{name}", func(w http.ResponseWriter, r *http.Request) error {
-		name := r.PathValue("name")
-		if name == "master.m3u8" {
-			probe, e := m.probe(r.Context(), r.PathValue("gid"))
-			if e != nil {
-				return errors.New("无法读取视频时长，请检查 FFmpeg/ffprobe")
-			}
-			duration, _ := strconv.ParseFloat(str(object(probe["format"])["duration"]), 64)
-			if duration <= 0 || duration > 7*24*3600 {
-				return errors.New("视频时长无效")
-			}
-			var playlist strings.Builder
-			playlist.WriteString("#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:6\n#EXT-X-PLAYLIST-TYPE:VOD\n#EXT-X-MEDIA-SEQUENCE:0\n#EXT-X-INDEPENDENT-SEGMENTS\n")
-			for i := 0; i < int(math.Ceil(duration/6)); i++ {
-				fmt.Fprintf(&playlist, "#EXTINF:%.3f,\nsegment%05d.ts?token=%s\n", math.Min(6, duration-float64(i)*6), i, url.QueryEscape(r.URL.Query().Get("token")))
-			}
-			playlist.WriteString("#EXT-X-ENDLIST\n")
-			w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
-			w.Header().Set("Cache-Control", "no-store")
-			_, e = io.WriteString(w, playlist.String())
-			return e
+		tok := r.URL.Query().Get("token")
+		suffix := ""
+		if tok != "" {
+			suffix = "?token=" + url.QueryEscape(tok)
 		}
-		start := -1
-		if name != "master.m3u8" {
-			if !strings.HasPrefix(name, "segment") || !strings.HasSuffix(name, ".ts") {
-				return errors.New("无效分片")
-			}
-			n, e := strconv.Atoi(strings.TrimSuffix(strings.TrimPrefix(name, "segment"), ".ts"))
-			if e != nil || n < 0 || n > 100000 {
-				return errors.New("无效分片")
-			}
-			start = n
-		}
-		s, e := m.hls(r.PathValue("gid"), start)
-		if e != nil {
-			return e
-		}
-		path := filepath.Join(s.dir, name)
-		if e = waitFile(r.Context(), path, s.done); e != nil {
-			return e
-		}
-		http.ServeFile(w, r, path)
-		return nil
+		return m.serveHLSByGID(w, r, r.PathValue("gid"), r.PathValue("name"), suffix)
 	})
 	a.handle("GET /api/downloads/{gid}/subtitles/{track}", func(w http.ResponseWriter, r *http.Request) error {
-		track := r.PathValue("track")
-		ext := filepath.Ext(track)
-		id := strings.TrimSuffix(track, ext)
-		n, e := strconv.Atoi(id)
-		if e != nil || n < 0 || n > 100 || ext != ".ass" && ext != ".vtt" {
-			return errors.New("字幕轨道无效")
-		}
-		format, codec, content := "webvtt", "webvtt", "text/vtt"
-		if ext == ".ass" {
-			format = "ass"
-			codec = "ass"
-			content = "text/x-ssa"
-		}
-		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Minute)
-		defer cancel()
-		cmd := exec.CommandContext(ctx, m.ffmpeg(), "-nostdin", "-v", "error", "-i", m.inputURL(r.PathValue("gid")), "-map", "0:"+id, "-c:s", codec, "-f", format, "pipe:1")
-		var out bytes.Buffer
-		cmd.Stdout = &out
-		if e = cmd.Run(); e != nil {
-			return errors.New("字幕提取失败")
-		}
-		w.Header().Set("Content-Type", content+"; charset=utf-8")
-		_, e = w.Write(out.Bytes())
-		return e
+		return m.serveSubtitleByGID(w, r, r.PathValue("gid"), r.PathValue("track"))
 	})
 	a.handle("GET /api/downloads/{gid}/thumbnail", func(w http.ResponseWriter, r *http.Request) error {
 		gid := r.PathValue("gid")
 		if _, _, e := m.source(gid); e != nil {
 			return e
 		}
-		dir := filepath.Join(a.cfg.DataDir, "thumbnails")
+		dir := a.thumbnailsDir()
 		_ = os.MkdirAll(dir, 0700)
 		path := filepath.Join(dir, hash(gid)+".jpg")
 		if _, e := os.Stat(path); e != nil {
@@ -435,20 +522,37 @@ func (m *Media) Routes() {
 	})
 	a.handle("POST /api/downloads/playback-cache/clear", func(w http.ResponseWriter, r *http.Request) error {
 		m.Close()
-		entries, e := os.ReadDir(a.cfg.DataDir)
-		if e != nil {
-			return e
-		}
+		var freedBytes int64
 		count := 0
-		for _, entry := range entries {
-			if entry.IsDir() && strings.HasPrefix(entry.Name(), "hls-") {
-				if e = os.RemoveAll(filepath.Join(a.cfg.DataDir, entry.Name())); e != nil {
-					return e
+		for _, cacheTarget := range []string{a.hlsCacheDir(), a.thumbnailsDir()} {
+			if entries, err := os.ReadDir(cacheTarget); err == nil {
+				for _, entry := range entries {
+					full := filepath.Join(cacheTarget, entry.Name())
+					bytesUsed, _ := measurePathUsage(full)
+					if err = os.RemoveAll(full); err != nil {
+						return err
+					}
+					freedBytes += bytesUsed
+					count++
 				}
-				count++
 			}
 		}
-		ok(w, Obj{"removedCount": count, "freedBytes": 0})
+		if entries, err := os.ReadDir(a.cfg.DataDir); err == nil {
+			for _, entry := range entries {
+				if entry.IsDir() && strings.HasPrefix(entry.Name(), "hls-") {
+					full := filepath.Join(a.cfg.DataDir, entry.Name())
+					bytesUsed, _ := measurePathUsage(full)
+					if err = os.RemoveAll(full); err != nil {
+						return err
+					}
+					freedBytes += bytesUsed
+					count++
+				}
+			}
+		}
+		_ = os.MkdirAll(a.hlsCacheDir(), 0700)
+		_ = os.MkdirAll(a.thumbnailsDir(), 0700)
+		ok(w, Obj{"removedCount": count, "freedBytes": freedBytes})
 		return nil
 	})
 	a.handle("POST /api/downloads/{gid}/open-player", func(w http.ResponseWriter, r *http.Request) error {

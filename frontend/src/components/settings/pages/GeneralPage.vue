@@ -73,8 +73,7 @@ watch(
 <template>
   <SettingsSection id="appearance" title="外观">
     <div class="settings-group">
-      <!-- 明暗模式 + 主题色。换色立刻生效（只写根元素变量），保存才落库。 -->
-      <SettingsItem as="div" stacked desc="明暗模式随时生效；主题色只选一个颜色，悬停色、选中底色、深色模式那版都由它算出来。">
+      <SettingsItem as="div" stacked>
         <div class="appearance-rows">
           <div class="appearance-row">
             <span class="appearance-label">明暗模式</span>
@@ -119,18 +118,8 @@ watch(
                   @blur="commitAccentHex"
                   @keydown.enter.prevent="commitAccentHex"
                 />
-                <button type="button" class="appearance-reset" @click="pickAccent(DEFAULT_THEME_ACCENT)">恢复默认</button>
+                <button type="button" class="appearance-reset" @click="pickAccent(DEFAULT_THEME_ACCENT)">重置</button>
               </div>
-            </div>
-          </div>
-
-          <div class="appearance-row">
-            <span class="appearance-label">预览</span>
-            <div class="appearance-preview">
-              <span class="appearance-preview-primary">主操作</span>
-              <span class="appearance-preview-ghost">次操作</span>
-              <span class="appearance-preview-selected">选中项</span>
-              <span class="appearance-preview-bar"><span :style="{ width: '62%' }"></span></span>
             </div>
           </div>
         </div>
@@ -140,7 +129,7 @@ watch(
 
   <SettingsSection id="run" title="运行">
     <div class="settings-group">
-      <SettingsItem title="轮询间隔" desc="多久检查一次订阅更新与下载状态，单位分钟">
+      <SettingsItem title="订阅轮询间隔（分钟）">
         <span class="settings-field">
           <input
             v-model.number="settingsForm.pollIntervalMinutes"
@@ -152,9 +141,5 @@ watch(
         </span>
       </SettingsItem>
     </div>
-  </SettingsSection>
-
-  <SettingsSection id="service" title="Go 服务">
-    <p class="settings-desc">关闭浏览器不会停止下载。服务随 Go 进程运行；开机自启可通过 Docker restart 策略或系统服务配置。</p>
   </SettingsSection>
 </template>

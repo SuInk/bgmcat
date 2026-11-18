@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<link rel="icon" href="./favicon.png" type="image/png" />
+<title>猫追番 · Bangumi Cat — 电脑自动追番入网盘，手机与网页随时点播</title>
+<meta name="description" content="猫追番（Bangumi Cat）是一站式自托管追番桌面应用与流式播放中心：电脑端内置纯 Go BT/HTTP 引擎自动下载并归档至 Google Drive，手机 App 与网页端随时随地直连点播。" />
+<script src="./theme.js"></script>
+<link rel="stylesheet" href="./site.css" />
+</head>
+<body>
+
+<div data-site-nav></div>
+
+<header class="hero">
+  <div class="wrap">
+    <h1>电脑自动追番入网盘，手机与网页随时点播</h1>
+    <p class="hero-sub">
+      猫追番（Bangumi Cat）内置纯 Go BT / HTTP 下载引擎与 Google Drive 分块归档，无需安装 aria2。电脑端自动追更并释放本地空间，手机客户端与浏览器按需流式播放。
+    </p>
+    <div class="hero-cta">
+      <a class="btn btn-primary" href="./download.html">下载客户端</a>
+      <a class="btn btn-ghost" href="./demo/">在线交互演示</a>
+      <a class="btn btn-ghost" href="./guide.html">使用文档</a>
+      <a class="btn btn-ghost" href="https://github.com/SuInk/bgmcat" target="_blank" rel="noopener">GitHub</a>
+    </div>
+    <p class="hero-os-hint" data-detected-os>支持 macOS · Windows · Linux 桌面端、Android 客户端、iOS / Web PWA 与 Docker 服务端</p>
+
+    <div class="loop-grid">
+      <div class="loop-card">
+        <div class="loop-step"><span>1</span> 电脑桌面端 / NAS</div>
+        <h3>自动追番与高速下载</h3>
+        <p>内置纯 Go HTTP 多连接与 BitTorrent 引擎，无需安装 aria2。支持按字幕组、1080p 清晰度自动择优下载，未下完也能直接边下边播。</p>
+      </div>
+      <div class="loop-card">
+        <div class="loop-step"><span>2</span> Google Drive 云端归档</div>
+        <h3>分块校验与释放硬盘</h3>
+        <p>下载完成后以 8 MiB 分块断点上传至 Google Drive，严格核对文件大小与 MD5 后按需清理本地副本，小硬盘电脑也能囤完整番剧库。</p>
+      </div>
+      <div class="loop-card">
+        <div class="loop-step"><span>3</span> 手机 App &amp; 网页直连</div>
+        <h3>在家局域网、外出穿透即点即播</h3>
+        <p>Android 客户端与手机网页支持局域网高速直连 + Cloudflare Tunnel 自动切换，按 HTTP Range 直接流式播放本地与网盘视频。</p>
+      </div>
+    </div>
+  </div>
+</header>
+
+<section class="shot-wrap">
+  <div class="wrap">
+    <figure class="shot-frame">
+      <img src="./assets/console-overview.png" alt="猫追番 Bangumi Cat 控制台：本季与全库单行筛选工具栏、高分番剧海报墙与内置引擎在线状态" width="1280" height="800" />
+    </figure>
+    <p class="shot-caption">统一的极简控制台：当季排期与全库多维索引无缝切换，桌面端、网页端与手机客户端共享一致体验</p>
+  </div>
+</section>
+
+<section class="sec">
+  <div class="wrap">
+    <div class="sec-head">
+      <h2>核心能力</h2>
+      <p>围绕「电脑挂机收番存网盘，手机躺平直接看」打磨每一个环节，省去拼凑五六个工具的折腾成本。</p>
+    </div>
+    <div class="feat-grid">
+      <div class="feat-card">
+        <h3>本季时间表 + 全库多维索引</h3>
+        <p>不仅能看当季每日更新，还支持按类型（TV/剧场版/OVA/WEB）、地区、年份季度、26 种题材风格与评分筛选历年全库番剧。</p>
+      </div>
+      <div class="feat-card">
+        <h3>自研内置 BT / HTTP 引擎</h3>
+        <p>纯 Go 实现多段断点续传、DHT / PeX / WebSeed 与滑动窗口顺序调度，拖动进度条优先拉取对应分片，真正做到零依赖边下边播。</p>
+      </div>
+      <div class="feat-card">
+        <h3>Google Drive 归档与 IP 直连</h3>
+        <p>内置 OAuth 配置向导、自动重试上传、MD5 完整性保护，并提供 Google Drive 优选 IP 扫描与独立 TLS SNI 控制以提升云端读取速度。</p>
+      </div>
+      <div class="feat-card">
+        <h3>Android 原生壳 &amp; PWA</h3>
+        <p>700 KB 级轻量 Android 客户端支持局域网/公网穿透双地址自动择优、全屏自动横屏、屏幕常亮与 30 天免重复登录；iOS 支持 PWA 主屏运行。</p>
+      </div>
+      <div class="feat-card">
+        <h3>一键局域网与内网穿透</h3>
+        <p>电脑桌面端无需重启即可一键开放私有局域网/Tailscale 访问，同时内置 Cloudflare Tunnel 快速穿透与命名隧道托管。</p>
+      </div>
+      <div class="feat-card">
+        <h3>Diana / MCP 原生接入</h3>
+        <p>内置账号密码安全会话管理（PBKDF2-SHA256）与标准 MCP 服务，可一键接入 Diana 或 Claude，用自然语言查新番、管订阅、看下载进度。</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="sec">
+  <div class="wrap">
+    <div class="sec-head">
+      <h2>三分钟上手</h2>
+      <p>普通电脑用户直接下载桌面安装包双击打开即可；服务器或 NAS 用户可用一条命令完成校验安装。</p>
+    </div>
+
+    <div class="code-card" data-code-tabs>
+      <div class="code-head">
+        <div class="code-tabs" role="tablist">
+          <button class="code-tab" type="button" role="tab" aria-selected="true" data-tab="desktop">电脑桌面版（推荐）</button>
+          <button class="code-tab" type="button" role="tab" aria-selected="false" data-tab="docker">Docker 服务端</button>
+          <button class="code-tab" type="button" role="tab" aria-selected="false" data-tab="source">从源码运行</button>
+        </div>
+        <button class="copy-btn" type="button" data-copy-btn>复制</button>
+      </div>
+      <pre data-panel="desktop"># 1. 前往「下载客户端」获取对应系统的桌面安装包并打开：
+#    - macOS:  bgmcat-desktop-0.2.0-mac-arm64.dmg (Apple Silicon) / mac-x64.dmg
+#    - Windows: bgmcat-desktop-0.2.0-win-x64.exe
+#    - Linux:   bgmcat-desktop-0.2.0-linux-x64.AppImage / .deb
+#
+# 2. 在桌面端「设置 → 云盘归档」连接 Google Drive，在「设置 → 远程与安全」开启局域网或穿透；
+# 3. 手机安装 bgmcat-android-0.2.0-universal.apk（或用浏览器打开地址）即可随时点播！</pre>
+      <pre data-panel="docker" hidden>git clone https://github.com/SuInk/bgmcat.git
+cd bgmcat
+docker compose up -d --build
+docker compose logs bgmcat</pre>
+      <pre data-panel="source" hidden>sh scripts/build.sh
+./bin/bgmcat --listen 0.0.0.0:3001</pre>
+    </div>
+  </div>
+</section>
+
+<div data-site-footer></div>
+<script src="./site.js"></script>
+</body>
+</html>

@@ -13,33 +13,39 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"syscall"
 	"time"
 )
 
-func env(key, def string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return def
-}
 func main() {
-	home, _ := os.UserHomeDir()
-	data := flag.String("data", env("ANIME_RSS_DATA_DIR", filepath.Join(home, ".anime-rss-go")), "private data directory")
-	addr := flag.String("listen", env("ANIME_RSS_LISTEN", "127.0.0.1:3001"), "HTTP listen address")
-	public := flag.String("public-url", env("ANIME_RSS_PUBLIC_URL", ""), "external URL for OAuth callbacks")
+	data := flag.String("data", app.ResolveEnv("BGMCAT_DATA_DIR", "ANIME_RSS_DATA_DIR", app.DefaultDataDir()), "private data directory")
+	addr := flag.String("listen", app.ResolveEnv("BGMCAT_LISTEN", "ANIME_RSS_LISTEN", "127.0.0.1:3001"), "HTTP listen address")
+	public := flag.String("public-url", app.ResolveEnv("BGMCAT_PUBLIC_URL", "ANIME_RSS_PUBLIC_URL", ""), "external URL for OAuth callbacks")
 	importPath := flag.String("import-legacy", "", "import a COPY of the TypeScript app SQLite database, then exit")
+	resetPass := flag.Bool("reset-password", false, "reset the WebUI administrator password, revoke sessions, and exit")
+	adminUser := flag.String("username", "", "administrator username (for --reset-password or initial bootstrap)")
 	stdio := flag.Bool("mcp-stdio", false, "MCP stdio bridge to the running Bangumi Cat server")
 	desktop := flag.Bool("desktop", false, "private desktop child process with stdio lifecycle")
 	showVersion := flag.Bool("version", false, "print version and exit")
 	flag.Parse()
+
 	if *showVersion {
 		fmt.Println(app.Version)
 		return
 	}
+	app.MigrateLegacyHomeDataDir(*data)
+	if *resetPass {
+		res, err := app.ResetDataDirPassword(*data, *adminUser)
+		if err != nil {
+			log.Fatal(err)
+		}
+		fmt.Printf("Administrator password reset. Save it now; it is not shown again.\n  username: %s\n  password: %s\n", res.Username, res.GeneratedPassword)
+		return
+	}
 	if *stdio {
-		if e := app.RunMCPStdio(context.Background(), os.Stdin, os.Stdout, os.Getenv("ANIME_RSS_MCP_URL"), os.Getenv("ANIME_RSS_MCP_TOKEN")); e != nil {
+		mcpURL := app.ResolveEnv("BGMCAT_MCP_URL", "ANIME_RSS_MCP_URL", "")
+		mcpToken := app.ResolveEnv("BGMCAT_MCP_TOKEN", "ANIME_RSS_MCP_TOKEN", "")
+		if e := app.RunMCPStdio(context.Background(), os.Stdin, os.Stdout, mcpURL, mcpToken); e != nil {
 			log.Fatal(e)
 		}
 		return
@@ -60,7 +66,14 @@ func main() {
 		defer listener.Close()
 		*addr = listener.Addr().String()
 	}
-	a, e := app.New(app.Config{DataDir: *data, Addr: *addr, PublicURL: *public, Web: web.FS()})
+	a, e := app.New(app.Config{
+		DataDir:       *data,
+		Addr:          *addr,
+		PublicURL:     *public,
+		AdminUsername: *adminUser,
+		Desktop:       *desktop,
+		Web:           web.FS(),
+	})
 	if e != nil {
 		log.Fatal(e)
 	}
@@ -83,7 +96,18 @@ func main() {
 		ready, _ := json.Marshal(map[string]any{"url": "http://" + *addr, "token": a.Settings()["token"]})
 		fmt.Printf("BGMCAT_DESKTOP_READY %s\n", ready)
 	} else {
-		fmt.Printf("Bangumi Cat %s\nhttp://%s/\nAccess token: %s\n", app.Version, *addr, a.Settings()["token"])
+		boot := a.BootstrapResult()
+		fmt.Printf("Bangumi Cat %s\nhttp://%s/\n", app.Version, *addr)
+		if boot.Created {
+			fmt.Printf("\nBangumi Cat administrator credentials (shown once)\n  username: %s\n", boot.Username)
+			if boot.GeneratedPassword != "" {
+				fmt.Printf("  password: %s\n\n", boot.GeneratedPassword)
+			} else {
+				fmt.Printf("  password: (from environment)\n\n")
+			}
+		} else {
+			fmt.Printf("管理员账号：%s（沿用已有密码；忘记密码可执行 `bgmcat --reset-password` 重置）\n", boot.Username)
+		}
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()

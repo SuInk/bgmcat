@@ -9,14 +9,14 @@
  * 逼得列表挤成窄卡片、资源表的发布名压成两行小字。
  * 列表就是列表，点开才有详情，关闭即返回。
  */
-import { computed } from "vue";
+import { computed, defineAsyncComponent, onMounted } from "vue";
 
 const props = defineProps<{
   /** 列表本身不套面板（首页的 Apple TV 式布局）；详情打开时仍然用面板 */
   plain?: boolean;
 }>();
 
-import type { HomepageAnime, MikanDownloadItem } from "@shared/index";
+import type { AnimeSubscriptionOptions, HomepageAnime, MikanDownloadItem } from "@shared/index";
 
 import { copyText, openExternalLink } from "../../lib/actions";
 import { isBusy } from "../../stores/busy";
@@ -38,6 +38,7 @@ import {
   pagedMikanDownloadGroups,
   pagedMikanDownloads,
   queueMikanDownload,
+  queueMikanDownloadsBatch,
   selectedProvider,
   selectedResolution,
   selectedSubgroup,
@@ -45,14 +46,39 @@ import {
 } from "../../stores/discovery";
 import { openPlayback, selectedDownloadDetailGid } from "../../stores/downloads";
 import {
+  cancelSubscriptionForAnime,
   createFavoriteFromAnime,
   createSubscriptionFromAnime,
   favoriteAnimeMap,
   removeFavoriteAnime
 } from "../../stores/favorites";
+import { hideAnime, isAnimeHidden, unhideAnime } from "../../stores/hiddenAnime";
+import { activeTab } from "../../stores/router";
 import { subscriptions } from "../../stores/subscriptions";
 import AppNavIcon from "../layout/AppNavIcon.vue";
-import AnimeDetailPane from "./AnimeDetailPane.vue";
+
+// 番剧详情与资源筛选按需加载，缩小首页首屏体积；首屏空闲后立即后台预热组件包，点卡片 0ms 挂载
+const loadAnimeDetailPane = () => import("./AnimeDetailPane.vue");
+const AnimeDetailPane = defineAsyncComponent(loadAnimeDetailPane);
+
+onMounted(() => {
+  const nav = navigator as Navigator & {
+    connection?: { saveData?: boolean; effectiveType?: string };
+  };
+  if (nav.connection?.saveData || /^(slow-2g|2g)$/i.test(nav.connection?.effectiveType ?? "")) {
+    return;
+  }
+  const win = window as Window & {
+    requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number;
+  };
+  setTimeout(() => {
+    if (typeof win.requestIdleCallback === "function") {
+      win.requestIdleCallback(() => void loadAnimeDetailPane(), { timeout: 3000 });
+    } else {
+      void loadAnimeDetailPane();
+    }
+  }, 1800);
+});
 
 const detailLoading = computed(() =>
   Boolean((selectedAnimeId.value && isBusy(`anime-detail:${selectedAnimeId.value}`)) || (selectedDownloadDetailGid.value && isBusy(`download-detail:${selectedDownloadDetailGid.value}`)))
@@ -90,8 +116,29 @@ function handleSubscribe(payload: {
   anime: HomepageAnime;
   mikanKeyword?: string;
   providerIds?: string[];
+  options?: AnimeSubscriptionOptions;
 }): void {
-  void createSubscriptionFromAnime(payload.anime, payload.mikanKeyword, payload.providerIds);
+  void createSubscriptionFromAnime(
+    payload.anime,
+    payload.mikanKeyword,
+    payload.providerIds,
+    payload.options
+  );
+}
+
+function handleUnsubscribe(animeId: string): void {
+  void cancelSubscriptionForAnime(animeId);
+}
+
+function handleToggleHidden(anime: HomepageAnime): void {
+  if (isAnimeHidden(anime.animeId)) {
+    void unhideAnime(anime.animeId);
+    return;
+  }
+  void hideAnime(anime);
+  if (activeTab.value === "home") {
+    closeAnimeDetail();
+  }
 }
 </script>
 
@@ -125,6 +172,7 @@ function handleSubscribe(payload: {
         :anime-detail="animeDetail"
         :detail-error="animeDetailError"
         :is-favorite="Boolean(currentAnimeFavorite)"
+        :is-hidden="Boolean(animeDetail && isAnimeHidden(animeDetail.anime.animeId))"
         :subscription-id="currentAnimeSubscriptionId"
         :filtered-downloads="filteredMikanDownloads"
         :paged-downloads="pagedMikanDownloads"
@@ -137,7 +185,9 @@ function handleSubscribe(payload: {
         :detail-provider-options="detailProviderOptions"
         :busy-key="null"
         :detail-loading="detailLoading"
+        :is-subscribe-busy="Boolean(animeDetail && (isBusy(`favorite-subscribe:${animeDetail.anime.animeId}`) || isBusy(`favorite-unsubscribe:${animeDetail.anime.animeId}`)))"
         :is-download-busy="isMikanItemBusy"
+        :is-batch-busy="isBusy('mikan-download:batch')"
         :is-download-queued="isMikanDownloadQueued"
         :get-queued-download="findQueuedMikanDownload"
         :detail-download-page-size="detailDownloadPageSize"
@@ -147,12 +197,16 @@ function handleSubscribe(payload: {
         @close="closeAnimeDetail"
         @favorite="handleFavorite"
         @remove-favorite="removeFavoriteAnime($event)"
+        @toggle-hidden="handleToggleHidden"
         @subscribe="handleSubscribe"
+        @unsubscribe="handleUnsubscribe"
         @select-subgroup="selectedSubgroup = $event"
         @select-resolution="selectedResolution = $event"
         @select-provider="selectedProvider = $event"
         @update:download-page="setDownloadPage"
-        @queue-download="queueMikanDownload"
+        @queue-download="queueMikanDownload($event)"
+        @queue-cloud-download="queueMikanDownload($event, { saveTo: 'cloud' })"
+        @queue-batch="queueMikanDownloadsBatch($event.items, { saveTo: $event.saveTo })"
         @play-download="openPlayback"
         @copy-text="copyText"
         @open-link="openExternalLink"

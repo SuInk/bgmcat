@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<link rel="icon" href="./favicon.png" type="image/png" />
+<title>下载客户端 — 猫追番 · Bangumi Cat</title>
+<meta name="description" content="下载猫追番（Bangumi Cat）macOS、Windows、Linux 桌面端，Android 手机客户端 APK，以及服务端与 Docker 部署包。" />
+<script src="./theme.js"></script>
+<link rel="stylesheet" href="./site.css" />
+</head>
+<body>
+
+<div data-site-nav></div>
+
+<main class="wrap" style="padding: 36px 0 64px;">
+  <div class="dl-banner">
+    <div>
+      <span class="status-chip warn" data-release-state>正在检测最新版本状态…</span>
+      <h2>已为你匹配：<span data-recommended-title>多平台客户端</span></h2>
+      <p>电脑端安装桌面版自动追番并归档至 Google Drive；手机端安装 Android APK 或使用网页 PWA 随时直连播放。</p>
+    </div>
+    <div style="display:flex; gap:10px; flex-wrap:wrap;">
+      <a class="btn btn-primary" href="https://github.com/SuInk/bgmcat/releases" target="_blank" rel="noopener">前往 GitHub Releases</a>
+      <a class="btn btn-ghost" href="./demo/">先试在线演示</a>
+    </div>
+  </div>
+
+  <div class="dl-grid">
+    <!-- 1. 电脑桌面端 -->
+    <section id="dl-desktop" class="dl-card">
+      <div class="dl-card-head">
+        <div>
+          <h3>电脑桌面端（自动追番 + 网盘归档）</h3>
+          <p>内置 Go 后端与纯 Go 自研 BT/HTTP 引擎，双击即用，无需配置命令行或安装 aria2。</p>
+        </div>
+      </div>
+
+      <div class="asset-list">
+        <div class="asset-row">
+          <div class="asset-meta">
+            <strong>macOS（Apple Silicon M1–M4）</strong>
+            <span>bgmcat-desktop-*-mac-arm64.dmg</span>
+          </div>
+          <a class="asset-btn" data-asset-suffix="mac-arm64.dmg" href="https://github.com/SuInk/bgmcat/releases" target="_blank" rel="noopener">查看发行包</a>
+        </div>
+
+        <div class="asset-row">
+          <div class="asset-meta">
+            <strong>macOS（Intel x64）</strong>
+            <span>bgmcat-desktop-*-mac-x64.dmg</span>
+          </div>
+          <a class="asset-btn" data-asset-suffix="mac-x64.dmg" href="https://github.com/SuInk/bgmcat/releases" target="_blank" rel="noopener">查看发行包</a>
+        </div>
+
+        <div class="asset-row">
+          <div class="asset-meta">
+            <strong>Windows 10 / 11（64 位安装程序）</strong>
+            <span>bgmcat-desktop-*-win-x64.exe</span>
+          </div>
+          <a class="asset-btn" data-asset-suffix="win-x64.exe" href="https://github.com/SuInk/bgmcat/releases" target="_blank" rel="noopener">查看发行包</a>
+        </div>
+
+        <div class="asset-row">
+          <div class="asset-meta">
+            <strong>Linux（AppImage 便携包 / Debian &amp; Ubuntu .deb）</strong>
+            <span>bgmcat-desktop-*-linux-x64.AppImage / .deb</span>
+          </div>
+          <a class="asset-btn" data-asset-suffix="linux-x64.AppImage" href="https://github.com/SuInk/bgmcat/releases" target="_blank" rel="noopener">查看发行包</a>
+        </div>
+      </div>
+    </section>
+
+    <!-- 2. 手机客户端与网页端 -->
+    <section id="dl-mobile" class="dl-card">
+      <div class="dl-card-head">
+        <div>
+          <h3>手机客户端 &amp; 网页直接播放</h3>
+          <p>连接家里的电脑桌面端、NAS 或 Cloudflare Tunnel 穿透地址，本地与 Google Drive 归档视频即点即播。</p>
+        </div>
+      </div>
+
+      <div class="asset-list">
+        <div class="asset-row">
+          <div class="asset-meta">
+            <strong>Android 手机客户端（Android 8.0+ 通用安装包）</strong>
+            <span>bgmcat-android-*-universal.apk</span>
+          </div>
+          <a class="asset-btn" data-asset-suffix="universal.apk" href="https://github.com/SuInk/bgmcat/releases" target="_blank" rel="noopener">查看 APK</a>
+        </div>
+
+        <div class="asset-row">
+          <div class="asset-meta">
+            <strong>iOS / iPadOS（Safari 网页直连 &amp; PWA 主屏应用）</strong>
+            <span>打开电脑端局域网或穿透地址 → 分享 → 添加到主屏幕</span>
+          </div>
+          <a class="asset-btn" href="./mobile.html#pwa">查看配置说明</a>
+        </div>
+
+        <div class="asset-row">
+          <div class="asset-meta">
+            <strong>任意设备现代浏览器（Chrome / Edge / Firefox / Safari）</strong>
+            <span>零安装直接访问电脑端或服务端 URL 流式播放</span>
+          </div>
+          <a class="asset-btn" href="./mobile.html#lan">连接指南</a>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <!-- 3. 服务端 / NAS / 私有仓库下载指引 -->
+  <section class="sec" style="margin-top: 32px;">
+    <div class="sec-head">
+      <h2>服务端部署与命令行下载（NAS / Linux / 私有阶段验证）</h2>
+      <p>如果你在 24 小时开机的迷你主机、NAS 或云服务器上运行猫追番，可使用无界面单二进制服务版或 Docker；私有仓库验证阶段可通过 GitHub CLI（<code>gh</code>）直接拉取任意安装包并自动校验 SHA-256。</p>
+    </div>
+
+    <div class="code-card" data-code-tabs>
+      <div class="code-head">
+        <div class="code-tabs" role="tablist">
+          <button class="code-tab" type="button" role="tab" aria-selected="true" data-tab="gh-client">私有阶段拉取桌面/APK 包</button>
+          <button class="code-tab" type="button" role="tab" aria-selected="false" data-tab="unix-srv">Linux / macOS 服务版</button>
+          <button class="code-tab" type="button" role="tab" aria-selected="false" data-tab="win-srv">Windows 服务版</button>
+          <button class="code-tab" type="button" role="tab" aria-selected="false" data-tab="docker">Docker Compose</button>
+        </div>
+        <button class="copy-btn" type="button" data-copy-btn>复制</button>
+      </div>
+
+      <pre data-panel="gh-client"># 先登录有 SuInk/bgmcat 读取权限的 GitHub 账号：
+gh auth login
+
+# 下载 macOS Apple Silicon 桌面版 + Android 手机端 APK + SHA256 校验表：
+gh release download --repo SuInk/bgmcat \
+  --pattern "bgmcat-desktop-*-mac-arm64.dmg" \
+  --pattern "bgmcat-android-*-universal.apk" \
+  --pattern "SHA256SUMS"
+
+# 校验安装包完整性：
+shasum -a 256 --ignore-missing -c SHA256SUMS</pre>
+
+      <pre data-panel="unix-srv"># 仓库公开后一键安装：
+curl -fsSL https://raw.githubusercontent.com/SuInk/bgmcat/main/scripts/install.sh | sh -s -- --start
+
+# 私有验证阶段（需先 gh auth login）：
+gh api repos/SuInk/bgmcat/contents/scripts/install.sh -H 'Accept: application/vnd.github.raw+json' | sh -s -- --private --start</pre>
+
+      <pre data-panel="win-srv"># 仓库公开后（PowerShell）：
+irm https://raw.githubusercontent.com/SuInk/bgmcat/main/scripts/install.ps1 | iex
+
+# 私有验证阶段（需先 gh auth login）：
+$s = gh api repos/SuInk/bgmcat/contents/scripts/install.ps1 -H 'Accept: application/vnd.github.raw+json'
+&amp; ([scriptblock]::Create(($s -join "`n"))) -Private -Start</pre>
+
+      <pre data-panel="docker">git clone https://github.com/SuInk/bgmcat.git
+cd bgmcat
+docker compose up -d --build
+docker compose logs -f bgmcat</pre>
+    </div>
+  </section>
+</main>
+
+<div data-site-footer></div>
+<script src="./site.js"></script>
+</body>
+</html>

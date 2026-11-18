@@ -7,14 +7,19 @@
  */
 import { computed, ref } from "vue";
 
-import type { FavoriteAnime } from "@shared/index";
+import type { AnimeSubscriptionOptions, FavoriteAnime, HomepageAnime } from "@shared/index";
 
 import AnimeCard from "../components/discovery/AnimeCard.vue";
 import AnimeDetailDrawer from "../components/discovery/AnimeDetailDrawer.vue";
+import AnimeSubscribeDialog from "../components/discovery/AnimeSubscribeDialog.vue";
 import AppNavIcon from "../components/layout/AppNavIcon.vue";
 import { isBusy } from "../stores/busy";
 import { openAnimeDetail, selectedAnimeId } from "../stores/discovery";
-import { createSubscriptionFromAnime, favorites } from "../stores/favorites";
+import {
+  cancelSubscriptionForAnime,
+  createSubscriptionFromAnime,
+  favorites
+} from "../stores/favorites";
 import { selectTab } from "../stores/boot";
 import { isMobileViewport } from "../stores/ui";
 
@@ -45,7 +50,15 @@ function sourceNames(favorite: FavoriteAnime): string[] {
 function stateBadge(favorite: FavoriteAnime): { label: string; className: string; hint: string } {
   const state = favoriteState(favorite);
   const names = sourceNames(favorite);
-  const suffix = names.length > 1 ? ` · ${names.length} 源` : "";
+  const lockedSubgroup =
+    favorite.subscriptionRule?.lockedSubgroup?.trim() ||
+    favorite.subscriptionRule?.preferredSubgroups?.[0]?.trim() ||
+    "";
+  const suffix = lockedSubgroup
+    ? ` · ${lockedSubgroup}`
+    : names.length > 1
+      ? ` · ${names.length} 源`
+      : "";
   const hintSuffix = names.length ? `。来源：${names.join("、")}` : "";
   if (state === "auto") {
     return { label: `追更中${suffix}`, className: "status-pill-ok", hint: `新集数会自动加入下载${hintSuffix}` };
@@ -58,6 +71,36 @@ function stateBadge(favorite: FavoriteAnime): { label: string; className: string
     };
   }
   return { label: "未订阅", className: "status-pill-muted", hint: "还没有为这部番建 RSS 订阅" };
+}
+
+const subscribeTarget = ref<FavoriteAnime | null>(null);
+
+async function handleConfirmFavoriteSubscribe(payload: {
+  anime: HomepageAnime;
+  mikanKeyword?: string;
+  providerIds: string[];
+  options: AnimeSubscriptionOptions;
+}): Promise<void> {
+  const ok = await createSubscriptionFromAnime(
+    payload.anime,
+    payload.mikanKeyword,
+    payload.providerIds,
+    payload.options
+  );
+  if (ok) {
+    subscribeTarget.value = null;
+  }
+}
+
+async function handleCancelFavoriteSubscribe(): Promise<void> {
+  const target = subscribeTarget.value;
+  if (!target) {
+    return;
+  }
+  const ok = await cancelSubscriptionForAnime(target.animeId);
+  if (ok) {
+    subscribeTarget.value = null;
+  }
 }
 
 const FILTERS: Array<{ key: FavoriteFilter; label: string }> = [
@@ -125,11 +168,11 @@ const visibleFavorites = computed(() => {
         <div class="page-body" :class="{ 'row-span-2': !favorites.length }">
           <div v-if="!favorites.length" class="empty-state h-full">
             <div class="grid max-w-sm gap-3">
-              <AppNavIcon name="favorites" class="mx-auto size-8 text-[var(--muted)]" aria-hidden="true" />
+              <span class="empty-icon"><AppNavIcon name="favorites" class="size-6" aria-hidden="true" /></span>
               <p class="text-sm font-semibold text-[var(--ink)]">还没有收藏的番剧</p>
-              <p class="text-sm text-[var(--muted)]">在「首页新番」点开一部番剧，点「收藏」就会出现在这里。</p>
+              <p class="text-sm text-[var(--muted)]">在「番剧发现」点开一部番剧，点「收藏」就会出现在这里。</p>
               <button type="button" class="btn-primary justify-self-center px-4 py-2 text-sm font-semibold" @click="selectTab('home')">
-                去逛新番
+                去发现番剧
               </button>
             </div>
           </div>
@@ -150,7 +193,17 @@ const visibleFavorites = computed(() => {
             >
               <template #footer>
                 <div class="flex min-w-0 items-center justify-between gap-2">
-                  <span class="status-pill min-w-0 truncate" :class="stateBadge(favorite).className" :title="stateBadge(favorite).hint">
+                  <button
+                    v-if="favorite.subscriptionId"
+                    type="button"
+                    class="status-pill min-w-0 truncate transition hover:opacity-85"
+                    :class="stateBadge(favorite).className"
+                    :title="`${stateBadge(favorite).hint}（点击调整字幕组）`"
+                    @click.stop="subscribeTarget = favorite"
+                  >
+                    {{ stateBadge(favorite).label }}
+                  </button>
+                  <span v-else class="status-pill min-w-0 truncate" :class="stateBadge(favorite).className" :title="stateBadge(favorite).hint">
                     {{ stateBadge(favorite).label }}
                   </span>
                   <button
@@ -158,8 +211,8 @@ const visibleFavorites = computed(() => {
                     type="button"
                     class="btn-primary shrink-0 px-2.5 py-1 text-xs font-semibold"
                     :disabled="isBusy(`favorite-subscribe:${favorite.animeId}`)"
-                    :title="`为「${favorite.title}」创建 RSS 订阅并自动追更`"
-                    @click="createSubscriptionFromAnime(favorite, favorite.mikanKeyword)"
+                    :title="`选择字幕组并订阅「${favorite.title}」`"
+                    @click.stop="subscribeTarget = favorite"
                   >
                     订阅
                   </button>
@@ -168,6 +221,16 @@ const visibleFavorites = computed(() => {
             </AnimeCard>
           </div>
         </div>
+
+        <AnimeSubscribeDialog
+          v-if="subscribeTarget"
+          :anime="subscribeTarget"
+          :mikan-keyword="subscribeTarget.mikanKeyword"
+          :submitting="isBusy(`favorite-subscribe:${subscribeTarget.animeId}`) || isBusy(`favorite-unsubscribe:${subscribeTarget.animeId}`)"
+          @close="subscribeTarget = null"
+          @confirm="handleConfirmFavoriteSubscribe"
+          @unsubscribe="handleCancelFavoriteSubscribe"
+        />
       </div>
     </template>
   </AnimeDetailDrawer>

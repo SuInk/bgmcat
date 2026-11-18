@@ -93,16 +93,32 @@ export async function refreshFeedItems(): Promise<void> {
 /** 创建或更新订阅；新建后立即触发一次抓取（后端创建接口本身不抓取）。 */
 export async function submitSubscription(): Promise<boolean> {
   return withBusy("subscription-form", async () => {
+    const prevRule = editingSubscriptionId.value
+      ? subscriptions.value.find((s) => s.id === editingSubscriptionId.value)?.rule
+      : undefined;
+    const parsedSubgroups = parseCsv(subscriptionForm.preferredSubgroups);
     const payload = {
       name: subscriptionForm.name.trim(),
       url: subscriptionForm.url.trim(),
       enabled: subscriptionForm.enabled,
       downloadDirOverride: subscriptionForm.downloadDirOverride.trim() || null,
       rule: {
+        ...(prevRule
+          ? {
+              lockedSubgroup:
+                prevRule.lockedSubgroup && parsedSubgroups.includes(prevRule.lockedSubgroup)
+                  ? prevRule.lockedSubgroup
+                  : null,
+              preferredLanguage: prevRule.preferredLanguage,
+              onlyNew: prevRule.onlyNew,
+              subscribedAt: prevRule.subscribedAt,
+              baselineEpisode: prevRule.baselineEpisode
+            }
+          : {}),
         includeKeywords: parseCsv(subscriptionForm.includeKeywords),
         excludeKeywords: parseCsv(subscriptionForm.excludeKeywords),
         preferredResolutions: parseCsv(subscriptionForm.preferredResolutions),
-        preferredSubgroups: parseCsv(subscriptionForm.preferredSubgroups),
+        preferredSubgroups: parsedSubgroups,
         autoDownload: subscriptionForm.autoDownload,
         skipBatch: subscriptionForm.skipBatch
       }

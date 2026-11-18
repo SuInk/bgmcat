@@ -34,7 +34,7 @@ func (a *App) listBackups() []Obj {
 }
 func (a *App) backup() (Obj, error) {
 	_ = os.MkdirAll(a.backupDir(), 0700)
-	name := "anime-rss-go-" + time.Now().UTC().Format("20060102-150405") + "-" + randomID(3) + ".zip"
+	name := "bgmcat-" + time.Now().UTC().Format("20060102-150405") + "-" + randomID(3) + ".zip"
 	path := filepath.Join(a.backupDir(), name)
 	f, e := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
 	if e != nil {
@@ -62,7 +62,7 @@ func (a *App) backup() (Obj, error) {
 	}
 	w, e := z.Create("documents.json")
 	if e == nil {
-		e = json.NewEncoder(w).Encode(Obj{"format": "anime-rss-go", "version": 1, "documents": docs})
+		e = json.NewEncoder(w).Encode(Obj{"format": "bgmcat", "version": 1, "documents": docs})
 	}
 	if ce := z.Close(); e == nil {
 		e = ce
@@ -115,8 +115,9 @@ func (a *App) restoreResult(raw []byte, result Obj) error {
 			return e
 		}
 	}
-	if str(data["format"]) != "anime-rss-go" || num(data["version"]) != 1 {
-		return errors.New("请选择 Go 版备份；旧版 SQLite 请使用 migrate 命令导入")
+	format := str(data["format"])
+	if (format != "bgmcat" && format != "anime-rss-go") || num(data["version"]) != 1 {
+		return errors.New("请选择 Bangumi Cat 备份文件；旧版 SQLite 请使用 migrate 命令导入")
 	}
 	docs := list(data["documents"])
 	if len(docs) == 0 {
@@ -179,7 +180,9 @@ func (a *App) restoreResult(raw []byte, result Obj) error {
 	if _, e = tx.Exec("INSERT OR IGNORE INTO ids(id) VALUES(?)", maxID); e != nil {
 		return e
 	}
-	return tx.Commit()
+	e = tx.Commit()
+	a.Store.InvalidateCache()
+	return e
 }
 func (a *App) backupRoutes() {
 	a.handle("GET /api/system/backups", func(w http.ResponseWriter, r *http.Request) error {

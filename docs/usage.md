@@ -1,78 +1,89 @@
-# 猫追番 · Bangumi Cat
+# 猫追番 · Bangumi Cat 使用说明
 
-Go 服务端的番剧订阅、下载与 Google Drive 归档。HTTP API、SQLite、RSS、HTTP/BitTorrent 下载、云盘 OAuth/上传/读取、MCP 都在 Go 进程内运行。保留 Vue 浏览器界面，构建后嵌入可执行文件。
+猫追番使用单个 Go 服务端统一承载番剧发现与全库筛选、RSS 自动追番、纯 Go HTTP / BitTorrent 下载、Google Drive 分块归档与按需流式播放、以及 Diana MCP 接口，前端 Vue 控制台已编译嵌入可执行文件。
 
-不需要 Node.js、Electron、gdirect 或 rclone；HTTP/BT 下载需要 aria2c，由 bgmcat 自动启动和管理。Node.js 仅用于从源码构建网页。FFmpeg/ffprobe 是 MKV、HEVC 等转码及字幕提取的可选组件，Docker 镜像包含它们；普通 MP4 直播放不依赖它们。Cloudflare Tunnel 仅在启用穿透时需要 cloudflared。
+运行时**无需安装 Node.js、aria2、gdirect 或 rclone**。`ffmpeg` / `ffprobe` 是实时转码 MKV / HEVC 与提取内封字幕的可选组件（Docker 镜像已内置，普通 MP4 原画流式播放不依赖它）；`cloudflared` 仅在启用 Cloudflare Tunnel 远程穿透时需要。
 
-## 本地启动
+## 本地启动与登录认证
 
-开发构建需要 Go 1.26+、Node.js 22+ 与 npm：
+从源码构建并启动（需要 Go 1.26+、Node.js 22+ 与 npm）：
 
 ```sh
 sh scripts/build.sh
 ./bin/bgmcat
 ```
 
-打开 http://127.0.0.1:3001 ，输入启动输出中的访问口令。本机访问也需要口令。默认数据目录 `~/.anime-rss-go`，默认仅监听回环地址。
+打开 `http://127.0.0.1:3001`，使用首次启动终端输出的引导管理员账号与密码登录（桌面版窗口通过内部管道自动完成会话握手，无需手动输入）。密码采用 210,000 轮 `PBKDF2-HMAC-SHA256` 加盐哈希存储。
+
+常用命令行参数：
 
 ```sh
+# 指定数据目录与监听地址
 ./bin/bgmcat --data /absolute/path/data --listen 127.0.0.1:3001
+
+# 忘记管理员密码时一键重置
+./bin/bgmcat --data ~/.bgmcat --reset-password
 ```
 
-本地安装可用 `sh scripts/install-local.sh`，放入 `~/.local/bin/bgmcat`。这是从本项目源码构建安装，不是已经发布到互联网的远程安装器。
+在「设置 → 安全与访问」修改管理员用户名或密码后，会自动轮换会话盐值并将其他已登录设备踢下线。
 
-Docker 一条命令构建启动：
+## 番剧发现与全库多维筛选
 
-```sh
-docker compose up -d --build
-docker compose logs bgmcat
-```
+控制台首页「发现番剧」提供两种无缝切换的浏览模式：
 
-容器使用独立持久化卷与非 root 用户。公网部署由反向代理提供 HTTPS，设置 `ANIME_RSS_PUBLIC_URL` 为实际外部 URL，并自行调整 Compose 端口映射。不要把访问口令提交到仓库。
+- **本季排期**：按「全部 / 周一 … 周日」展示当季新番每日更新表，支持即时过滤与按默认/评分排序。
+- **全库索引**：点击「全库」切换至完整番剧片库（对接 Bangumi `/v0/search/subjects` 索引并带本地持久化缓存），支持按 **类型**（TV / 剧场版 / OVA / Web）、**地区**（日本 / 中国 / 欧美）、**受众 / 来源**（原创 / 漫画改 / 轻小说改 / BL / GL 等）、**年份与年代区间**、**季度**（1 / 4 / 7 / 10 月）、**风格标签** 以及 **排名 / 热度 / 评分 / 时间** 自由组合筛选，滚动到底部自动翻页加载。
+- 点击任意番剧打开详情抽屉，并发检索蜜柑（Mikan）、Nyaa、ACG.RIP 资源列表，可一键单集下载或创建连载 RSS 订阅。
+
+## 内置纯 Go 下载引擎（NativeEngine）
+
+- **HTTP / HTTPS 下载**：原生支持多连接分块并发下载、断点续传（`.bgmcat.json` 状态元数据）及服务端不支持 Range 时的安全单流回退。
+- **BitTorrent / Magnet 下载**：纯 Go 实现（基于 `anacrolix/torrent`，无 CGO 依赖），支持 `.torrent` 种子与 `magnet:` 磁力链、DHT、Tracker、PEX 与 uTP，默认最多 4 个并发活动任务，下载完成后自动停止做种。
+- **顺序分片与边下边播**：观看尚未下载完成的视频时，引擎优先调度文件首尾元数据块与当前播放进度位置附近的分片，无需等整集下完即可流式起播。
+- **可选外部下载器**：在「设置 → 下载」中也可切换为外部 `qBittorrent` WebUI（需与 `bgmcat` 共享可访问的下载路径）。
 
 ## Google Drive
 
-打开「设置 → 下载」里的「让番剧有个家」向导；也可选择暂时使用本地存储，之后点击「配置向导」重新打开。
+打开「设置 → 云盘归档」，按内置直达步骤配置并一键浏览器授权：
 
-1. 在 Google Cloud 启用 Drive API，配置 OAuth 同意屏幕并将自己的邮箱加入测试用户，创建 **Web application** OAuth 客户端。
-2. 将向导显示的回调地址添加到授权重定向 URI：当前网页预览是 `http://127.0.0.1:3001/api/cloud/callback`；桌面版是 `http://127.0.0.1:39123/api/cloud/callback`；远程部署使用实际 HTTPS 地址。必须与访问的服务一致。
-3. 下载 OAuth JSON 并导入向导，或手动填写 ID 和密钥。当前仅支持 Web application 凭据，不接受服务账号 / Desktop 类型 JSON。点击连接后在浏览器授权，向导会在十分钟内自动检查授权结果，也可手动检查。
-4. 浏览「我的云盘」的文件夹，选择当前目录，或新建 `Bangumi Cat`。分页目录可点击加载更多；共享云盘目录仍可通过高级设置手动填写 ID。
-5. 检测会创建临时文本文件、上传随机内容、读回校验并删除测试文件。失败会显示原因；清理失败会给出测试文件 ID，供手动删除。通过后才能在向导中完成并开启自动归档。
-6. 默认保留本地副本。可主动选择归档后清理，仅在全部文件云端大小及 MD5 校验通过、可读取且没有正在播放时删除。
+1. **新建项目**（`https://console.cloud.google.com/projectcreate`）：填写 **项目名称** → 点击 **创建**。
+2. **启用 Drive API**（`https://console.cloud.google.com/apis/library/drive.googleapis.com`）：点击 **启用**（已启用显示 **管理**）。
+3. **初始化 Google Auth Platform**（`https://console.cloud.google.com/auth/overview`）：点击 **开始** → 填写 **应用名称**、选择 **用户支持邮箱** → 受众群体选 **外部** → 填写 **电子邮件地址** → 勾选同意 → **继续** → **创建**。
+4. **添加测试用户**（`https://console.cloud.google.com/auth/audience`）：在 **测试用户** 栏点击 **添加用户** → 输入自己的 Gmail 邮箱回车 → 点击 **保存**（未添加测试用户会导致授权时返回 `403 access_denied`）。
+5. **创建客户端**（`https://console.cloud.google.com/auth/clients/create`）：**应用类型** 选择 **桌面应用** → 点击 **创建** → 在弹窗点击 **下载 JSON** → 回到「设置 → 云盘归档」点击 **导入 JSON 授权**，浏览器登录确认后自动跳回并开启归档（远程 HTTPS 部署也可使用 **Web 应用** 类型并将 `https://<域名>/api/cloud/callback` 加入已获授权的重定向 URI）。
+6. Go 后端以 **8 MiB 分块断点续传**上传已完成的文件，预先持久化远端文件 ID 防止重试重复创建；仅当全部视频文件的云端大小与 `md5Checksum` 校验通过、可读且当前无人播放时，才按设置清理本地文件释放磁盘空间。
+7. **云端按需播放与文件管理**：打开侧栏「文件管理」（`/files`）可在「本地存储」与「Google Drive 云盘」之间一键切换，按目录层级浏览、搜索、新建或清理文件夹，并直接点击任意本地或云盘视频通过 HTTP Range / FFmpeg 实时转码在线播放（无需挂载整盘）。注意 Google Auth Platform 处于「测试」状态时 refresh token 会在 7 天后过期，点击 **重连** 即可恢复。
 
-TLS / IP 扫描和手动配置收在「高级设置」。导入 JSON 不会改变网络模式；默认使用原始 TLS。当前仍需自行创建 Google OAuth 客户端，并非内置公共客户端的一键登录。
+## 手机客户端与远程播放
 
-API 实现依据 [Google files.list](https://developers.google.com/workspace/drive/api/reference/rest/v3/files/list) 与 [files.create](https://developers.google.com/workspace/drive/api/reference/rest/v3/files/create)。
+1. **局域网直连**：在「设置 → 远程与隧道 → 手机与局域网直连」开启 **允许局域网设备访问**，服务端会立即在本机局域网 / Tailscale IPv4 接口挂载监听（无需重启），展示可一键复制的连接地址。
+2. **Cloudflare Tunnel 外网穿透**：本机安装 `cloudflared` 后，可在同一页面开启临时快速隧道（`trycloudflare.com`）或填入固定域名的命名隧道 Token / 凭据文件（支持异常断线有限次数自动重连）。
+3. **Android 客户端与 PWA**：Android 手机安装 `bgmcat-android-*-universal.apk` 后可同时填写局域网主地址与穿透备用地址，启动时自动优先走局域网、外出自动回退穿透地址，并支持横屏沉浸全屏播放；iPhone / iPad 可通过 Safari「添加到主屏幕」作为全屏 PWA 使用。
 
-Go 直接使用 Google Drive API，以 8 MiB 分块断点上传；预先保存远端 ID，避免重试重复创建。凭据、会话地址仅保存在私有服务端 SQLite/备份中，不返回上传会话地址给网页。
+## Google Drive IP 直连与独立 TLS SNI
 
-本应用不是云端 BT 离线下载服务：下载期间仍需临时本地空间，完成后上传并按设置清理。已归档视频按 HTTP Range 从云端读取，不需要挂载完整云盘。播放速度取决于网络、Drive 限制和视频编码，不能保证始终更快。转码按需生成最多三分钟窗口，限制同时两路，闲置缓存五分钟后清理。
+在「设置 → 下载与资源 → 直连探测」（也可从「设置 → 云盘归档」一键进入）可扫描低延迟可用 IP 并独立配置 TLS SNI：
 
-External / Testing 模式的 Drive OAuth refresh token 会在 7 天后过期，需要重新授权，见 [Google 授权说明](https://developers.google.com/identity/protocols/oauth2#expiration)。真实账号授权和上传需用户完成，自动测试使用模拟 Drive 服务。
+- 默认合并系统 DNS、近 7 天历史可用地址与内置种子，也支持粘贴自定义候选公网 IP（每行一个，最多 256 个）。
+- 最多 8 路并发探测，严格按真实 Google 域名执行 `x509.Verify` 校验服务端证书链、有效期与 Drive API 预期响应，绝不跳过证书安全验证。
+- 支持「原始域名（默认）」「自定义 ASCII 域名」「不发送 SNI」三种模式，作用于 Go 发出的 Drive API 查询、分块上传与云端 Range 流式读取（OAuth 授权与普通 BT/HTTP 下载继续走系统默认网络）。
+
+## Diana MCP 接入
+
+控制台「MCP」页面支持自动探测本机 Diana 配置目录，一键写入 `--mcp-stdio` 模式配置（保留原有其他 MCP 服务并以 `0600` 权限原子备份写入），同时提供 `POST /mcp` 与 `/mcp/sse` 接口。修改服务端口、移动可执行文件或重置管理员凭据后，请在页面点击重新接入并在 Diana 中重载 MCP。
 
 ## 数据迁移
 
-原 TypeScript 项目和它的数据保持独立。先停止旧服务或用 SQLite backup API 生成一致性数据库副本，再导入到一个**新的空数据目录**：
+如需从早期 TypeScript 旧版迁移数据，请先停止旧服务并复制数据库副本，再导入到一个**全新的空数据目录**：
 
 ```sh
 ./bin/bgmcat --data /absolute/path/new-go-data --import-legacy /absolute/path/old-app-copy.db
 ./bin/bgmcat --data /absolute/path/new-go-data
 ```
 
-导入设置、订阅、RSS 条目、下载记录和收藏；事务失败时不留下半份数据。旧数据库只读打开。旧未完成下载以暂停状态导入，恢复后使用 Go 独立目录重新下载，不复用 aria2/qBittorrent 的私有断点格式。旧完整文件可继续本地播放。云盘归档默认关闭，需要重新授权；旧版挂载及归档记录不自动接管。旧 Electron 会话不迁移。Go 版备份是独立 ZIP 格式，包含敏感凭据，恢复前自动备份当前数据库。
+迁移在单事务内导入设置、订阅、RSS 记录、下载列表与收藏；未完成的旧任务以暂停状态导入，恢复后由内置纯 Go 引擎接管下载。
 
-## 运行差异
-
-- 支持浏览器和 Electron 桌面窗口。关闭网页不停止独立 Go 服务；退出桌面版会停止它托管的服务。
-- Go 托管 aria2c HTTP/BT 下载，默认最多四个任务同时执行，下载完成后不持续做种。qBittorrent 可选，需要本机能访问相同下载目录。
-- RSS 关键词过滤、合集过滤、自动下载；订阅刷新去重、相同下载 URL 去重。同集按字幕组、清晰度偏好择优，已开始下载的版本不会被自动替换。
-- Bangumi 首页；Bangumi、AniList、MAL/Jikan、TMDB 搜索（TMDB 需 Key）；蜜柑、Nyaa、ACG.RIP 资源 RSS。
-- MCP：`POST /mcp`（HTTP JSON-RPC），以及 `/mcp/sse` + `/mcp/messages`，使用 `Authorization: Bearer <token>`。
-- 可选 GitHub 白名单登录、Ollama、Cloudflare Tunnel。命名隧道支持 token/credentials-file，并支持异常退出后有限次数自动重连。
-- 当前为源码构建，没有已发布的 Go 在线更新源；更新需重新构建替换二进制。构建工作流可生成 Linux/macOS/Windows 产物。
-
-## 验证
+## 验证与版本检查
 
 ```sh
 npm ci
@@ -82,45 +93,4 @@ go test -race ./...
 go vet ./...
 ```
 
-测试覆盖鉴权与页面路由、RSS 去重、HTTP 续传及错误 Range、原生 BT 本地真实传输、备份恢复、旧库原子迁移、Drive 上传校验与删除保护、云端 Range 播放、MCP、FFmpeg HLS。没有安装 FFmpeg 的机器会跳过媒体集成测试。Docker 与各操作系统产物需在对应环境继续验证。
-
-许可证沿用原项目 Limited Redistribution License (SuInk)，详见 ../LICENSE；依赖许可见 ../THIRD_PARTY_NOTICES.md。
-
-## Diana MCP 接入
-
-MCP 页面支持检测 Diana、接入、诊断与移除。默认寻找系统缓存目录 `diana/workspace` 对应的数据目录、相邻 `diana/data`，优先遵循工作目录 `.diana/extension-paths.json` 的固定路径。检测到多个位置时要求手动选择，不能默默写入另一份配置。也可展开“Diana 配置位置”，填写 `.mcp.json` 绝对路径。
-
-接入会保留其他 MCP 服务，备份原配置并以 0600 权限原子写入。Diana 默认限制 HTTP MCP 的内网地址，因此本机接入使用当前 Go 程序的 `--mcp-stdio` 模式，凭据保存在 Diana MCP 配置的环境变量中；不会更改 Diana 网络限制。Bangumi Cat 服务需要持续运行，移动可执行文件或更换口令后需重新接入，再在 Diana 重新加载 MCP 或重启。此按钮用于两者可以访问同一文件系统的本机部署；不同容器或远程 Diana 请在对应环境配置可访问的服务。
-
-## Google Drive IP 直连
-
-设置 → 下载 → **Google Drive IP 直连** 中可扫描候选 IP，再开启直连。扫描无需 Google 登录，不携带账号凭据。
-
-- 默认候选来自系统 DNS、近 7 天验证过的历史地址，以及一个内置种子地址。也可填写自己的公网 IP，每行一个，支持 `#` 注释，最多 256 个；填写后仅扫描该列表。
-- 同时最多探测 8 个地址，检查真实 Google 域名的 TLS 证书、Drive API 的预期 401 响应和一个公开测试文件。测试文件丢失或内容改变时会显示“仅通过 API 验证”，不承诺文件下载正常。
-- 扫描最长约 60 秒，超时保存已完成的部分结果。选择最近 24 小时验证成功、探测耗时最低的地址。到期需重新扫描；没有有效地址时自动使用系统网络。
-- 开启后作用于 Go 服务的 Drive API、上传及云端播放读取，OAuth 授权和令牌刷新继续走原来的系统网络。实际传输连接失败会标记该 IP 不可用，下次请求选择其他有效 IP 或系统网络；不会自动重放失败的上传请求。
-- 不修改系统 DNS。SNI 可选择原始域名（默认）、自定义 ASCII 域名或不发送；证书链、有效期、服务端用途和真实 Google 域名仍严格校验。直连模式不使用 HTTP 代理，但 TUN/VPN 仍可能接管连接。
-- 探测结果属于运行 bgmcat 的机器，响应耗时不是下载带宽测试；这项功能不会生成浏览器绕过 bgmcat 的播放直链。
-
-网络配置与扫描结果持久化在应用数据库中。API 为 `GET/PATCH /api/cloud/network` 和 `POST /api/cloud/network/scan`，均要求应用鉴权；扫描请求体示例 `{"candidates":""}`，开关请求体示例 `{"enabled":true}`。
-
-### Drive TLS / SNI 模式
-
-在“设置 → 下载 → Google Drive IP 直连 → TLS SNI 模式”选择模式。自定义时只填写域名，不含协议、端口、路径或通配符。点击“扫描可用 IP”会先保存当前模式，再使用同一模式探测；修改模式会清除旧结果并关闭旧连接池。已有进行中的请求仍按启动时模式完成。扫描中修改模式时，该次旧模式结果不会写回。
-
-可用结果选中后，Go 发出的 Drive API、上传及云端 Range 播放请求都会使用此模式。没有可用结果或关闭直连时，回到原系统网络，不应用自定义 SNI。OAuth 认证/刷新始终使用系统网络；独立 aria2c 的普通 HTTP/BT 下载不受此设置影响。
-
-这实现了 gdirect 补丁中独立控制 SNI 的同类行为，使用 Go 标准库，不链接修改后的 libaria2，也不模拟它的 OpenSSL 指纹。自定义模式通过独立 TLS 握手发送 SNI，并在 `VerifyConnection` 中用原始请求域名执行 `x509.Verify`；证书不可信、过期、域名不符或用途不符均拒绝。自定义/无 SNI 使用 HTTP/1.1，原始模式仍保留默认协议协商。
-
-参考：[gdirect 的 aria2 补丁](https://github.com/mizorewww/gdirect/blob/350d1bed3b5604c58c96dcd85f7106d4958aca2c/vendor/aria2-1.37.0.patch)、[Go VerifyConnection](https://pkg.go.dev/crypto/tls#Config.VerifyConnection)。本地握手测试验证的是 SNI 与证书校验行为；真实 Google 连接是否成功仍需在部署网络中扫描，不能从本地测试推断无代理可达性。
-
-## 版本与更新
-
-侧栏底部显示「跟随系统 / 浅色 / 深色」和当前版本号，点击版本号打开「版本与更新」。设置入口只保留在上方工具导航。
-
-「检查更新」查询 `SuInk/bgmcat` 的 GitHub Releases，显示稳定版本和版本历史；预发布不会当作稳定版更新。失败会显示网络、权限或限额提示，不会误报为最新。状态保存在本地，打开弹窗只读取已知状态，不自动访问 GitHub。
-
-私有仓库检查需要运行服务的机器提供 `GH_TOKEN` / `GITHUB_TOKEN`，或已有可用的 `gh auth login`。凭据只发送到 GitHub API，不返回网页或保存到更新记录。
-
-当前支持检查版本与手动升级，**尚不支持应用内下载、替换、自动安装及重启**。弹窗按桌面安装包、服务端安装包、源码和 Docker 展示对应步骤；安装器命令与本文和 README 保持一致。桌面版需退出后覆盖安装完整桌面包；服务端安装器需先停止旧进程并保留原安装及数据目录；源码需处理本地修改、重新构建后按原参数启动；Docker 根据镜像部署或本地构建选择对应命令。
+侧边栏底部可切换「跟随系统 / 浅色 / 深色」主题，点击版本号可打开「版本与更新」弹窗按需检查 `SuInk/bgmcat` 最新稳定版 Release（私有仓库阶段支持读取服务端 `GH_TOKEN` 或本机已登录的 `gh` CLI 凭据）。

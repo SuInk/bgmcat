@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<link rel="icon" href="./favicon.png" type="image/png" />
+<title>网盘归档 — 猫追番 · Bangumi Cat 使用文档</title>
+<meta name="description" content="配置猫追番（Bangumi Cat）连接 Google Drive：8 MiB 分块断点上传、MD5 校验释放本地空间、云端 HTTP Range 流式播放与 IP 直连探测。" />
+<script src="./theme.js"></script>
+<link rel="stylesheet" href="./site.css" />
+</head>
+<body>
+
+<div data-site-nav></div>
+
+<div class="docs-layout">
+  <aside class="docs-sidebar" data-docs-sidebar></aside>
+
+  <main class="docs-main">
+    <header class="docs-header">
+      <p class="docs-eyebrow">使用文档 · 第二章</p>
+      <h1>Google Drive 网盘归档</h1>
+      <p>利用电脑端自动将下载完的番剧分块归档至 Google Drive，释放本地硬盘空间，同时保持电脑、手机与网页端即点即播。</p>
+    </header>
+
+    <section id="oauth" class="doc-section">
+      <h2>连接 Google Drive</h2>
+      <p>打开控制台<strong>「设置 → 下载」</strong>，点击<strong>「配置向导（让番剧有个家）」</strong>按步骤绑定你自己的 Google Cloud Web OAuth 凭据：</p>
+      <ol>
+        <li>前往 Google Cloud Console 启用 <strong>Google Drive API</strong>，在 OAuth 同意屏幕中添加你的 Google 邮箱作为测试用户（或发布为内部/正式应用）。</li>
+        <li>创建类型为 <strong>Web application（Web 应用）</strong> 的 OAuth 客户端 ID，并将向导界面展示的回调地址加入「已获授权的重定向 URI」：
+          <ul>
+            <li><strong>桌面版默认回调</strong>：<code>http://127.0.0.1:39123/api/cloud/callback</code></li>
+            <li><strong>独立服务版默认回调</strong>：<code>http://127.0.0.1:3001/api/cloud/callback</code></li>
+            <li><strong>反向代理 / 公网服务</strong>：<code>https://你的域名/api/cloud/callback</code></li>
+          </ul>
+        </li>
+        <li>在向导中直接导入下载的 OAuth <code>.json</code> 文件（或手动粘贴 Client ID / Secret），点击「前往 Google 授权」完成登录。</li>
+        <li>在向导的云盘目录浏览器中选择现有文件夹，或一键新建 <code>Bangumi Cat</code> 归档目录。</li>
+        <li>点击<strong>「执行读写自检」</strong>：系统会自动上传随机校验小文件、读回比对并清理测试文件，确认权限与网络完全畅通后即可启用归档。</li>
+      </ol>
+      <div class="callout">
+        <strong>Google OAuth Testing 模式刷新令牌提示</strong>
+        <p>若你的 Google Cloud OAuth 同意屏幕处于 External + Testing（未发布）状态，Google 会在 7 天后使 refresh token 过期；届时重新点一次授权即可恢复，或将应用切为 In Production 长期有效。</p>
+      </div>
+    </section>
+
+    <section id="archive" class="doc-section">
+      <h2>分块上传与空间释放</h2>
+      <p>开启「下载完成后自动归档至 Google Drive」后，每个完成的任务都会进入可靠的归档状态机：</p>
+      <ul>
+        <li><strong>8 MiB 断点续传</strong>：Go 后端直接调用 Google Drive Resumable Upload 接口，按 8 MiB 分块传输，并预先持久化远端文件 ID，网络抖动重试不会在云盘产生重复垃圾文件。</li>
+        <li><strong>双重完整性校验</strong>：上传结束后，服务端主动回查云端元数据的精确字节大小（<code>size</code>）与 <code>md5Checksum</code>，必须与本地源文件完全一致才标记为「已归档」。</li>
+        <li><strong>安全清理本地空间</strong>：默认保留本地文件；开启<strong>「归档校验成功后删除本地文件」</strong>后，系统仅在全部视频文件均通过云端大小 + MD5 校验、可读且当前无人正在播放时删除本地副本，彻底释放电脑硬盘。</li>
+      </ul>
+    </section>
+
+    <section id="stream" class="doc-section">
+      <h2>云端直连按需播放</h2>
+      <p>即使本地文件已被清理，你在桌面端、手机客户端或网页上点击「播放」时依然无感衔接，<strong>无需使用 rclone 挂载整块网盘，也无需等待整集下载回本地</strong>：</p>
+      <ul>
+        <li><strong>原画 HTTP Range 流式传输</strong>：对于浏览器原生支持的 MP4（H.264 / AAC）剧集，服务端将播放器的拖动进度请求实时映射为对 Google Drive 的字节范围（<code>Range: bytes=...</code>）流式读取，拖动进度条秒级响应。</li>
+        <li><strong>按需窗口转码与内封字幕提取</strong>：对于字幕组常见的 MKV / HEVC 10-bit / ASS 内封字幕资源，若电脑端装有 <code>ffmpeg</code>，服务端会按需拉取云端流进行最多 3 分钟滑动窗口的 HLS 实时切片并提取软字幕轨，闲置 5 分钟后自动回收临时缓存。</li>
+      </ul>
+    </section>
+
+    <section id="direct-ip" class="doc-section">
+      <h2>Drive IP 直连探测</h2>
+      <p>针对部分网络环境下访问 Google Drive API 延迟高或连接不稳定的情况，猫追番内置了纯 Go 标准库实现的<strong>「直连探测」</strong>工具（设置 → 下载与资源 → 直连探测）：</p>
+      <ul>
+        <li><strong>并发可用性测速</strong>：无需携带账号凭据，并发探测系统 DNS、历史优选地址或你自定义的候选 IP 列表（最多 256 个），逐一校验真实 Google 域名的 X.509 证书链、有效期与 Drive API 响应耗时。</li>
+        <li><strong>独立 TLS SNI 策略</strong>：支持「原始域名（默认）」「自定义 ASCII 域名」或「省略 SNI」，同时在底层 <code>VerifyConnection</code> 中依然严格验证真实 Google 服务端证书，绝不降级跳过证书安全检查。</li>
+        <li><strong>故障自动回退</strong>：优选地址在 24 小时内自动作用于云盘查询、分块上传与云端流式读取；一旦某次连接失效会自动标记剔除并无缝切回备用地址或系统默认网络。</li>
+      </ul>
+    </section>
+
+    <nav class="doc-pager" aria-label="章节翻页">
+      <a href="./guide.html">
+        <small>上一章</small>
+        <strong>← 快速上手</strong>
+      </a>
+      <a href="./mobile.html" style="text-align:right;">
+        <small>下一章</small>
+        <strong>手机与网页播放 →</strong>
+      </a>
+    </nav>
+  </main>
+</div>
+
+<div data-site-footer></div>
+<script src="./site.js"></script>
+</body>
+</html>

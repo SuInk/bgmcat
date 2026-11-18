@@ -72,9 +72,39 @@ func now() string     { return time.Now().UTC().Format(time.RFC3339Nano) }
 func clone(o Obj) Obj { b, _ := json.Marshal(o); var v Obj; _ = json.Unmarshal(b, &v); return v }
 
 type Store struct {
-	db   *sql.DB
-	mu   sync.Mutex
-	Path string
+	db            *sql.DB
+	mu            sync.Mutex
+	cacheMu       sync.RWMutex
+	settingsCache Obj
+	Path          string
+}
+
+func shallowCopyObj(o Obj) Obj {
+	if o == nil {
+		return nil
+	}
+	cp := make(Obj, len(o))
+	for k, v := range o {
+		switch s := v.(type) {
+		case []any:
+			out := make([]any, len(s))
+			copy(out, s)
+			cp[k] = out
+		case []string:
+			out := make([]string, len(s))
+			copy(out, s)
+			cp[k] = out
+		default:
+			cp[k] = v
+		}
+	}
+	return cp
+}
+
+func (s *Store) InvalidateCache() {
+	s.cacheMu.Lock()
+	s.settingsCache = nil
+	s.cacheMu.Unlock()
 }
 
 func OpenStore(path string) (*Store, error) {
@@ -96,6 +126,16 @@ func OpenStore(path string) (*Store, error) {
 }
 func (s *Store) Close() error { return s.db.Close() }
 func (s *Store) Get(kind, key string) (Obj, error) {
+	isSettings := kind == "config" && key == "settings"
+	if isSettings {
+		s.cacheMu.RLock()
+		if s.settingsCache != nil {
+			cp := shallowCopyObj(s.settingsCache)
+			s.cacheMu.RUnlock()
+			return cp, nil
+		}
+		s.cacheMu.RUnlock()
+	}
 	var raw string
 	err := s.db.QueryRow("SELECT value FROM documents WHERE kind=? AND key=?", kind, key).Scan(&raw)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -106,6 +146,11 @@ func (s *Store) Get(kind, key string) (Obj, error) {
 	}
 	var o Obj
 	err = json.Unmarshal([]byte(raw), &o)
+	if err == nil && isSettings {
+		s.cacheMu.Lock()
+		s.settingsCache = shallowCopyObj(o)
+		s.cacheMu.Unlock()
+	}
 	return o, err
 }
 func (s *Store) Put(kind, key string, o Obj) error {
@@ -114,6 +159,11 @@ func (s *Store) Put(kind, key string, o Obj) error {
 		return err
 	}
 	_, err = s.db.Exec("INSERT INTO documents(kind,key,value) VALUES(?,?,?) ON CONFLICT(kind,key) DO UPDATE SET value=excluded.value", kind, key, string(raw))
+	if err == nil && kind == "config" && key == "settings" {
+		s.cacheMu.Lock()
+		s.settingsCache = shallowCopyObj(o)
+		s.cacheMu.Unlock()
+	}
 	return err
 }
 func (s *Store) Patch(kind, key string, patch Obj) (Obj, error) {
@@ -133,15 +183,33 @@ func (s *Store) Patch(kind, key string, patch Obj) (Obj, error) {
 }
 func (s *Store) Delete(kind, key string) error {
 	_, err := s.db.Exec("DELETE FROM documents WHERE kind=? AND key=?", kind, key)
+	if err == nil && kind == "config" && key == "settings" {
+		s.InvalidateCache()
+	}
 	return err
 }
 func (s *Store) List(kind string) ([]Obj, error) {
-	rows, err := s.db.Query("SELECT value FROM documents WHERE kind=? ORDER BY rowid DESC", kind)
+	return s.ListLimit(kind, 0)
+}
+func (s *Store) ListLimit(kind string, limit int) ([]Obj, error) {
+	var (
+		rows *sql.Rows
+		err  error
+	)
+	if limit > 0 {
+		rows, err = s.db.Query("SELECT value FROM documents WHERE kind=? ORDER BY rowid DESC LIMIT ?", kind, limit)
+	} else {
+		rows, err = s.db.Query("SELECT value FROM documents WHERE kind=? ORDER BY rowid DESC", kind)
+	}
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	out := []Obj{}
+	capHint := 0
+	if limit > 0 && limit <= 2000 {
+		capHint = limit
+	}
+	out := make([]Obj, 0, capHint)
 	for rows.Next() {
 		var raw string
 		if err = rows.Scan(&raw); err != nil {

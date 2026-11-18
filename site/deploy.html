@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<link rel="icon" href="./favicon.png" type="image/png" />
+<title>服务端与运维 — 猫追番 · Bangumi Cat 使用文档</title>
+<meta name="description" content="在 NAS、Linux 服务器或 Docker 部署猫追番（Bangumi Cat）：命令行一键安装、容器持久化、PBKDF2 账号密码安全重置、Diana MCP 与 GitHub CI 发布流水线。" />
+<script src="./theme.js"></script>
+<link rel="stylesheet" href="./site.css" />
+</head>
+<body>
+
+<div data-site-nav></div>
+
+<div class="docs-layout">
+  <aside class="docs-sidebar" data-docs-sidebar></aside>
+
+  <main class="docs-main">
+    <header class="docs-header">
+      <p class="docs-eyebrow">使用文档 · 第四章</p>
+      <h1>服务端部署与运维</h1>
+      <p>除了开箱即用的电脑桌面版，猫追番还可作为单二进制无头服务部署在 Linux / macOS / Windows 主机、家庭 NAS 或 Docker 容器中 24 小时常驻运行。</p>
+    </header>
+
+    <section id="installer" class="doc-section">
+      <h2>命令行一键安装</h2>
+      <p>独立服务版将前端资源与纯 Go 下载引擎完整编译进单个可执行文件中（<code>CGO_ENABLED=0</code>，零外部 <code>aria2</code> 依赖），自动识别系统架构并完成 <code>SHA256SUMS</code> 校验：</p>
+
+      <div class="code-card" data-code-tabs>
+        <div class="code-head">
+          <div class="code-tabs" role="tablist">
+            <button class="code-tab" type="button" role="tab" aria-selected="true" data-tab="pub-sh">macOS / Linux（公开）</button>
+            <button class="code-tab" type="button" role="tab" aria-selected="false" data-tab="pub-ps">Windows（公开）</button>
+            <button class="code-tab" type="button" role="tab" aria-selected="false" data-tab="priv-sh">私有仓库验证（gh CLI）</button>
+          </div>
+          <button class="copy-btn" type="button" data-copy-btn>复制命令</button>
+        </div>
+        <pre data-panel="pub-sh"><code>curl -fsSL https://raw.githubusercontent.com/SuInk/bgmcat/main/scripts/install.sh | sh -s -- --start</code></pre>
+        <pre data-panel="pub-ps" hidden><code>irm https://raw.githubusercontent.com/SuInk/bgmcat/main/scripts/install.ps1 | iex; .\install.ps1 -Start</code></pre>
+        <pre data-panel="priv-sh" hidden><code>gh auth login
+gh api repos/SuInk/bgmcat/contents/scripts/install.sh -H 'Accept: application/vnd.github.raw+json' | sh -s -- --private --start</code></pre>
+      </div>
+
+      <ul>
+        <li><strong>默认安装位置</strong>：macOS / Linux 安装至 <code>~/.local/bin/bgmcat</code>，默认数据目录为 <code>~/.anime-rss-go</code>；Windows 安装至 <code>%LOCALAPPDATA%\AnimeRSS\bin\bgmcat.exe</code>。</li>
+        <li><strong>自定义监听与目录</strong>：例如在家庭 NAS 上监听局域网接口并指定数据盘路径：
+          <code>bgmcat --data /mnt/media/bgmcat-data --listen 0.0.0.0:3001</code></li>
+        <li><strong>平滑升级与回退备份</strong>：重新执行安装脚本会自动保留上一版二进制为 <code>.previous</code> 副本（Windows 升级前请先停止正在运行的进程）。</li>
+      </ul>
+    </section>
+
+    <section id="docker" class="doc-section">
+      <h2>Docker 容器部署</h2>
+      <p>项目内置多阶段 <code>Dockerfile</code> 与 <code>docker-compose.yml</code>，容器镜像已预装 <code>ffmpeg</code> 以开箱支持 MKV / HEVC 在线实时转码与内封字幕提取，并以非 root 用户安全运行：</p>
+
+      <div class="code-card">
+        <div class="code-head">
+          <span>Docker Compose 构建与常驻启动</span>
+          <button class="copy-btn" type="button" data-copy-btn>复制命令</button>
+        </div>
+        <pre><code>git clone https://github.com/SuInk/bgmcat.git
+cd bgmcat
+docker compose up -d --build
+docker compose logs -f bgmcat</code></pre>
+      </div>
+
+      <ul>
+        <li>默认映射宿主机 <code>127.0.0.1:3001:3001</code>，持久化数据与临时下载缓存在命名数据卷中隔离保存。</li>
+        <li>如需通过 Nginx / Caddy 反向代理提供 HTTPS 公网访问，请将环境变量 <code>ANIME_RSS_PUBLIC_URL</code> 设置为你的实际外部域名（确保 Google Drive OAuth 回调地址准确匹配）。</li>
+      </ul>
+    </section>
+
+    <section id="security" class="doc-section">
+      <h2>账号密码与会话安全</h2>
+      <p>所有远程与浏览器端访问均采用<strong>管理员账号 + 密码</strong>登录认证（桌面版窗口通过受控子进程管道自动完成本机会话握手，无需重复输入密码）：</p>
+      <ul>
+        <li><strong>首次引导与加密存储</strong>：新环境首次启动时会在终端日志打印初始引导账号密码（或进入网页后引导修改）。密码经 210,000 轮 <code>PBKDF2-HMAC-SHA256</code> 加盐哈希存储，不保存明文。</li>
+        <li><strong>在线修改与一键踢下线</strong>：在「设置 → 安全与访问」修改管理员用户名或密码后，可立即使其他设备上的历史浏览器 / 手机 Cookie 会话全部失效。</li>
+        <li><strong>忘记密码命令行重置</strong>：若不慎遗忘管理员密码，可在宿主机终端使用相同的数据目录执行一键重置：</li>
+      </ul>
+
+      <div class="code-card">
+        <div class="code-head">
+          <span>命令行重置管理员密码</span>
+          <button class="copy-btn" type="button" data-copy-btn>复制命令</button>
+        </div>
+        <pre><code># 重置为指定新密码（省略密码值则自动生成高强度随机密码并输出到终端）
+bgmcat --data ~/.anime-rss-go --reset-password "YourNewStrongPassword"</code></pre>
+      </div>
+    </section>
+
+    <section id="mcp" class="doc-section">
+      <h2>Diana MCP 与发布流水线</h2>
+      <h3>接入 Diana / AI 智能体（MCP）</h3>
+      <p>控制台左侧<strong>「MCP」</strong>页面支持一键检测本机 Diana 环境并写入 <code>--mcp-stdio</code> 安全配置（保留原有其他 MCP 服务并自动生成备份），同时提供标准 <code>POST /mcp</code> 与 SSE 接口，让 AI 助手直接帮你查询当季新番、检查订阅状态、触发下载或查看网盘归档进度。</p>
+
+      <h3>GitHub Actions 自动化构建与发布</h3>
+      <p>仓库内置完整的 CI/CD 工作流，支持先在私有仓库（Private）跑通验证，随时平滑切换公开仓库（Public）：</p>
+      <ul>
+        <li><strong>全平台构建与发布（<code>.github/workflows/build.yml</code>）</strong>：每次 Push / PR 自动运行前端类型检查、Go 竞态测试、原生 BT 本地节点传输测试与安装脚本测试；当推送匹配 <code>internal/version/VERSION</code> 的 <code>vX.Y.Z</code> 标签时，自动并行打包 <strong>5 平台服务端归档 + macOS/Windows/Linux 桌面安装包 + Android 签名 APK + Docker 镜像 + <code>SHA256SUMS</code></strong> 并创建 GitHub Release。</li>
+        <li><strong>Android 自定义签名密钥（可选）</strong>：若未配置仓库 Secrets，CI 会自动生成标准 PKCS12 密钥完成 V1/V2 签名以便直接安装测试；正式长期分发可在 GitHub Actions Secrets 配置 <code>ANDROID_KEYSTORE_BASE64</code>、<code>ANDROID_KEYSTORE_PASSWORD</code>、<code>ANDROID_KEY_ALIAS</code>、<code>ANDROID_KEY_PASSWORD</code>，保证跨版本无缝覆盖升级。</li>
+        <li><strong>官网与在线演示自动部署（<code>.github/workflows/pages.yml</code>）</strong>：<code>main</code> 分支更新时自动构建官网、文档中心与 <code>/demo/</code> 纯前端交互演示，自动部署至 GitHub Pages。</li>
+      </ul>
+    </section>
+
+    <nav class="doc-pager" aria-label="章节翻页">
+      <a href="./mobile.html">
+        <small>上一章</small>
+        <strong>← 手机与网页播放</strong>
+      </a>
+      <a href="./demo/" style="text-align:right;">
+        <small>在线体验</small>
+        <strong>打开交互式演示 →</strong>
+      </a>
+    </nav>
+  </main>
+</div>
+
+<div data-site-footer></div>
+<script src="./site.js"></script>
+</body>
+</html>

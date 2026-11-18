@@ -25,8 +25,6 @@ def main():
             subprocess.run(['go','build','-trimpath','-ldflags',f'-s -w -X github.com/SuInk/bgmcat/internal/version.Override={version}','-o',str(folder/binary),'./cmd/bgmcat'],cwd=ROOT,env=env,check=True)
             for f in ['README.md','LICENSE','THIRD_PARTY_NOTICES.md']:shutil.copy2(ROOT/f,folder/f)
             shutil.copytree(ROOT/'docs',folder/'docs')
-            (folder/'scripts').mkdir()
-            shutil.copy2(ROOT/'scripts/install-aria2.sh',folder/'scripts/install-aria2.sh')
             (folder/'VERSION').write_text(version+'\n')
             (folder/'run.sh').write_text('#!/bin/sh\nset -eu\ncd "$(dirname "$0")"\nexec ./bgmcat "$@"\n');(folder/'run.sh').chmod(0o755)
             (folder/'run.bat').write_text('@echo off\r\n"%~dp0bgmcat.exe" %*\r\n')

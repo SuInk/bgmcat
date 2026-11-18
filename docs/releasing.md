@@ -1,56 +1,62 @@
 # 版本发布流程
 
-参考 Diana 的“版本基线 → 验证 → 完整包 → 校验清单 → Release”流程。这里描述发布机制，不表示已创建仓库或发布版本。
+项目遵循「单一版本基线 → 全套自动化测试 → 多端并行打包 → 统一 SHA-256 校验清单 → GitHub Release 与 Pages 同步」的交付标准，支持先在 **私有仓库（Private）** 完整跑通首个 Release 验证，确认无误后再切换为 **公开仓库（Public）**。
 
-## 仓库准备
+## 仓库与安全边界
 
-项目使用私有仓库 `SuInk/bgmcat`，默认分支为 `main`。推送前排除 `.preview/`、数据库、下载文件、凭据、`node_modules/`、本地二进制和 `release/`；不要上传真实用户数据。按 Limited Redistribution License (SuInk) 要求向适用的分发或网络服务用户提供对应源码，私有仓库不改变许可义务。
+- 仓库地址为 `SuInk/bgmcat`，默认分支为 `main`。
+- 推送前确保 `.gitignore` 已排除 `.preview/`、`.claude/`、`_site/`、`release/`、`desktop-dist/`、`*.apk`、`*.keystore`、本地 SQLite 数据库及任何真实 OAuth 凭据。
+- 仓库变量 `PUBLISH_CONTAINER=true` 开启后，版本标签构建会自动推送 GHCR 容器镜像；未设置时仅在 CI 内执行 `docker build` 与启动验证。
+- Android 构建支持自定义正式签名密钥：可在仓库 Actions Secrets 中配置 `ANDROID_KEYSTORE_BASE64`、`ANDROID_KEYSTORE_PASSWORD`、`ANDROID_KEY_ALIAS`、`ANDROID_KEY_PASSWORD`；未配置时 CI 会自动生成标准 PKCS12 密钥完成 V1+V2 签名，确保产物可直接安装验证。
 
-仓库变量 `PUBLISH_CONTAINER=true` 可启用标签构建后的 GHCR 发布；默认只构建验证 Docker，不推送镜像。私有仓库的下载需要 GitHub 登录权限，不能使用匿名 raw 安装命令。不要开启来自不可信 PR 的写权限或执行 `pull_request_target` 中的贡献者代码。
+## 版本基线规则
 
-## 版本规则
+- `internal/version/VERSION` 是全仓唯一版本基线（不带 `v` 前缀，例如 `0.2.0`）。
+- Go 服务（`bgmcat --version`）、前端侧栏、Electron 桌面端（`desktop/package.json`）与 Android 客户端（`android/app/build.gradle.kts` 的 `versionName` / `versionCode`）全部自动从该文件派生版本。
+- Git 标签必须严格匹配 `v<VERSION>`（例如 `v0.2.0` 或预发布 `v0.2.0-rc.1`）；带 `-` 的标签由 CI 自动标记为 GitHub Prerelease 且不会覆盖 Docker `latest` 标签。
 
-- `internal/version/VERSION` 是版本唯一基线，不带 `v`，例如 `0.2.0`。
-- 发布标签必须完全匹配，例如 `v0.2.0`；RC 则同时改成 `0.2.0-rc.1` 和 `v0.2.0-rc.1`。
-- 普通修复默认递增 patch；主次版本调整由维护者决定。
-- `bgmcat --version`、API 和打包程序使用同一版本。
-- CI 将带 `-` 的版本标记为 Prerelease；正式版镜像更新 `latest`，预发布只更新 `beta`，不覆盖 `latest`。当前不自动发布 Canary。
+## 发布前本地检查清单
 
-## 发布前
+1. 更新 `internal/version/VERSION` 并编写中文发布说明 `docs/releases/<版本>.md`（不得包含 `YOUR_ACCOUNT` 等占位符，否则 CI `Validate release tag` 步骤会直接拦截失败）。
+2. 在本机执行完整验证：
+   ```sh
+   npm ci
+   npm run typecheck
+   npm run desktop:prepare
+   npm run desktop:test
+   go test -race ./...
+   go vet ./...
+   python3 scripts/test_install.py
+   python3 scripts/test_commit_message.py
+   python3 scripts/package.py
+   rm -rf release
+   ```
+3. 将改动合并入默认分支 `main` 并推送，等待 GitHub Actions 分支构建全部绿灯。
+4. 确认提交已位于 `origin/main` 后，打上匹配的版本标签并推送以触发正式 Release：
+   ```sh
+   git tag v0.2.0
+   git push origin v0.2.0
+   ```
 
-1. 更新 VERSION，以及 `docs/releases/<版本>.md` 的中文发布说明，写用户可感知的变化、行为边界、升级与测试结果。
-2. 执行 `sh scripts/build.sh`、`go test -race ./...`、`go vet ./...`。依赖变化执行 `npm audit`，检查格式和 Git diff。
-3. 执行 `python3 scripts/package.py`，确认五个平台均能编译。UI 已嵌入二进制，包中还有 `run.sh` / `run.bat`、VERSION、README、docs 和许可。
-4. 合并到默认分支，等待 CI 测试、平台打包和 Docker 构建通过。标签只能指向默认分支中的提交。
-5. 确认 README 和发布说明里的安装方式与当前产物一致后，再创建并推送版本标签。该动作会触发正式发布，不属于本地打包。
+## CI 工作流与全平台产物
 
-```sh
-# 仅在准备好真正发布时执行；版本必须与 VERSION 完全一致
-git tag v0.2.0
-git push origin v0.2.0
-```
+### 1. 构建与发布流水线（`.github/workflows/build.yml`）
 
-## 工作流与产物
+在每次 Push / PR 上运行全套单元与集成测试、五平台交叉打包、Linux / Windows 原生安装升级测试、四矩阵 Electron 桌面端构建测试与 Android APK 构建；当触发源为 `vX.Y.Z` 标签时，`release` 作业会汇总以下全部产物并生成统一 `SHA256SUMS` 发布至 GitHub Release：
 
-`.github/workflows/build.yml` 在 PR 和分支 push 上进行验证，在版本标签上额外发布。校验不通过时不会进入 Release 作业。Release 使用手写中文说明；不会只拿自动生成的提交列表当正文。
+- **5 平台独立服务包**：`bgmcat-{linux,macos}-{amd64,arm64}.tar.gz`、`bgmcat-windows-amd64.zip` 及元数据 `latest.json`
+- **4 平台电脑桌面安装包**：`bgmcat-desktop-<版本>-mac-{arm64,x64}.dmg`（含 `.zip`）、`bgmcat-desktop-<版本>-win-x64.exe`、`bgmcat-desktop-<版本>-linux-x64.{AppImage,deb}`
+- **Android 手机客户端**：`bgmcat-android-<版本>-universal.apk`
+- **完整性校验清单**：包含上述全部归档、桌面安装包与 APK 摘要的 `SHA256SUMS`
 
-服务版预期 7 项 Release 资产：五个平台完整包、`SHA256SUMS`、`latest.json`。不上传独立裸二进制。版本清单 schema 1 提供版本、标签、预发布状态、各平台文件名/大小/SHA-256；这是发布元数据，目前未接入 WebUI 自更新器。
+### 2. 官网、下载页与在线演示流水线（`.github/workflows/pages.yml`）
 
-发布说明的安装命令使用 `SuInk/bgmcat` 并注明私有下载需要授权。无需为源码包捏造可下载的 Release URL。
+当 `main` 分支的 `site/`、`frontend/` 或安装脚本更新时，自动以 `VITE_DEMO_MODE=true` 构建纯前端交互式演示至 `/demo/`，与 `site/` 下的产品落地页、设备自适应下载中心及可搜索文档中心组装后发布至 GitHub Pages。
+
+> **关于私有仓库的 GitHub Pages 说明**：GitHub Free 个人免费账号下，私有仓库可以正常免费运行 `build.yml` 并生成私有 GitHub Release（使用 `gh release download` 验证），而 GitHub Pages 要求仓库公开（Public）或账号具备 GitHub Pro / Team 权限。可在私有仓库验证完 CI 与首个 Release 资产后，再将仓库切为 Public 并开启 Pages（Settings → Pages → Source 选择 **GitHub Actions**），届时官网下载页也会自动通过 GitHub Releases API 将所有下载按钮升级为一键直链。
 
 ## 发布后核验
 
-- 检查工作流全部成功、Release 非 Draft、Prerelease 标记正确、服务版和桌面版资产齐全。
-- 实际下载 macOS ARM64 包和 SHA256SUMS，在本机重新计算并验证。
-- 解压检查启动脚本、文档和二进制，运行 `--version`，在隔离数据目录启动检查健康接口。
-- Linux 与 Windows 在相应平台做原生启动和安装测试，尤其是升级时文件占用行为；交叉编译不能代替运行验证。
-- 若启用 GHCR，检查对应版本和通道标签的镜像确实存在，并实测拉取。
-- 验证完成后才宣称发布成功。保留历史 Release，不覆盖旧版本资产；修复发布使用新版本。
-
-## 桌面发布
-
-默认用户入口是 Electron 桌面安装包，服务版继续保留。`desktop` CI 在 macOS ARM64、macOS Intel、Windows x64、Linux x64 原生构建，包含 Go 后端生命周期测试。桌面作业失败时禁止发布 Release。产物合并进入相同 Release，桌面安装包摘要追加到 SHA256SUMS；现有 latest.json 仍仅描述服务版，不是桌面更新源。
-
-`npm run desktop:prepare` 从 VERSION 同步桌面 manifest 并生成本机后端；`npm run desktop:test` 验证真实子进程认证、跨启动 token 持久化、退出清理和外链/IPC 地址策略。本地还需实际打开安装后的应用，验证无 token 登录页、重新打开、退出释放端口；CI 的后端测试不等于图形界面验证。
-
-当前桌面产物没有正式签名/公证，CI 明确禁用身份自动发现。未来面向正式分发需配置签名并增加签名验收。桌面包不含 aria2（deb 声明系统依赖），发布说明必须保留安装依赖说明。
+- 检查 GitHub Actions 所有作业绿灯、Release 非 Draft、桌面端 / 移动端 / 服务端资产与 `SHA256SUMS` 齐全。
+- 下载本机对应的桌面安装包与 `SHA256SUMS` 核对哈希，实际启动验证免密进入主页、全库筛选、内置引擎在线状态与局域网共享开关。
+- 在 Android 手机安装 `bgmcat-android-*-universal.apk`，测试局域网主地址连接与本地 / Google Drive 视频横屏流式播放。

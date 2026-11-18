@@ -49,14 +49,14 @@ func TestDianaInstallAndUninstallPreservesConfig(t *testing.T) {
 	var config Obj
 	json.Unmarshal(raw, &config)
 	servers := object(config["mcpServers"])
-	entry := object(servers["anime-rss-go"])
+	entry := object(servers["bgmcat"])
 	if str(config["custom"]) != "keep" || str(object(servers["existing"])["command"]) != "unchanged" || str(entry["command"]) == "" || str(list(entry["args"])[0]) != "--mcp-stdio" {
 		t.Fatal("invalid merged configuration")
 	}
-	if str(object(entry["env"])["ANIME_RSS_MCP_TOKEN"]) != str(a.Settings()["token"]) {
+	if str(object(entry["env"])["BGMCAT_MCP_TOKEN"]) != str(a.Settings()["token"]) {
 		t.Fatal("missing token")
 	}
-	backup, _ := os.ReadFile(path + ".anime-rss-backup")
+	backup, _ := os.ReadFile(path + ".bgmcat-backup")
 	if !bytes.Equal(backup, original) {
 		t.Fatal("backup differs")
 	}
@@ -74,7 +74,7 @@ func TestDianaInstallAndUninstallPreservesConfig(t *testing.T) {
 	}
 	raw, _ = os.ReadFile(path)
 	json.Unmarshal(raw, &config)
-	if _, exists := object(config["mcpServers"])["anime-rss-go"]; exists {
+	if _, exists := object(config["mcpServers"])["bgmcat"]; exists {
 		t.Fatal("entry remains")
 	}
 	if str(object(object(config["mcpServers"])["existing"])["command"]) != "unchanged" {

@@ -2,12 +2,15 @@ package app
 
 import (
 	"bytes"
+	"context"
 	"crypto/md5"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -18,6 +21,10 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/anacrolix/torrent"
+	"github.com/anacrolix/torrent/bencode"
+	"github.com/anacrolix/torrent/metainfo"
 )
 
 // fakeDrive is an in-memory Google Drive that follows the resumable upload
@@ -382,9 +389,80 @@ func TestDriveOAuthConnectFlow(t *testing.T) {
 	}
 }
 
+func TestDriveOAuthDirectBrowserRedirectAndDesktopLoopback(t *testing.T) {
+	t.Setenv("BGMCAT_GOOGLE_CLIENT_ID", "env-desktop-client")
+	t.Setenv("BGMCAT_GOOGLE_CLIENT_SECRET", "env-desktop-secret")
+
+	a := testApp(t)
+	a.http.Transport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if r.URL.String() != "https://oauth2.googleapis.com/token" {
+			t.Errorf("unexpected %s", r.URL)
+		}
+		w := httptest.NewRecorder()
+		io.WriteString(w, `{"access_token":"at2","refresh_token":"rt2","expires_in":3599}`)
+		return w.Result(), nil
+	})
+
+	status := apiTest(a, "GET", "/api/cloud/status", nil, true)
+	if !strings.Contains(status.Body.String(), `"configured":true`) || !strings.Contains(status.Body.String(), `"builtin":true`) {
+		t.Fatalf("expected builtin configured=true, got %s", status.Body.String())
+	}
+
+	w := apiTest(a, "POST", "/api/cloud/connect", Obj{
+		"redirectUri": "http://127.0.0.1:3001",
+		"returnTo":    "/service?cloud=connected",
+	}, true)
+	if w.Code != 200 {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	var connect struct{ Data Obj }
+	json.Unmarshal(w.Body.Bytes(), &connect)
+	consent, err := url.Parse(str(connect.Data["url"]))
+	if err != nil || consent.Host != "accounts.google.com" {
+		t.Fatalf("consent url %v", connect.Data)
+	}
+	q := consent.Query()
+	if q.Get("client_id") != "env-desktop-client" || q.Get("redirect_uri") != "http://127.0.0.1:3001" {
+		t.Fatalf("consent query %v", q)
+	}
+
+	// Google Desktop OAuth redirects to root path http://127.0.0.1:3001/?state=gdrive:...&code=...
+	cb := httptest.NewRecorder()
+	a.Handler().ServeHTTP(cb, httptest.NewRequest("GET", "/?state="+url.QueryEscape(q.Get("state"))+"&code=desktop-code", nil))
+	if cb.Code != http.StatusFound || cb.Header().Get("Location") != "/service?cloud=connected" {
+		t.Fatalf("expected 302 to /service?cloud=connected, got %d loc=%q body=%s", cb.Code, cb.Header().Get("Location"), cb.Body.String())
+	}
+	if !flag(a.Settings()["cloudArchiveEnabled"]) {
+		t.Fatal("expected cloudArchiveEnabled to be auto-enabled after direct browser redirect")
+	}
+}
+
+func TestDriveOAuthDefaultLoopbackRootWhenRedirectEmpty(t *testing.T) {
+	a := testApp(t)
+	a.Store.Patch("config", "settings", Obj{"googleClientId": "desktop-id", "googleClientSecret": "desktop-sec"})
+
+	req := httptest.NewRequest("POST", "http://127.0.0.1:3001/api/cloud/connect", strings.NewReader(`{"returnTo":"/service?cloud=connected"}`))
+	req.Header.Set("Authorization", "Bearer "+str(a.Settings()["token"]))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	a.Handler().ServeHTTP(w, req)
+	if w.Code != 200 {
+		t.Fatalf("connect status=%d body=%s", w.Code, w.Body.String())
+	}
+	var connect struct{ Data Obj }
+	json.Unmarshal(w.Body.Bytes(), &connect)
+	consent, err := url.Parse(str(connect.Data["url"]))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := consent.Query().Get("redirect_uri"); got != "http://127.0.0.1:3001" {
+		t.Fatalf("expected loopback root http://127.0.0.1:3001, got %q", got)
+	}
+}
+
 func TestSaveToResolution(t *testing.T) {
 	a := testApp(t)
-	if _, err := a.resolveSaveTo("cloud"); err == nil || !strings.Contains(err.Error(), "云盘归档") {
+	if _, err := a.resolveSaveTo("cloud"); err == nil || !strings.Contains(err.Error(), "连接 Google Drive") {
 		t.Fatalf("explicit cloud without Drive: %v", err)
 	}
 	a.Store.Patch("config", "settings", Obj{"defaultSaveTo": "cloud"})
@@ -442,5 +520,210 @@ func TestSaveToCloudArchivesAndRemovesLocal(t *testing.T) {
 	b.archiveCompleted()
 	if len(drive2.files) != 0 {
 		t.Fatal("local task uploaded with archive disabled")
+	}
+}
+
+func TestBTDownloadSaveToCloudZeroLocalFootprint(t *testing.T) {
+	a := testApp(t)
+	drive := newFakeDrive(t)
+	a.http.Transport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if r.URL.Hostname() == "127.0.0.1" {
+			return http.DefaultTransport.RoundTrip(r)
+		}
+		return drive.RoundTrip(r)
+	})
+	a.Store.Patch("config", "settings", Obj{
+		"cloudArchiveEnabled": false,
+		"cloudDeleteLocal":    false,
+		"cloudDriveFolderId":  "folder-anime",
+		"googleClientId":      "client",
+		"googleClientSecret":  "secret",
+	})
+	a.Store.Put("secrets", "google", Obj{
+		"access_token":  "access-1",
+		"refresh_token": "refresh-1",
+		"expires_at":    time.Now().Add(time.Hour).Unix(),
+	})
+
+	// Build a multi-file nested torrent (Season 1/Ep01_1080p.mkv + Season 1/Ep01_1080p.sc.ass).
+	seedRoot := filepath.Join(t.TempDir(), "FXRelease")
+	seasonDir := filepath.Join(seedRoot, "Season 1")
+	if err := os.MkdirAll(seasonDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	videoBytes := bytes.Repeat([]byte("video-frame-payload-0123456789abcdef"), 8000)
+	subBytes := []byte("[Script Info]\nTitle: FX Ep01\n")
+	if err := os.WriteFile(filepath.Join(seasonDir, "Ep01_1080p.mkv"), videoBytes, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(seasonDir, "Ep01_1080p.sc.ass"), subBytes, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	info := metainfo.Info{PieceLength: 32 * 1024}
+	if err := info.BuildFromFilePath(seedRoot); err != nil {
+		t.Fatal(err)
+	}
+	rawInfo, err := bencode.Marshal(info)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mi := metainfo.MetaInfo{InfoBytes: rawInfo}
+	seedCfg := localTorrentConfig(filepath.Dir(seedRoot))
+	seedCfg.Seed = true
+	seed, err := torrent.NewClient(seedCfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer seed.Close()
+	st, err := seed.AddTorrent(&mi)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st.VerifyData()
+
+	trackerSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		peers := []map[string]any{}
+		for _, addr := range seed.ListenAddrs() {
+			if tcp, ok := addr.(*net.TCPAddr); ok {
+				peers = append(peers, map[string]any{"ip": "127.0.0.1", "port": tcp.Port})
+			}
+		}
+		data, _ := bencode.Marshal(map[string]any{"interval": 1, "peers": peers})
+		_, _ = w.Write(data)
+	}))
+	defer trackerSrv.Close()
+	mi.Announce = trackerSrv.URL + "/announce"
+
+	var torrentBuf bytes.Buffer
+	if err := mi.Write(&torrentBuf); err != nil {
+		t.Fatal(err)
+	}
+	torrentSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write(torrentBuf.Bytes())
+	}))
+	defer torrentSrv.Close()
+
+	// Run 1: Real enqueue -> BT download -> automatic upload + local cleanup.
+	w := apiTest(a, "POST", "/api/downloads", Obj{
+		"url":        torrentSrv.URL + "/ep01.torrent",
+		"sourceType": "torrent-url",
+		"title":      "[LoliHouse] FX战士久留美 - 01 [1080p]",
+		"animeTitle": "FX战士久留美",
+		"saveTo":     "cloud",
+	}, true)
+	if w.Code != 200 {
+		t.Fatalf("POST /api/downloads: %d %s", w.Code, w.Body.String())
+	}
+	var created struct{ Data Obj }
+	if err := json.Unmarshal(w.Body.Bytes(), &created); err != nil {
+		t.Fatal(err)
+	}
+	gid := str(created.Data["gid"])
+
+	deadline := time.Now().Add(25 * time.Second)
+	archived := false
+	for time.Now().Before(deadline) {
+		cur, _ := a.Store.Get("downloads", gid)
+		if cur != nil && str(cur["status"]) == "error" {
+			t.Fatalf("download failed: %s", str(cur["errorMessage"]))
+		}
+		if cur != nil && str(object(cur["cloudArchive"])["status"]) == "archived" {
+			archived = true
+			break
+		}
+		time.Sleep(40 * time.Millisecond)
+	}
+	if !archived {
+		cur, _ := a.Store.Get("downloads", gid)
+		t.Fatalf("timed out waiting for cloudArchive=archived, last=%v", cur)
+	}
+
+	// Wait briefly for post-cleanup RemoveAll on btTaskStateDir & verify 0 bytes and 0 subdirs in downloads/.
+	var dlFiles, dlSubdirs int
+	_ = filepath.WalkDir(a.downloadsDir(), func(p string, d fs.DirEntry, wErr error) error {
+		if wErr != nil || p == a.downloadsDir() {
+			return nil
+		}
+		if d.IsDir() {
+			dlSubdirs++
+		} else {
+			dlFiles++
+		}
+		return nil
+	})
+	if dlFiles != 0 || dlSubdirs != 0 {
+		t.Fatalf("expected 0 files and 0 subdirs in %s after cloud archive, got files=%d subdirs=%d", a.downloadsDir(), dlFiles, dlSubdirs)
+	}
+	if _, statErr := os.Stat(a.btTaskStateDir(gid)); !os.IsNotExist(statErr) {
+		t.Fatalf("expected bt task state dir %s removed, stat=%v", a.btTaskStateDir(gid), statErr)
+	}
+
+	// Verify both nested files exist in fakeDrive and support byte-range reads.
+	stored1, _ := a.Store.Get("downloads", gid)
+	if len(list(stored1["files"])) != 2 {
+		t.Fatalf("expected 2 archived files, got %v", stored1["files"])
+	}
+	for _, rawF := range list(stored1["files"]) {
+		f := object(rawF)
+		remote := drive.files[str(f["remoteId"])]
+		if remote == nil || len(remote.data) == 0 {
+			t.Fatalf("missing remote file for %v", f)
+		}
+		res, rErr := a.openCloudRangeResponse(context.Background(), "google", str(f["remoteId"]), "GET", "bytes=0-15")
+		if rErr != nil {
+			t.Fatalf("openCloudRangeResponse err=%v", rErr)
+		}
+		chunk, _ := io.ReadAll(res.Body)
+		res.Body.Close()
+		if res.StatusCode != 206 || len(chunk) == 0 {
+			t.Fatalf("unexpected cloud range response: %d len=%d", res.StatusCode, len(chunk))
+		}
+	}
+
+	// Run 2: Nested folder + Finder .DS_Store + sibling local episode in the same series folder.
+	seriesDir := filepath.Join(a.downloadsDir(), "FX战士久留美")
+	nestedDir := filepath.Join(seriesDir, "Season 1")
+	if err := os.MkdirAll(nestedDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	ep1Path := filepath.Join(nestedDir, "Ep01_1080p.mkv")
+	dsStorePath := filepath.Join(nestedDir, ".DS_Store")
+	ep2LocalPath := filepath.Join(seriesDir, "Ep02_Local.mkv")
+	ep1Data := []byte("ep1-cloud-payload-bytes")
+	if err := os.WriteFile(ep1Path, ep1Data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(dsStorePath, []byte("finder-junk"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(ep2LocalPath, []byte("keep-local-ep2"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_ = a.Store.Put("downloads", "ep2-local", Obj{
+		"gid":       "ep2-local",
+		"status":    "complete",
+		"saveTo":    "local",
+		"directory": seriesDir,
+		"files":     []Obj{{"path": ep2LocalPath, "size": len("keep-local-ep2")}},
+	})
+	_ = a.Store.Put("downloads", "ep1-cloud", Obj{
+		"gid":       "ep1-cloud",
+		"status":    "complete",
+		"saveTo":    "cloud",
+		"directory": seriesDir,
+		"files":     []Obj{{"path": ep1Path, "size": len(ep1Data)}},
+	})
+	a.archiveCompleted()
+
+	ep1Stored, _ := a.Store.Get("downloads", "ep1-cloud")
+	if st1 := str(object(ep1Stored["cloudArchive"])["status"]); st1 != "archived" {
+		t.Fatalf("ep1-cloud status=%q, want archived", st1)
+	}
+	if _, err := os.Stat(nestedDir); !os.IsNotExist(err) {
+		t.Fatalf("expected nested Season 1 subdir + .DS_Store pruned, err=%v", err)
+	}
+	if gotEp2, err := os.ReadFile(ep2LocalPath); err != nil || string(gotEp2) != "keep-local-ep2" {
+		t.Fatalf("sibling local episode was harmed: got=%q err=%v", string(gotEp2), err)
 	}
 }

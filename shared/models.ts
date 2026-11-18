@@ -1,5 +1,6 @@
 export type SourceType = "direct" | "magnet" | "torrent-url";
-export type DownloadClientType = "native" | "qbittorrent";
+export type DownloadClientType = "native" | "qbittorrent" | "aria2-rpc" | "transmission";
+export type CloudProviderType = "google" | "onedrive" | "webdav";
 export type MikanDirectAccessMode = "prefer" | "off";
 export type HomepageSortMode = "default" | "rating";
 export type TunnelMode = "quick" | "named";
@@ -13,18 +14,29 @@ export interface AppSettings {
  dianaMcpConfigPath: string;
   bindHost: string;
   port: number;
+  lanAccessEnabled: boolean;
   token: string;
   corsOrigins: string[];
   pollIntervalMinutes: number;
   downloadDir: string;
+  cloudProvider: CloudProviderType;
   cloudArchiveEnabled: boolean;
   googleClientId: string;
   googleClientSecret: string;
   cloudDriveFolderId: string;
   googleRedirectUri: string;
+  onedriveClientId: string;
+  onedriveClientSecret: string;
+  onedriveRedirectUri: string;
+  onedriveFolderId: string;
+  webdavUrl: string;
+  webdavUsername: string;
+  webdavPassword: string;
+  webdavRootPath: string;
   cloudDeleteLocal: boolean;
 
   downloadClient: DownloadClientType;
+  aria2RpcUrl: string;
   aria2RpcHost: string;
   aria2RpcPort: number;
   aria2RpcSecret: string;
@@ -33,19 +45,24 @@ export interface AppSettings {
   aria2SeedEnabled: boolean;
   /** 额外的公共 Tracker，下载磁力 / 种子时附加给 aria2（与种子自带的并用） */
   btTrackers: string[];
-  /** 新任务默认保存到本机还是 Google Drive（订阅自动下载、详情页一键下载用） */
+  /** 新任务默认保存到本机还是云盘（订阅自动下载、详情页一键下载用） */
   defaultSaveTo: "local" | "cloud";
   qbittorrentBaseUrl: string;
   qbittorrentUsername: string;
   qbittorrentPassword: string;
   qbittorrentEnabled: boolean;
+  transmissionRpcUrl: string;
+  transmissionUsername: string;
+  transmissionPassword: string;
   mikanBaseUrl: string;
+  providerMirrors: Record<string, string>;
   mikanDirectAccessMode: MikanDirectAccessMode;
   /** @deprecated Use mikanDirectAccessMode instead. */
   mikanDirectAccessEnabled: boolean;
   mikanResolverIps: string[];
   localAiEnabled: boolean;
   localAiBaseUrl: string;
+  localAiApiKey: string;
   localAiModel: string;
   localAiSystemPrompt: string;
   homepageSortMode: HomepageSortMode;
@@ -69,6 +86,20 @@ export interface AppSettings {
   githubClientSecret: string;
   /** GitHub 用户名白名单,空数组表示谁都登不进(默认)。比对忽略大小写。 */
   githubAllowedLogins: string[];
+  googleOAuthEnabled: boolean;
+  googleAuthClientId: string;
+  googleAuthClientSecret: string;
+  /** 允许通过 Google 登录的邮箱白名单（默认空数组，需显式配置）。 */
+  googleAllowedEmails: string[];
+  dianaAuthEnabled: boolean;
+  dianaAuthBaseUrl: string;
+  oidcEnabled: boolean;
+  oidcDisplayName: string;
+  oidcIssuerUrl: string;
+  oidcClientId: string;
+  oidcClientSecret: string;
+  /** 允许通过 OIDC 登录的用户名/邮箱/sub 白名单。 */
+  oidcAllowedUsers: string[];
   /** 覆盖内置 ffmpeg 的可执行文件路径；留空用内置产物，内置缺失时回落到 PATH */
   ffmpegPath: string;
   /** 发现新版本后自动下载并校验（不安装）。默认开。 */
@@ -154,6 +185,8 @@ export interface SystemStatus {
   activePort: number;
   configuredHost: string;
   configuredPort: number;
+  lanAccessEnabled?: boolean;
+  lanUrls?: string[];
   apiBaseUrl: string;
   mcpSseUrl: string;
   tokenHeaderName: string;
@@ -162,6 +195,11 @@ export interface SystemStatus {
   aria2Online: boolean;
   qbittorrentOnline: boolean;
   downloadClient: DownloadClientType;
+  downloadClientOnline?: boolean;
+  downloadClientName?: string;
+  cloudProvider?: CloudProviderType;
+  cloudProviderName?: string;
+  cloudConnected?: boolean;
   rssPollingEnabled: boolean;
   restartRequired: boolean;
   tunnelEnabled: boolean;
@@ -175,10 +213,39 @@ export interface PublicSystemStatus {
   appVersion: string;
   /** 是否可以走 GitHub 登录(已开启且配置了 client id),只是个布尔值。 */
   githubOAuthAvailable: boolean;
+  googleOAuthAvailable: boolean;
+  dianaAuthAvailable: boolean;
+  dianaOwnerPairAvailable: boolean;
+  oidcAvailable: boolean;
+  oidcDisplayName: string;
+}
+
+export interface AuthStatusResponse {
+  authRequired: boolean;
+  authenticated: boolean;
+  username: string;
+  authMethod: string;
+  passwordConfigured: boolean;
+  githubOAuthAvailable: boolean;
+  googleOAuthAvailable: boolean;
+  dianaAuthAvailable: boolean;
+  dianaOwnerPairAvailable: boolean;
+  oidcAvailable: boolean;
+  oidcDisplayName: string;
+}
+
+export interface AuthLoginResult {
+  authenticated: boolean;
+  username: string;
+  status: SystemStatus;
 }
 
 export interface AuthSessionSummary {
   id: number;
+  deviceName: string;
+  userAgent: string;
+  ipAddress: string;
+  authMethod: string;
   githubLogin: string;
   githubId: string;
   createdAt: string;
@@ -190,7 +257,23 @@ export interface AuthSessionSummary {
 export interface GithubLoginResult {
   token: string;
   login: string;
+  method?: string;
   expiresAt: string;
+}
+
+export interface DianaPairCodeResult {
+  code: string;
+  pollToken: string;
+  expiresInSeconds: number;
+}
+
+export interface DianaPairStatusResult {
+  approved: boolean;
+  expired?: boolean;
+  expiresInSeconds?: number;
+  authenticated?: boolean;
+  username?: string;
+  status?: SystemStatus;
 }
 
 export interface RuntimeConnectionInfo {
@@ -221,6 +304,8 @@ export interface LocalAiChatResponse {
   message: LocalAiChatMessage;
 }
 
+export type SubscriptionLanguagePref = "chs" | "cht" | "any";
+
 export interface SubscriptionRule {
   includeKeywords: string[];
   excludeKeywords: string[];
@@ -234,6 +319,24 @@ export interface SubscriptionRule {
    * 列表里的字幕组都没发这一集时，照样下别人发的。
    */
   preferredSubgroups: string[];
+  /** 指定锁定的单个字幕组；非空时只命中该字幕组的发布。 */
+  lockedSubgroup?: string | null;
+  /** 字幕语言偏好：chs（简中优先，跳过纯繁中）、cht（繁中优先，跳过纯简中）、any（不限）。 */
+  preferredLanguage?: SubscriptionLanguagePref;
+  /** 仅追订阅创建之后更新的新集数，跳过历史已出资源。 */
+  onlyNew?: boolean;
+  /** 开启仅追新集时的基线时间戳（RFC3339）。 */
+  subscribedAt?: string | null;
+  /** 开启仅追新集时已知的已播最大集号，小于等于该集号的自动跳过。 */
+  baselineEpisode?: number | null;
+}
+
+export interface AnimeSubscriptionOptions {
+  subgroup?: string | null;
+  resolution?: "1080p" | "2160p" | "any";
+  language?: SubscriptionLanguagePref;
+  onlyNew?: boolean;
+  baselineEpisode?: number | null;
 }
 
 export interface Subscription {
@@ -294,10 +397,14 @@ export interface CloudArchiveFile {
 
 export interface CloudArchive {
   status: "uploading" | "verified" | "archived" | "error";
-  folderId: string;
-  files: CloudArchiveFile[];
-  error: string | null;
-  retryAt: number;
+  folderId?: string;
+  files?: CloudArchiveFile[];
+  error?: string | null;
+  retryAt?: number;
+  /** 实时上传速率（字节/秒，由后端在内存中按 250ms 平滑叠加） */
+  uploadSpeed?: number;
+  /** 失败重试计数 */
+  attempts?: number;
 }
 
 export interface DownloadJob {
@@ -305,6 +412,10 @@ export interface DownloadJob {
   id: number;
   feedItemId: number;
   gid: string;
+  animeId?: string | null;
+  animeTitle?: string | null;
+  sourceUrl?: string | null;
+  fallbackUrl?: string | null;
   feedItemTitle?: string | null;
   feedItemImageUrl?: string | null;
   feedItemGuid?: string | null;
@@ -387,6 +498,12 @@ export interface HomepageAnime {
   searchKeyword: string | null;
   airDay: number | null;
   isOnAir: boolean;
+  airStatus?: "airing" | "finished" | "upcoming";
+  airDate?: string | null;
+  format?: string | null;
+  totalEpisodes?: number | null;
+  rank?: number | null;
+  tags?: string[];
   isRestricted: boolean;
   rating: number | null;
   source: "bangumi";
@@ -403,6 +520,34 @@ export interface HomepageAnime {
   matchedPlatforms?: string[];
 }
 
+export type AnimeCatalogFormat = "all" | "TV" | "剧场版" | "OVA" | "WEB";
+export type AnimeCatalogRegion = "all" | "jp" | "cn" | "west";
+export type AnimeCatalogStatus = "all" | "airing" | "finished" | "upcoming";
+export type AnimeCatalogSeason = "all" | "winter" | "spring" | "summer" | "autumn";
+export type AnimeCatalogSort = "heat" | "score" | "rank" | "date";
+
+export interface AnimeCatalogQuery {
+  keyword?: string;
+  format?: AnimeCatalogFormat;
+  region?: AnimeCatalogRegion;
+  status?: AnimeCatalogStatus;
+  year?: string;
+  season?: AnimeCatalogSeason;
+  genre?: string;
+  minRating?: number;
+  sort?: AnimeCatalogSort;
+  limit?: number;
+  offset?: number;
+}
+
+export interface AnimeCatalogResult {
+  items: HomepageAnime[];
+  total: number;
+  offset: number;
+  limit: number;
+  hasMore: boolean;
+}
+
 export interface FavoriteAnime extends HomepageAnime {
   mikanKeyword: string;
   rssUrl: string | null;
@@ -412,6 +557,8 @@ export interface FavoriteAnime extends HomepageAnime {
   updatedAt: string;
   /** 关联订阅是否开启自动下载。未订阅时为 null。用于区分「仅收集」和「自动追更」。 */
   subscriptionAutoDownload: boolean | null;
+  /** 主订阅的规则快照（用于展示已选字幕组/仅追新集状态）。 */
+  subscriptionRule?: SubscriptionRule | null;
   /**
    * 该番挂着的全部订阅，一个源一条。
    * 上面的 subscriptionId / subscriptionName / subscriptionAutoDownload 是其中的「主订阅」
@@ -430,10 +577,16 @@ export interface FavoriteAnimeSubscription {
   autoDownload: boolean;
 }
 
+export interface HiddenAnime extends HomepageAnime {
+  hiddenAt: string;
+}
+
 export interface AnimeEpisode {
   episodeId: string;
   title: string;
   episodeNumber: string | null;
+  /** 季内集数（多季番在 Bangumi 中 sort=26、ep=1 时，seasonNumber 为 "1"） */
+  seasonNumber?: string | null;
   airDate: string | null;
 }
 
@@ -447,6 +600,13 @@ export interface MikanDownloadItem {
   sizeText: string | null;
   publishedAt: string | null;
   sourceType: SourceType;
+}
+
+export interface AnimeStreamingLink {
+  id: string;
+  label: string;
+  url: string;
+  direct?: boolean;
 }
 
 export interface AnimeDetail {
@@ -474,6 +634,8 @@ export interface AnimeDetail {
    * Bangumi 0-10、AniList 0-100、MAL 0-10 的评分体系与人群都不可比。
    */
   platforms?: AnimeMetadataPlatform[];
+  /** Bangumi infobox 提取的在线正版播放平台入口（如哔哩哔哩、腾讯视频、动画疯等） */
+  streamingLinks?: AnimeStreamingLink[];
   /** 这一轮没响应的信息平台。结果照出，前端浅色提示一行。 */
   platformFailures?: AnimeMetadataPlatformFailure[];
 }
@@ -537,6 +699,8 @@ export interface ResourceProviderSummary {
   id: string;
   displayName: string;
   enabled: boolean;
+  baseUrl?: string;
+  defaultBaseUrl?: string;
 }
 
 /** release：CI 打出来的安装包，可以整包替换自己；source：源码部署，只能拉代码重建。 */
@@ -677,5 +841,62 @@ export interface OpenDataDirResult {
   path: string;
   /** 桌面壳里才会是 true；纯 WebUI 只能把路径显示给用户。 */
   opened: boolean;
+}
+
+export interface MangaSeries {
+  id: string;
+  title: string;
+  altTitle: string;
+  description: string;
+  coverUrl: string;
+  status: string;
+  year: number;
+  lastChapter: string;
+  contentRating: string;
+  authors: string[];
+  tags: string[];
+  updatedAt: string;
+}
+
+export interface MangaChapter {
+  id: string;
+  chapter: string;
+  volume: string;
+  title: string;
+  label: string;
+  language: string;
+  pages: number;
+  scanlationGroup: string;
+  publishedAt: string;
+}
+
+export interface MangaDiscoverResult {
+  items: MangaSeries[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+export interface MangaDetailResult {
+  manga: MangaSeries;
+  chapters: MangaChapter[];
+  total: number;
+}
+
+export interface MangaPagesResult {
+  chapterId: string;
+  pages: string[];
+  saverPages: string[];
+}
+
+export interface MangaReadProgress {
+  mangaId: string;
+  title: string;
+  coverUrl: string;
+  chapterId: string;
+  chapterLabel: string;
+  pageIndex: number;
+  totalPages: number;
+  updatedAt: string;
 }
 

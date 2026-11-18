@@ -64,6 +64,10 @@ func TestSettingsValidation(t *testing.T) {
 	if _, ok := a.Settings()["unknown"]; ok {
 		t.Fatal("unknown persisted")
 	}
+	getW := apiTest(a, "GET", "/api/settings", nil, true)
+	if getW.Code != 200 || strings.Contains(getW.Body.String(), `"mikanResolverIps":null`) || strings.Contains(getW.Body.String(), `"btTrackers":null`) {
+		t.Fatal("empty slice settings serialized as null:", getW.Body.String())
+	}
 	for _, o := range []Obj{{"token": "short"}, {"downloadClient": "aria2"}, {"cloudDeleteLocal": "yes"}, {"downloadDir": "relative"}} {
 		if w := apiTest(a, "PUT", "/api/settings", o, true); w.Code != 400 {
 			t.Fatal(o, w.Code)

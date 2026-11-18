@@ -6,7 +6,6 @@ version=latest
 dest=${ANIME_RSS_BIN_DIR:-"$HOME/.local/bin"}
 local_dir=
 private=false
-skip_aria2=false
 start=false
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -16,8 +15,8 @@ while [ "$#" -gt 0 ]; do
       shift 2;;
     --private) private=true; shift;;
     --start) start=true; shift;;
-    --skip-aria2) skip_aria2=true; shift;;
-    --help|-h) echo 'Usage: sh install.sh --repository OWNER/REPO [--private] [--version vX.Y.Z] [--dir PATH] [--local-dir RELEASE_DIR] [--skip-aria2] [--start]'; exit 0;;
+    --skip-aria2) shift;;
+    --help|-h) echo 'Usage: sh install.sh --repository OWNER/REPO [--private] [--version vX.Y.Z] [--dir PATH] [--local-dir RELEASE_DIR] [--start]'; exit 0;;
     *) echo "Unknown option: $1" >&2; exit 1;;
   esac
 done
@@ -55,15 +54,6 @@ entry="bgmcat-$platform-$arch/bgmcat"
 mkdir "$tmp/extract"
 tar -xzf "$tmp/$asset" -C "$tmp/extract" "$entry"
 [ -f "$tmp/extract/$entry" ] && [ ! -L "$tmp/extract/$entry" ] || { echo 'Invalid package binary' >&2; exit 1; }
-if [ "$skip_aria2" != true ]; then
-  helper="bgmcat-$platform-$arch/scripts/install-aria2.sh"
-  tar -xzf "$tmp/$asset" -C "$tmp/extract" "$helper"
-  [ -f "$tmp/extract/$helper" ] && [ ! -L "$tmp/extract/$helper" ] || { echo 'Invalid package dependency installer' >&2; exit 1; }
-  if [ -z "${BGMCAT_ARIA2_PATH:-}" ] && [ -x "$dest/aria2c" ]; then
-    BGMCAT_ARIA2_PATH="$dest/aria2c"; export BGMCAT_ARIA2_PATH
-  fi
-  sh "$tmp/extract/$helper"
-fi
 mkdir -p "$dest"
 stage=$(mktemp "$dest/.bgmcat-install.XXXXXX")
 trap 'rm -rf "$tmp"; rm -f "${stage:-}"' EXIT HUP INT TERM

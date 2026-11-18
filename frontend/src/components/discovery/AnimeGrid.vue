@@ -10,12 +10,17 @@ const props = defineProps<{
   selectedAnimeId?: string | null;
   loading?: boolean;
   errorMessage?: string;
+  emptyMessage?: string;
+  catalogMeta?: boolean;
   /** poster：海报网格；row：紧凑列表 */
   layout?: "poster" | "row";
+  allowHide?: boolean;
+  hiddenIds?: ReadonlySet<string>;
 }>();
 
 const emit = defineEmits<{
   (event: "select", anime: HomepageAnime): void;
+  (event: "hide", anime: HomepageAnime): void;
 }>();
 
 const rootEl = ref<HTMLElement | null>(null);
@@ -48,7 +53,7 @@ defineExpose({ rootEl });
       <div v-for="index in 12" :key="index" class="grid gap-2" aria-hidden="true">
         <template v-if="layout === 'row'">
           <div class="flex items-center gap-3 p-1.5">
-            <span class="skeleton h-16 w-12 shrink-0 rounded-md"></span>
+            <span class="skeleton h-16 w-12 shrink-0 rounded-[10px]"></span>
             <span class="grid flex-1 gap-1.5">
               <span class="skeleton h-3 w-4/5 rounded-full"></span>
               <span class="skeleton h-2.5 w-2/5 rounded-full"></span>
@@ -56,7 +61,7 @@ defineExpose({ rootEl });
           </div>
         </template>
         <template v-else>
-          <span class="skeleton aspect-[3/4] rounded-lg"></span>
+          <span class="skeleton aspect-[3/4] rounded-[16px]"></span>
           <span class="skeleton h-3 w-4/5 rounded-full"></span>
           <span class="skeleton h-2.5 w-1/2 rounded-full"></span>
         </template>
@@ -69,9 +74,17 @@ defineExpose({ rootEl });
         class="col-span-full grid min-h-[18rem] place-items-center p-6 text-center"
       >
         <div class="grid max-w-md gap-3">
-          <div class="text-3xl font-semibold text-[var(--muted)]" aria-hidden="true">!</div>
+          <div class="empty-icon text-lg font-bold" aria-hidden="true">!</div>
           <p class="text-sm font-medium text-[var(--muted)]">{{ errorMessage }}</p>
         </div>
+      </div>
+    </template>
+
+    <template v-else-if="items.length === 0">
+      <div class="col-span-full grid min-h-[14rem] place-items-center p-6 text-center">
+        <slot name="empty">
+          <p class="text-sm font-medium text-[var(--muted)]">{{ emptyMessage || "没有符合筛选条件的番剧" }}</p>
+        </slot>
       </div>
     </template>
 
@@ -82,27 +95,13 @@ defineExpose({ rootEl });
         :anime="anime"
         :selected="selectedAnimeId === anime.animeId"
         :compact-meta="true"
+        :catalog-meta="catalogMeta"
         :layout="layout"
+        :allow-hide="allowHide"
+        :is-hidden="Boolean(hiddenIds?.has(anime.animeId))"
         @open="emit('select', anime)"
+        @hide="emit('hide', $event)"
       />
     </template>
   </div>
 </template>
-
-<style scoped>
-.skeleton {
-  display: block;
-  background: var(--panel);
-  animation: skeleton-breathe 1.4s ease-in-out infinite;
-}
-@keyframes skeleton-breathe {
-  50% {
-    opacity: 0.55;
-  }
-}
-@media (prefers-reduced-motion: reduce) {
-  .skeleton {
-    animation: none;
-  }
-}
-</style>

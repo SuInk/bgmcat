@@ -1,30 +1,99 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, onMounted, ref, watch } from "vue";
+import { Eye, EyeOff, KeyRound, LogOut, RefreshCw } from "@lucide/vue";
 
+import MobileAccessQrCard from "../MobileAccessQrCard.vue";
 import SettingsItem from "../SettingsItem.vue";
 import SettingsSection from "../SettingsSection.vue";
 import { copyText } from "../../../lib/actions";
-import { rotateToken, rotatingToken, saveSettingsFields, settings, settingsFieldErrors, settingsForm, status } from "../../../stores/session";
+import { isAndroidAppRuntime, openAndroidServerSwitcher, readAndroidServerLabel } from "../../../api";
+import type { AuthSessionSummary } from "@shared/index";
+import {
+  adminUsername,
+  authSessions,
+  cloudDriveConfigured,
+  dianaAuthAvailable,
+  dianaOwnerPairAvailable,
+  loadingSessions,
+  otherSessionCount,
+  passwordConfigured,
+  refreshAuthSessions,
+  refreshAuthStatus,
+  revokeOtherSessions,
+  revokeSession,
+  rotateToken,
+  rotatingToken,
+  saveAdminCredentials,
+  savingCredentials,
+  saveSettingsFields,
+  settings,
+  settingsFieldErrors,
+  settingsForm,
+  status
+} from "../../../stores/session";
 import { tunnelStateLabel, tunnelStatus } from "../../../stores/tunnel";
 
 const liveTunnelState = computed(() => status.value?.tunnelState ?? tunnelStatus.value?.state);
 const tunnelPublicUrl = computed(() => status.value?.tunnelPublicUrl ?? tunnelStatus.value?.publicUrl ?? "");
 
-/**
- * 这个字段是不是被环境变量接管了（容器部署常见）。
- * 服务端在 lockedSettings 里给出字段名；禁用输入框并说明原因，
- * 比让用户改完保存、再看着它弹回去要好。
- */
+const usernameDraft = ref(adminUsername.value);
+const newPassword = ref("");
+const showNewPassword = ref(false);
+const showApiToken = ref(false);
+
+watch(adminUsername, (next) => {
+  if (next && !usernameDraft.value) {
+    usernameDraft.value = next;
+  }
+});
+
+const canSubmitCredentials = computed(() => {
+  if (savingCredentials.value || newPassword.value.length === 0) {
+    return false;
+  }
+  return (usernameDraft.value.trim() || adminUsername.value.trim()).length >= 2;
+});
+
+async function submitCredentials(): Promise<void> {
+  if (!canSubmitCredentials.value) {
+    return;
+  }
+  const ok = await saveAdminCredentials({
+    newUsername: usernameDraft.value.trim() || adminUsername.value.trim(),
+    newPassword: newPassword.value
+  });
+  if (ok) {
+    usernameDraft.value = adminUsername.value;
+    newPassword.value = "";
+    showNewPassword.value = false;
+  }
+}
+
+function formatSessionTime(value: string): string {
+  if (!value) {
+    return "-";
+  }
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
+}
+
 function isSettingLocked(key: string): boolean {
   return (settings.value?.lockedSettings ?? []).includes(key);
 }
 
-const externalAccessEnabled = computed({
-  get: () => !["127.0.0.1", "localhost"].includes(settingsForm.bindHost.trim().toLowerCase()),
+const isWildcardBind = computed(() => ["0.0.0.0", "::", "[::]", ""].includes(settingsForm.bindHost.trim().toLowerCase()));
+const lanUrls = computed(() => status.value?.lanUrls ?? []);
+const isAndroidApp = isAndroidAppRuntime();
+const androidServerLabel = computed(() => (isAndroidApp ? readAndroidServerLabel() : ""));
+
+const lanToggleModel = computed({
+  get: () => isWildcardBind.value || Boolean(settingsForm.lanAccessEnabled),
   set: (enabled: boolean) => {
-    // bindHost 归在延迟提交那组（它同时也是个文本框），但这里是开关，得立刻存
-    settingsForm.bindHost = enabled ? "0.0.0.0" : "127.0.0.1";
-    void saveSettingsFields(["bindHost"]);
+    if (isWildcardBind.value) {
+      return;
+    }
+    settingsForm.lanAccessEnabled = enabled;
+    void saveSettingsFields(["lanAccessEnabled"]);
   }
 });
 
@@ -34,6 +103,33 @@ function parseList(event: Event): string[] {
     .map((item) => item.trim())
     .filter(Boolean);
 }
+
+const SESSION_METHOD_LABELS = (): Record<string, string> => ({
+  github: "GitHub",
+  google: "Google",
+  diana: "Diana",
+  qrcode: "扫码",
+  oidc: settingsForm.oidcDisplayName.trim() || "SSO"
+});
+
+function formatSessionProviderTag(session: AuthSessionSummary): string {
+  const login = session.githubLogin?.trim() || "";
+  const method = session.authMethod?.trim() || "";
+  const label = SESSION_METHOD_LABELS()[method];
+  if (label) {
+    return login ? `${label} · ${login}` : label;
+  }
+  return login;
+}
+
+onMounted(() => {
+  void refreshAuthStatus().then(() => {
+    if (adminUsername.value) {
+      usernameDraft.value = adminUsername.value;
+    }
+  });
+  void refreshAuthSessions();
+});
 </script>
 
 <template>
@@ -44,8 +140,8 @@ function parseList(event: Event): string[] {
         <strong class="break-all">{{ status?.apiBaseUrl ?? "-" }}</strong>
       </button>
       <div class="settings-summary-item">
-        <span class="settings-summary-label">本机鉴权</span>
-        <strong>{{ status?.localAuthBypassEnabled ? "本机免 token" : "需要 token" }}</strong>
+        <span class="settings-summary-label">管理员账号</span>
+        <strong>{{ adminUsername || "-" }}</strong>
       </div>
       <div class="settings-summary-item">
         <span class="settings-summary-label">隧道</span>
@@ -59,25 +155,248 @@ function parseList(event: Event): string[] {
         <strong class="break-all">{{ tunnelPublicUrl || "-" }}</strong>
       </button>
     </div>
+
+    <MobileAccessQrCard class="mt-3" />
   </SettingsSection>
 
-  <SettingsSection id="token" title="访问口令">
-    <div class="settings-group">
-      <SettingsItem as="div" stacked title="访问口令（Token）" desc="从其他设备打开 WebUI 时要填的口令">
-        <div class="flex w-full min-w-0 flex-col gap-2 sm:flex-row">
+  <SettingsSection id="security" title="账号与密码">
+    <div class="settings-group" @focusout.stop @keydown.enter.stop.prevent="submitCredentials">
+      <SettingsItem stacked title="管理账号">
+        <input
+          v-model="usernameDraft"
+          class="settings-input settings-input-wide"
+          type="text"
+          :placeholder="adminUsername || '2–64 位字符'"
+          autocomplete="username"
+          autocapitalize="off"
+          autocorrect="off"
+          spellcheck="false"
+        />
+      </SettingsItem>
+
+      <SettingsItem stacked :title="passwordConfigured ? '新密码' : '设置密码'">
+        <div class="sec-password-wrap settings-input-wide">
           <input
-            v-model="settingsForm.token"
-            type="text"
-            aria-label="访问口令"
-            class="secret-mask-input settings-input min-w-0 flex-1"
-            autocomplete="off"
-            autocapitalize="off"
-            autocorrect="off"
-            spellcheck="false"
-            inputmode="text"
+            v-model="newPassword"
+            class="settings-input w-full pr-10"
+            :type="showNewPassword ? 'text' : 'password'"
+            placeholder="至少 8 位"
+            autocomplete="new-password"
           />
-          <button type="button" class="settings-secondary-button" :disabled="!settingsForm.token.trim()" @click="copyText(settingsForm.token)">复制 Token</button>
-          <button type="button" class="settings-secondary-button" :disabled="rotatingToken" @click="rotateToken()">重新生成</button>
+          <button
+            type="button"
+            class="sec-password-toggle"
+            :aria-label="showNewPassword ? '隐藏新密码' : '显示新密码'"
+            @click="showNewPassword = !showNewPassword"
+          >
+            <EyeOff v-if="showNewPassword" :size="15" aria-hidden="true" />
+            <Eye v-else :size="15" aria-hidden="true" />
+          </button>
+        </div>
+      </SettingsItem>
+
+      <SettingsItem as="div" title="登录保护">
+        <div class="flex items-center gap-2">
+          <span v-if="passwordConfigured" class="status-pill status-pill-ok">已启用</span>
+          <button
+            type="button"
+            class="btn-primary inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-semibold"
+            :disabled="!canSubmitCredentials"
+            @click="submitCredentials"
+          >
+            <KeyRound :size="14" aria-hidden="true" />
+            <span>{{ savingCredentials ? "保存中…" : passwordConfigured ? "更新密码" : "保存密码" }}</span>
+          </button>
+        </div>
+      </SettingsItem>
+    </div>
+  </SettingsSection>
+
+  <SettingsSection id="oauth" title="第三方与快捷登录">
+    <div class="settings-group">
+      <SettingsItem title="Diana 快捷登录">
+        <template #desc>
+          复用本机或远端 Diana 账号密码及机器人私聊 6 位验证码登录
+          <span v-if="settingsForm.dianaAuthEnabled && dianaAuthAvailable" class="ml-1.5 text-[var(--accent)]">
+            {{ dianaOwnerPairAvailable ? "（已检测到私聊验证码通道）" : "（已开启账号登录）" }}
+          </span>
+        </template>
+        <input v-model="settingsForm.dianaAuthEnabled" type="checkbox" class="settings-switch" />
+      </SettingsItem>
+
+      <template v-if="settingsForm.dianaAuthEnabled">
+        <SettingsItem stacked title="Diana 服务地址">
+          <div class="settings-field w-full">
+            <input
+              v-model="settingsForm.dianaAuthBaseUrl"
+              class="settings-input settings-input-wide"
+              :class="{ 'settings-input-invalid': settingsFieldErrors.dianaAuthBaseUrl }"
+              placeholder="留空自动探测本机 Diana，或填 http://127.0.0.1:18080"
+              autocomplete="off"
+              spellcheck="false"
+            />
+            <span v-if="settingsFieldErrors.dianaAuthBaseUrl" class="settings-field-error">
+              {{ settingsFieldErrors.dianaAuthBaseUrl }}
+            </span>
+          </div>
+        </SettingsItem>
+      </template>
+
+      <SettingsItem title="Google 登录">
+        <input v-model="settingsForm.googleOAuthEnabled" type="checkbox" class="settings-switch" />
+      </SettingsItem>
+
+      <template v-if="settingsForm.googleOAuthEnabled">
+        <SettingsItem stacked title="Google Client ID">
+          <input
+            v-model="settingsForm.googleAuthClientId"
+            class="settings-input settings-input-wide"
+            :placeholder="cloudDriveConfigured ? '留空将复用 Google 云盘 Client ID' : '输入 Google OAuth Client ID'"
+            autocomplete="off"
+            spellcheck="false"
+          />
+        </SettingsItem>
+
+        <SettingsItem stacked title="Google Client Secret">
+          <template #desc>回调 <code>/api/auth/google/callback</code>（留空则复用云盘密钥）</template>
+          <input
+            v-model="settingsForm.googleAuthClientSecret"
+            class="secret-mask-input settings-input settings-input-wide"
+            autocomplete="off"
+            spellcheck="false"
+          />
+        </SettingsItem>
+
+        <SettingsItem stacked title="Google 白名单邮箱">
+          <input
+            :value="settingsForm.googleAllowedEmails.join(', ')"
+            class="settings-input settings-input-wide"
+            placeholder="多个邮箱以逗号分隔（必填）"
+            @input="settingsForm.googleAllowedEmails = parseList($event)"
+          />
+        </SettingsItem>
+      </template>
+
+      <SettingsItem title="GitHub 登录">
+        <input v-model="settingsForm.githubOAuthEnabled" type="checkbox" class="settings-switch" />
+      </SettingsItem>
+
+      <template v-if="settingsForm.githubOAuthEnabled">
+        <SettingsItem stacked title="GitHub Client ID">
+          <input v-model="settingsForm.githubClientId" class="settings-input settings-input-wide" autocomplete="off" spellcheck="false" />
+        </SettingsItem>
+
+        <SettingsItem stacked title="GitHub Client Secret">
+          <template #desc>回调 <code>/api/auth/github/callback</code></template>
+          <input v-model="settingsForm.githubClientSecret" class="secret-mask-input settings-input settings-input-wide" autocomplete="off" spellcheck="false" />
+        </SettingsItem>
+
+        <SettingsItem stacked title="GitHub 白名单账号">
+          <input
+            :value="settingsForm.githubAllowedLogins.join(', ')"
+            class="settings-input settings-input-wide"
+            placeholder="多个用户名以逗号分隔"
+            @input="settingsForm.githubAllowedLogins = parseList($event)"
+          />
+        </SettingsItem>
+      </template>
+
+      <SettingsItem title="通用 OIDC / SSO 登录" desc="支持 Pocket ID、Authentik、Authelia、Keycloak、Linux.do 等 OpenID Connect 服务">
+        <input v-model="settingsForm.oidcEnabled" type="checkbox" class="settings-switch" />
+      </SettingsItem>
+
+      <template v-if="settingsForm.oidcEnabled">
+        <SettingsItem stacked title="按钮显示名称">
+          <input v-model="settingsForm.oidcDisplayName" class="settings-input settings-input-wide" placeholder="SSO" autocomplete="off" />
+        </SettingsItem>
+
+        <SettingsItem stacked title="Issuer URL">
+          <template #desc>自动读取 <code>/.well-known/openid-configuration</code>，回调 <code>/api/auth/oidc/callback</code></template>
+          <div class="settings-field w-full">
+            <input
+              v-model="settingsForm.oidcIssuerUrl"
+              class="settings-input settings-input-wide"
+              :class="{ 'settings-input-invalid': settingsFieldErrors.oidcIssuerUrl }"
+              placeholder="https://auth.example.com"
+              autocomplete="off"
+              spellcheck="false"
+            />
+            <span v-if="settingsFieldErrors.oidcIssuerUrl" class="settings-field-error">
+              {{ settingsFieldErrors.oidcIssuerUrl }}
+            </span>
+          </div>
+        </SettingsItem>
+
+        <SettingsItem stacked title="Client ID">
+          <input v-model="settingsForm.oidcClientId" class="settings-input settings-input-wide" autocomplete="off" spellcheck="false" />
+        </SettingsItem>
+
+        <SettingsItem stacked title="Client Secret">
+          <input
+            v-model="settingsForm.oidcClientSecret"
+            class="secret-mask-input settings-input settings-input-wide"
+            placeholder="公开客户端可留空（支持 PKCE S256）"
+            autocomplete="off"
+            spellcheck="false"
+          />
+        </SettingsItem>
+
+        <SettingsItem stacked title="允许登录的用户">
+          <input
+            :value="settingsForm.oidcAllowedUsers.join(', ')"
+            class="settings-input settings-input-wide"
+            placeholder="邮箱、用户名或 sub，逗号分隔；填 * 允许该 IdP 全部用户"
+            @input="settingsForm.oidcAllowedUsers = parseList($event)"
+          />
+        </SettingsItem>
+      </template>
+    </div>
+  </SettingsSection>
+
+  <SettingsSection id="sessions" title="登录设备">
+    <div class="settings-group">
+      <SettingsItem as="div" stacked>
+        <div class="grid w-full min-w-0 gap-2.5">
+          <p v-if="loadingSessions && !authSessions.length" class="settings-desc">加载中…</p>
+          <p v-else-if="!authSessions.length" class="settings-desc">暂无登录会话</p>
+          <ul v-else class="sec-session-list">
+            <li v-for="session in authSessions" :key="session.id" class="sec-session-item">
+              <div class="sec-session-main">
+                <span class="sec-session-name">
+                  <strong>{{ session.deviceName || "未知设备" }}</strong>
+                  <span v-if="formatSessionProviderTag(session)" class="sec-session-tag">{{ formatSessionProviderTag(session) }}</span>
+                  <span v-if="session.current" class="status-pill status-pill-ok">当前</span>
+                </span>
+                <span class="sec-session-meta">
+                  {{ session.ipAddress || "IP 未知" }} · {{ formatSessionTime(session.lastSeenAt) }}
+                </span>
+                <span v-if="session.userAgent" class="sec-session-ua">{{ session.userAgent }}</span>
+              </div>
+              <button
+                type="button"
+                class="settings-secondary-button sec-danger-btn shrink-0"
+                @click="revokeSession(session.id)"
+              >
+                <LogOut :size="13" aria-hidden="true" />
+                <span>{{ session.current ? "退出" : "移除" }}</span>
+              </button>
+            </li>
+          </ul>
+          <div class="flex flex-wrap items-center gap-2 pt-1">
+            <button type="button" class="settings-secondary-button inline-flex items-center gap-1.5" :disabled="loadingSessions" @click="refreshAuthSessions()">
+              <RefreshCw :size="13" aria-hidden="true" />
+              <span>刷新</span>
+            </button>
+            <button
+              v-if="otherSessionCount > 0"
+              type="button"
+              class="settings-secondary-button sec-danger-btn inline-flex items-center gap-1.5"
+              @click="revokeOtherSessions()"
+            >
+              <LogOut :size="13" aria-hidden="true" />
+              <span>移除其他 {{ otherSessionCount }} 台</span>
+            </button>
+          </div>
         </div>
       </SettingsItem>
     </div>
@@ -85,54 +404,203 @@ function parseList(event: Event): string[] {
 
   <SettingsSection id="lan" title="局域网访问">
     <div class="settings-group">
-      <SettingsItem title="允许局域网 / 外网访问" desc="监听地址由启动参数控制。例如 --listen 0.0.0.0:3001 允许局域网访问。">
-        <input v-model="externalAccessEnabled" :disabled="isSettingLocked('bindHost')" type="checkbox" class="settings-switch" />
+      <SettingsItem
+        title="允许局域网连接"
+        :desc="isWildcardBind ? '已通过 --listen 全网卡监听' : undefined"
+      >
+        <input v-model="lanToggleModel" :disabled="isWildcardBind" type="checkbox" class="settings-switch" />
+      </SettingsItem>
+
+      <SettingsItem
+        v-if="lanUrls.length"
+        as="div"
+        stacked
+        title="连接地址（点击复制）"
+      >
+        <div class="flex flex-wrap gap-2">
+          <button
+            v-for="url in lanUrls"
+            :key="url"
+            type="button"
+            class="settings-secondary-button font-mono text-xs"
+            @click="copyText(url)"
+          >
+            {{ url }}
+          </button>
+        </div>
+      </SettingsItem>
+
+      <SettingsItem
+        v-if="isAndroidApp"
+        as="div"
+        title="当前服务器"
+        :desc="androidServerLabel"
+      >
+        <button type="button" class="settings-secondary-button" @click="openAndroidServerSwitcher()">
+          切换
+        </button>
+      </SettingsItem>
+      <SettingsItem title="监听地址与端口">
+        <div class="settings-field">
+          <span class="settings-field-row">
+            <input
+              v-model="settingsForm.bindHost"
+              class="settings-input"
+              :class="{ 'settings-input-invalid': settingsFieldErrors.bindHost }"
+              aria-label="Bind Host"
+              :disabled="isSettingLocked('bindHost')"
+            />
+            <input
+              v-model.number="settingsForm.port"
+              type="number"
+              class="settings-input settings-input-short"
+              :class="{ 'settings-input-invalid': settingsFieldErrors.port }"
+              aria-label="Port"
+              :disabled="isSettingLocked('port')"
+            />
+          </span>
+          <span v-if="isSettingLocked('bindHost') || isSettingLocked('port')" class="settings-desc">
+            由启动参数 --listen 锁定
+          </span>
+          <span v-if="settingsFieldErrors.bindHost || settingsFieldErrors.port" class="settings-field-error">
+            {{ settingsFieldErrors.bindHost ?? settingsFieldErrors.port }}
+          </span>
+        </div>
+      </SettingsItem>
+
+      <SettingsItem stacked title="CORS 允许来源">
+        <input :value="settingsForm.corsOrigins.join(', ')" class="settings-input settings-input-wide" placeholder="逗号分隔" @input="settingsForm.corsOrigins = parseList($event)" />
       </SettingsItem>
     </div>
-    <details class="settings-advanced">
-      <summary>高级</summary>
-      <div class="settings-group">
-        <SettingsItem title="监听地址与端口" desc="WebUI/API 的 Bind Host 和 Port">
-          <div class="settings-field">
-            <span class="settings-field-row">
-              <input
-                v-model="settingsForm.bindHost"
-                class="settings-input"
-                :class="{ 'settings-input-invalid': settingsFieldErrors.bindHost }"
-                aria-label="Bind Host"
-                :disabled="isSettingLocked('bindHost')"
-              />
-              <input
-                v-model.number="settingsForm.port"
-                type="number"
-                class="settings-input settings-input-short"
-                :class="{ 'settings-input-invalid': settingsFieldErrors.port }"
-                aria-label="Port"
-                :disabled="isSettingLocked('port')"
-              />
-            </span>
-            <!-- 容器部署里这两项由环境变量定死。不说明的话,用户改完保存、页面回弹,会以为是 bug -->
-            <span v-if="isSettingLocked('bindHost') || isSettingLocked('port')" class="settings-desc">
-              由环境变量接管（ANIME_RSS_BIND_HOST / ANIME_RSS_PORT），要改请改部署配置后重启容器。
-            </span>
-            <span v-if="settingsFieldErrors.bindHost || settingsFieldErrors.port" class="settings-field-error">
-              {{ settingsFieldErrors.bindHost ?? settingsFieldErrors.port }}
-            </span>
-          </div>
-        </SettingsItem>
-
-        <SettingsItem stacked title="允许的跨域来源（CORS）" desc="多个来源用英文逗号分隔；开隧道时上面的检查会提示要不要加">
-          <input :value="settingsForm.corsOrigins.join(', ')" class="settings-input settings-input-wide" @input="settingsForm.corsOrigins = parseList($event)" />
-        </SettingsItem>
-      </div>
-    </details>
   </SettingsSection>
 
-  <SettingsSection id="mcp" title="MCP">
+  <SettingsSection id="token" title="API 与 MCP">
     <div class="settings-group">
-      <SettingsItem title="公网开放 MCP" desc="关闭时只有本机能连 MCP；经隧道或公网来的 /mcp 请求一律返回 404。">
+      <SettingsItem title="公网开放 MCP">
         <input v-model="settingsForm.exposeMcpPublicly" type="checkbox" class="settings-switch" />
+      </SettingsItem>
+
+      <SettingsItem as="div" stacked title="访问令牌">
+        <div class="flex w-full min-w-0 flex-col gap-2 sm:flex-row">
+          <div class="sec-password-wrap min-w-0 flex-1">
+            <input
+              v-model="settingsForm.token"
+              :type="showApiToken ? 'text' : 'password'"
+              aria-label="API 访问令牌"
+              class="settings-input w-full pr-10 font-mono text-xs"
+              autocomplete="off"
+              autocapitalize="off"
+              autocorrect="off"
+              spellcheck="false"
+            />
+            <button
+              type="button"
+              class="sec-password-toggle"
+              :aria-label="showApiToken ? '隐藏令牌' : '显示令牌'"
+              @click="showApiToken = !showApiToken"
+            >
+              <EyeOff v-if="showApiToken" :size="15" aria-hidden="true" />
+              <Eye v-else :size="15" aria-hidden="true" />
+            </button>
+          </div>
+          <button type="button" class="settings-secondary-button" :disabled="!settingsForm.token.trim()" @click="copyText(settingsForm.token)">复制</button>
+          <button type="button" class="settings-secondary-button" :disabled="rotatingToken" @click="rotateToken()">重置</button>
+        </div>
       </SettingsItem>
     </div>
   </SettingsSection>
 </template>
+
+<style scoped>
+.sec-password-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.sec-password-toggle {
+  position: absolute;
+  right: 5px;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  color: var(--muted);
+  transition: background 150ms ease, color 150ms ease;
+}
+
+.sec-password-toggle:hover {
+  background: var(--panel);
+  color: var(--ink);
+}
+
+.sec-session-list {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.sec-session-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: var(--tint-1);
+}
+
+.sec-session-main {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.sec-session-name {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  font-size: 13.5px;
+  color: var(--ink);
+}
+
+.sec-session-tag {
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--panel);
+  color: var(--ink-secondary);
+  font-size: 11px;
+  font-weight: 550;
+}
+
+.sec-session-meta {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.sec-session-ua {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.sec-danger-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.sec-danger-btn:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--err) 45%, transparent);
+  background: var(--err-soft);
+  color: var(--err);
+}
+</style>

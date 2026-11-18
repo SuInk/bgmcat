@@ -87,7 +87,7 @@ func TestNativeTorrentLocalPeer(t *testing.T) {
 			a.Store.Put("downloads", str(j["gid"]), j)
 			ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
 			defer cancel()
-			if err := a.aria2.Download(ctx, j); err != nil {
+			if err := a.engine.Download(ctx, j); err != nil {
 				t.Fatal(err)
 			}
 			got, err := os.ReadFile(filepath.Join(dir, "fixture.mp4"))

@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<link rel="icon" href="./favicon.png" type="image/png" />
+<title>手机与网页播放 — 猫追番 · Bangumi Cat 使用文档</title>
+<meta name="description" content="在手机 Android 客户端、iOS 与浏览器网页端直连猫追番（Bangumi Cat）电脑端：局域网一键共享、Cloudflare Tunnel 外网穿透与主备自动切换流式点播。" />
+<script src="./theme.js"></script>
+<link rel="stylesheet" href="./site.css" />
+</head>
+<body>
+
+<div data-site-nav></div>
+
+<div class="docs-layout">
+  <aside class="docs-sidebar" data-docs-sidebar></aside>
+
+  <main class="docs-main">
+    <header class="docs-header">
+      <p class="docs-eyebrow">使用文档 · 第三章</p>
+      <h1>手机与网页直接播放</h1>
+      <p>把电脑当成你的私人追番媒体中心：在家走局域网千兆满速直连，出门走 Cloudflare Tunnel 加密穿透，躺在床上拿起手机就能点播本地与 Google Drive 番剧。</p>
+    </header>
+
+    <section id="lan" class="doc-section">
+      <h2>开启局域网手机直连</h2>
+      <p>为了保证默认安全性，桌面版与服务版初始仅监听本机回环地址（<code>127.0.0.1</code>）。当你想用同一 Wi-Fi 或 Tailscale 组网下的手机、平板访问时，只需一键开启局域网监听，<strong>无需重启应用</strong>：</p>
+      <ol>
+        <li>在电脑端打开<strong>「设置 → 安全与访问」</strong>，先确认已设置好<strong>管理员账号与密码</strong>（局域网与远程设备访问必须通过密码验证）。</li>
+        <li>打开<strong>「设置 → 远程与隧道 → 手机与局域网直连」</strong>，开启<strong>「允许局域网设备访问」</strong>开关并点击保存。</li>
+        <li>界面下方会立即列出当前电脑在局域网及虚拟组网（如 <code>192.168.x.x</code>、<code>100.x.y.z</code>）上的<strong>手机连接地址</strong>（桌面版固定端口为 <code>39123</code>，独立服务版默认为 <code>3001</code>），点击即可一键复制。</li>
+      </ol>
+      <div class="callout">
+        <strong>系统防火墙放行提示</strong>
+        <p>首次在 Windows 或 macOS 开启局域网访问时，若系统弹出「是否允许 bgmcat 接受传入网络连接」，请勾选专用/家庭网络并点击<strong>允许</strong>，否则手机将无法连通电脑端口。</p>
+      </div>
+    </section>
+
+    <section id="tunnel" class="doc-section">
+      <h2>Cloudflare Tunnel 穿透</h2>
+      <p>想在通勤路上、学校或公司等非家庭 Wi-Fi 环境下用手机看番，无需公网 IP 也不用折腾路由器端口转发，可直接在电脑端启用 Cloudflare Tunnel：</p>
+      <ul>
+        <li><strong>安装 cloudflared</strong>：在运行猫追番的电脑上安装官方 <code>cloudflared</code> 命令行工具（macOS 可执行 <code>brew install cloudflared</code>，Windows 可执行 <code>winget install Cloudflare.cloudflared</code>）。</li>
+        <li><strong>快速临时隧道（零配置体验）</strong>：在「设置 → 远程与隧道」选择快速模式并启动，即可立即获得一个 <code>https://xxx.trycloudflare.com</code> 公网 HTTPS 地址，适合临时外出测试。</li>
+        <li><strong>固定域名命名隧道（推荐长期使用）</strong>：在 Cloudflare Zero Trust 控制台创建 Tunnel 并绑定你自己的二级域名（如 <code>https://bgm.example.com</code>），将 Tunnel Token 填入猫追番设置。重启电脑后地址永久不变，且具备异常断线自动重连能力。</li>
+      </ul>
+    </section>
+
+    <section id="android" class="doc-section">
+      <h2>Android 客户端使用</h2>
+      <p>猫追番提供体积仅约 <strong>730 KB</strong> 的原生轻量 Android 客户端（<code>bgmcat-android-*-universal.apk</code>），专为移动流式看番与内外网无缝切换设计：</p>
+      <ol>
+        <li>前往 <a href="./download.html#dl-mobile">下载中心</a> 获取最新 <code>.apk</code> 安装到 Android 手机或平板。</li>
+        <li>首次打开进入<strong>「连接你的猫追番服务端」</strong>向导：
+          <ul>
+            <li><strong>主地址（局域网优先）</strong>：填入家里的电脑局域网地址，例如 <code>http://192.168.1.25:39123</code>；</li>
+            <li><strong>备用公网 / 穿透地址（可选）</strong>：填入你的 Cloudflare Tunnel 或 Tailscale 地址，例如 <code>https://bgm.example.com</code>。</li>
+          </ul>
+        </li>
+        <li><strong>毫秒级主备自动故障转移</strong>：每次打开 App 时，客户端会先以 2 秒超时探测局域网主地址——在家连着 Wi-Fi 时自动走局域网内网满速播放；一旦出门不在同一局域网，自动无缝切换到备用穿透地址连接，无需手动改配置。</li>
+        <li><strong>原生观影体验</strong>：点击播放器全屏按钮时，App 自动切换重力感应横屏、隐藏系统状态栏与手势导航条，并保持屏幕常亮不息屏；登录会话 Cookie（30 天有效期）自动持久化在本地安全存储中。</li>
+        <li><strong>随时切换多台服务器</strong>：在登录页底部或「设置 → 远程与隧道 → Android 客户端当前连接」中点击<strong>「切换服务器地址」</strong>，即可在家里桌面端与远程 NAS 之间一键切换。</li>
+      </ol>
+    </section>
+
+    <section id="pwa" class="doc-section">
+      <h2>iOS 与网页端 PWA</h2>
+      <p>对于 iPhone、iPad 或其他电脑浏览器，无需安装额外客户端即可获得全屏原生级体验：</p>
+      <ul>
+        <li><strong>浏览器直接访问</strong>：打开 Safari、Chrome 或 Edge，输入电脑端显示的局域网地址或公网 HTTPS 地址，输入管理员账号密码即可浏览片库、遥控电脑下载或直接点播视频。</li>
+        <li><strong>添加到主屏幕（iOS / iPadOS PWA）</strong>：在 Safari 打开你的猫追番地址 → 点击底部分享按钮 → 选择<strong>「添加到主屏幕」</strong>。从桌面图标启动后将隐藏浏览器地址栏，以独立全屏 App 形态运行，完美适配触控手势与安全区边距。</li>
+      </ul>
+    </section>
+
+    <nav class="doc-pager" aria-label="章节翻页">
+      <a href="./cloud.html">
+        <small>上一章</small>
+        <strong>← 网盘归档</strong>
+      </a>
+      <a href="./deploy.html" style="text-align:right;">
+        <small>下一章</small>
+        <strong>服务端与运维 →</strong>
+      </a>
+    </nav>
+  </main>
+</div>
+
+<div data-site-footer></div>
+<script src="./site.js"></script>
+</body>
+</html>

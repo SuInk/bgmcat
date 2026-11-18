@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"strings"
 	"time"
 )
 
@@ -15,9 +16,31 @@ var driveFolderID = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,200}$`)
 
 func (a *App) cloudSetupRoutes() {
 	a.handle("GET /api/cloud/folders", func(w http.ResponseWriter, r *http.Request) error {
+		provider := firstNonEmpty(strings.TrimSpace(r.URL.Query().Get("provider")), a.activeCloudProvider())
 		parent := r.URL.Query().Get("parent")
 		if parent == "" {
 			parent = "root"
+		}
+		switch provider {
+		case "onedrive":
+			result, err := a.onedriveListFolders(r.Context(), parent, r.URL.Query().Get("pageToken"))
+			if err == nil {
+				ok(w, result)
+			}
+			return err
+		case "webdav":
+			items, err := a.webdavPropfind(r.Context(), a.Settings(), cleanWebDAVRelPath(parent), "1")
+			if err != nil {
+				return err
+			}
+			files := []Obj{}
+			for _, it := range items {
+				if it.IsDir {
+					files = append(files, Obj{"id": it.RelPath, "name": it.Name})
+				}
+			}
+			ok(w, Obj{"files": files, "nextPageToken": ""})
+			return nil
 		}
 		if !driveFolderID.MatchString(parent) {
 			return errors.New("无效的文件夹 ID")
@@ -37,14 +60,43 @@ func (a *App) cloudSetupRoutes() {
 		if err != nil {
 			return err
 		}
+		provider := firstNonEmpty(strings.TrimSpace(str(input["provider"])), a.activeCloudProvider())
 		parent := str(input["parent"])
 		if parent == "" {
 			parent = "root"
 		}
+		folderName := strings.TrimSpace(str(input["name"]))
+		if folderName == "" {
+			folderName = "Bangumi Cat"
+		} else {
+			folderName, err = validateSingleEntryName(folderName)
+			if err != nil {
+				return err
+			}
+		}
+		switch provider {
+		case "onedrive":
+			result, err := a.onedriveCreateFolder(r.Context(), parent, folderName)
+			if err == nil {
+				ok(w, result)
+			}
+			return err
+		case "webdav":
+			parentRel := cleanWebDAVRelPath(parent)
+			targetRel := folderName
+			if parentRel != "" {
+				targetRel = parentRel + "/" + folderName
+			}
+			if err := a.webdavEnsureDir(r.Context(), a.Settings(), targetRel); err != nil {
+				return err
+			}
+			ok(w, Obj{"id": targetRel, "name": folderName})
+			return nil
+		}
 		if !driveFolderID.MatchString(parent) {
 			return errors.New("无效的文件夹 ID")
 		}
-		result, _, err := a.driveJSON(r.Context(), "POST", driveBase+"/files?fields=id,name&supportsAllDrives=true", Obj{"name": "Bangumi Cat", "mimeType": "application/vnd.google-apps.folder", "parents": []string{parent}})
+		result, _, err := a.driveJSON(r.Context(), "POST", driveBase+"/files?fields=id,name&supportsAllDrives=true", Obj{"name": folderName, "mimeType": "application/vnd.google-apps.folder", "parents": []string{parent}})
 		if err == nil {
 			ok(w, result)
 		}
@@ -55,12 +107,30 @@ func (a *App) cloudSetupRoutes() {
 		if err != nil {
 			return err
 		}
+		provider := firstNonEmpty(strings.TrimSpace(str(input["provider"])), a.activeCloudProvider())
 		folder := str(input["folderId"])
+		ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+		defer cancel()
+		switch provider {
+		case "onedrive":
+			if folder == "" {
+				folder = "root"
+			}
+			_, err = a.onedriveListFolders(ctx, folder, "")
+			if err == nil {
+				ok(w, Obj{"verified": true})
+			}
+			return err
+		case "webdav":
+			if err := a.webdavEnsureDir(ctx, a.Settings(), cleanWebDAVRelPath(folder)); err != nil {
+				return err
+			}
+			ok(w, Obj{"verified": true})
+			return nil
+		}
 		if !driveFolderID.MatchString(folder) {
 			return errors.New("请选择保存文件夹")
 		}
-		ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
-		defer cancel()
 		err = a.checkDriveFolder(ctx, folder)
 		if err == nil {
 			ok(w, Obj{"verified": true})

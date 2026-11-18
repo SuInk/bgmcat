@@ -9,5 +9,13 @@ if (readDesktopShellPlatform() === "darwin") {
   document.documentElement.dataset.shell = "mac";
 }
 
-createApp(App).mount("#app");
+async function boot(): Promise<void> {
+  if (import.meta.env.VITE_DEMO_MODE === "true") {
+    const { installDemoMode } = await import("./demo/installDemo");
+    installDemoMode();
+  }
+  createApp(App).mount("#app");
+}
+
+void boot();
 

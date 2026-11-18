@@ -1,0 +1,302 @@
+<script setup lang="ts">
+import { computed, onBeforeUnmount, onMounted, ref } from "vue";
+
+import AppNavIcon from "../layout/AppNavIcon.vue";
+
+export interface AppSelectOption {
+  value: string | number;
+  label: string;
+  disabled?: boolean;
+}
+
+const props = withDefaults(
+  defineProps<{
+    modelValue: string | number | undefined;
+    options: AppSelectOption[];
+    ariaLabel?: string;
+    prefix?: string;
+    disabled?: boolean;
+    align?: "left" | "right";
+    direction?: "down" | "up";
+    size?: "sm" | "md";
+  }>(),
+  {
+    ariaLabel: undefined,
+    prefix: undefined,
+    disabled: false,
+    align: "left",
+    direction: "down",
+    size: "md"
+  }
+);
+
+const emit = defineEmits<{
+  (event: "update:modelValue", value: string | number): void;
+  (event: "change", value: string | number): void;
+}>();
+
+const rootRef = ref<HTMLElement | null>(null);
+const open = ref(false);
+
+const selectedOption = computed(
+  () => props.options.find((opt) => opt.value === props.modelValue) ?? props.options[0] ?? null
+);
+
+function toggle(): void {
+  if (props.disabled) {
+    return;
+  }
+  open.value = !open.value;
+}
+
+function close(): void {
+  open.value = false;
+}
+
+function selectOption(option: AppSelectOption): void {
+  if (option.disabled) {
+    return;
+  }
+  close();
+  if (option.value !== props.modelValue) {
+    emit("update:modelValue", option.value);
+  }
+  emit("change", option.value);
+}
+
+function handleDocumentPointerDown(event: PointerEvent): void {
+  if (!open.value || !rootRef.value) {
+    return;
+  }
+  if (!rootRef.value.contains(event.target as Node)) {
+    close();
+  }
+}
+
+function handleKeydown(event: KeyboardEvent): void {
+  if (!open.value) {
+    return;
+  }
+  if (event.key === "Escape") {
+    event.stopPropagation();
+    close();
+    return;
+  }
+  if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+    event.preventDefault();
+    const enabled = props.options.filter((opt) => !opt.disabled);
+    if (!enabled.length) {
+      return;
+    }
+    const idx = enabled.findIndex((opt) => opt.value === props.modelValue);
+    const delta = event.key === "ArrowDown" ? 1 : -1;
+    const next = enabled[(idx + delta + enabled.length) % enabled.length];
+    if (next) {
+      emit("update:modelValue", next.value);
+      emit("change", next.value);
+    }
+  }
+}
+
+onMounted(() => {
+  document.addEventListener("pointerdown", handleDocumentPointerDown);
+});
+
+onBeforeUnmount(() => {
+  document.removeEventListener("pointerdown", handleDocumentPointerDown);
+});
+</script>
+
+<template>
+  <div ref="rootRef" class="app-select" :class="[`is-${size}`, { 'is-open': open, 'is-disabled': disabled }]" @keydown="handleKeydown">
+    <button
+      type="button"
+      class="app-select-trigger"
+      :disabled="disabled"
+      :aria-label="ariaLabel"
+      aria-haspopup="listbox"
+      :aria-expanded="open"
+      @click="toggle"
+    >
+      <span v-if="prefix" class="app-select-prefix">{{ prefix }}</span>
+      <span class="app-select-value">{{ selectedOption?.label ?? "" }}</span>
+      <svg class="app-select-caret" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
+        <path d="M3 4.5L6 7.5L9 4.5" stroke-linecap="round" stroke-linejoin="round" />
+      </svg>
+    </button>
+
+    <div
+      v-if="open"
+      class="app-select-menu"
+      :class="[align === 'right' ? 'is-right' : 'is-left', direction === 'up' ? 'is-up' : 'is-down']"
+      role="listbox"
+      :aria-label="ariaLabel"
+    >
+      <button
+        v-for="opt in options"
+        :key="String(opt.value)"
+        type="button"
+        role="option"
+        class="app-select-option"
+        :class="{ 'is-active': opt.value === modelValue }"
+        :aria-selected="opt.value === modelValue"
+        :disabled="opt.disabled"
+        @click="selectOption(opt)"
+      >
+        <span class="app-select-option-check" aria-hidden="true">
+          <AppNavIcon v-if="opt.value === modelValue" name="check" class="size-3.5" />
+        </span>
+        <span class="min-w-0 flex-1 truncate text-left">{{ opt.label }}</span>
+      </button>
+    </div>
+  </div>
+</template>
+
+<style scoped>
+.app-select {
+  position: relative;
+  display: inline-flex;
+  flex-shrink: 0;
+}
+
+.app-select-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 2.25rem;
+  padding: 0 11px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--line);
+  background: var(--card);
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: border-color 150ms ease, background 150ms ease, box-shadow 150ms ease;
+}
+
+.app-select.is-sm .app-select-trigger {
+  min-height: 2.125rem;
+  padding: 0 10px;
+  border-radius: 8px;
+  font-size: 12px;
+}
+
+.app-select-trigger:hover:not(:disabled) {
+  border-color: var(--accent-line);
+  background: var(--tint-1);
+}
+
+.app-select.is-open .app-select-trigger,
+.app-select-trigger:focus-visible {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+  outline: none;
+}
+
+.app-select-trigger:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.app-select-prefix {
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.app-select-value {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.app-select-caret {
+  width: 12px;
+  height: 12px;
+  flex-shrink: 0;
+  color: var(--muted);
+  transition: transform 150ms ease;
+}
+
+.app-select.is-open .app-select-caret {
+  transform: rotate(180deg);
+}
+
+.app-select-menu {
+  position: absolute;
+  z-index: 120;
+  display: grid;
+  gap: 2px;
+  min-width: max(100%, 9.5rem);
+  max-height: 16rem;
+  overflow-y: auto;
+  padding: 4px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: var(--card);
+  box-shadow: var(--strong-shadow);
+}
+
+.app-select-menu.is-left {
+  left: 0;
+}
+
+.app-select-menu.is-right {
+  right: 0;
+}
+
+.app-select-menu.is-down {
+  top: calc(100% + 6px);
+}
+
+.app-select-menu.is-up {
+  bottom: calc(100% + 6px);
+}
+
+.app-select-option {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  min-height: 2.25rem;
+  padding: 6px 10px 6px 8px;
+  border-radius: 8px;
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+
+.app-select-option:hover:not(:disabled) {
+  background: var(--panel);
+}
+
+.app-select-option.is-active {
+  background: var(--accent-soft);
+  color: var(--accent-vivid);
+  font-weight: 600;
+}
+
+.app-select-option:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+
+.app-select-option-check {
+  display: inline-grid;
+  place-items: center;
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+}
+
+@media (pointer: coarse) {
+  .app-select-trigger,
+  .app-select-option {
+    min-height: 2.5rem;
+  }
+}
+</style>

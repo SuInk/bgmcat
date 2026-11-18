@@ -35,8 +35,20 @@ export function isPlaceholderDownloadTitle(value: string): boolean {
   );
 }
 
+function decodeTitleEntities(value: string): string {
+  if (!value.includes("&")) {
+    return value;
+  }
+  return value
+    .replace(/&amp;/gi, "&")
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;|&apos;/gi, "'")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">");
+}
+
 export function downloadDisplayTitle(download: DownloadJob, feedItemById: Map<number, FeedItem>): string {
-  const directTitle = download.feedItemTitle?.trim() ?? "";
+  const directTitle = decodeTitleEntities(download.feedItemTitle?.trim() ?? "");
   if (directTitle && !isPlaceholderDownloadTitle(directTitle)) {
     if (directTitle === download.feedItemSourceUrl || directTitle === download.feedItemLink) {
       return prettifyDownloadFallback(directTitle);
@@ -49,7 +61,7 @@ export function downloadDisplayTitle(download: DownloadJob, feedItemById: Map<nu
     if (feedItem.title === feedItem.sourceUrl || feedItem.title === feedItem.link) {
       return prettifyDownloadFallback(feedItem.title);
     }
-    return feedItem.title;
+    return decodeTitleEntities(feedItem.title);
   }
 
   const fallback =
@@ -60,16 +72,26 @@ export function downloadDisplayTitle(download: DownloadJob, feedItemById: Map<nu
 
 export function downloadDetailSearchKeyword(download: DownloadJob, feedItemById: Map<number, FeedItem>): string {
   const title = downloadDisplayTitle(download, feedItemById);
-  const cleaned = title
-    .replace(/\.(?:mkv|mp4|avi|mov|webm|flv|ass|srt|torrent)$/i, " ")
-    .replace(/^\s*(?:\[[^\]]+]|【[^】]+】|\([^)]+\))\s*/g, " ")
+  const withoutExt = title.replace(/\.(?:mkv|mp4|avi|mov|webm|flv|ass|srt|torrent)$/i, " ");
+  let debracketed = withoutExt
+    .replace(/\[[^\]]+\]/g, " ")
+    .replace(/【[^】]+】/g, " ")
+    .replace(/\([^)]+\)/g, " ");
+  if (!/[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}A-Za-z]/u.test(debracketed)) {
+    const secondBracket = withoutExt.match(/^\s*(?:\[[^\]]+\]|【[^】]+】)\s*(?:\[([^\]]+)\]|【([^】]+)】)/);
+    if (secondBracket) {
+      debracketed = secondBracket[1] ?? secondBracket[2] ?? debracketed;
+    }
+  }
+  const cleaned = debracketed
     .replace(/\s+-\s*(?:第\s*)?\d{1,3}(?:話|话|集)?(?:v\d+)?(?:\s|$).*$/i, " ")
+    .replace(/(?:第\s*)\d{1,3}\s*(?:話|话|集).*$/i, " ")
     .replace(/\bS\d{1,2}(?:\s*E\d{1,3})?\b.*$/i, " ")
     .replace(/\bSeason\s*\d+\b.*$/i, " ")
     .replace(/第\s*\d+\s*季.*$/i, " ")
     .replace(/\b(?:EP?|Episode)\s*\d{1,3}\b.*$/i, " ")
-    .replace(/\b(?:1080p|720p|2160p|4k|hevc|avc|x26[45]|aac|flac|web-?rip|baha|gb|big5|chs|cht)\b/gi, " ")
-    .replace(/(?:日英双语|多国字幕|内嵌|外挂|字幕组|简日|繁日|简体|繁体|合集|先行|正式)/g, " ")
+    .replace(/\b(?:1080p|720p|2160p|4k|hevc|avc|x26[45]|aac|flac|web-?rip|web-?dl|baha|gb|big5|chs|cht)\b/gi, " ")
+    .replace(/(?:日英双语|多国字幕|简繁内封|简日内嵌|繁日内嵌|内嵌|外挂|字幕组|简日|繁日|简体|繁体|合集|先行|正式)/g, " ")
     .replace(/\s+/g, " ")
     .trim();
 

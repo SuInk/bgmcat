@@ -9,7 +9,8 @@ import {
   readPlaybackHistory,
   RESUME_END_GAP_SECONDS,
   RESUME_MIN_SECONDS,
-  writePlaybackHistory
+  writePlaybackHistory,
+  type PlaybackHistoryMeta
 } from "../../lib/playbackHistory";
 
 export interface PlayerEpisodeOption {
@@ -29,6 +30,17 @@ const props = defineProps<{
   /** 字幕轨列表；ass/ssa 走原始字节直出，其余走 WebVTT */
   subtitleTracks?: PlaybackSubtitleTrack[];
   subtitleUrlFor?: (track: PlaybackSubtitleTrack) => string;
+  /** 自定义 HLS 转码进度加载器（公开分享页不持有管理员 gid 时传入） */
+  progressLoader?: () => Promise<{
+    bufferedSeconds?: number | null;
+    producedSeconds?: number | null;
+    finished: boolean;
+    error?: string | null;
+  }>;
+  /** 禁止原生右键菜单与下载控件（仅允许在线播放的分享页启用） */
+  disableDownload?: boolean;
+  /** 写入观看历史时的展示快照（番名、集数、封面、本地/云盘文件来源等） */
+  historyMeta?: PlaybackHistoryMeta;
 }>();
 
 // 选集不在播放器里了：播放页右侧（窄屏在下方）有 B 站式的选集格子
@@ -36,7 +48,8 @@ const emit = defineEmits<{
   (event: "ended"): void;
 }>();
 
-const PLAYBACK_RATE_KEY = "anime-rss-playback-rate";
+const PLAYBACK_RATE_KEY = "bgmcat.playback-rate";
+const LEGACY_PLAYBACK_RATE_KEY = "anime-rss-playback-rate";
 const SAVE_INTERVAL_SECONDS = 5;
 const PLAYBACK_RATES = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2];
 
@@ -68,6 +81,12 @@ let subtitleRequest = 0;
 let lastSavedTime = 0;
 let restoredForKey: string | null = null;
 let progressTimer: number | null = null;
+let activeSession: {
+  key: string;
+  gid: string;
+  expectedDuration: number | null | undefined;
+  meta: PlaybackHistoryMeta | undefined;
+} | null = null;
 
 const subtitleOptions = computed(() => props.subtitleTracks ?? []);
 
@@ -87,30 +106,85 @@ function isAssTrack(track: PlaybackSubtitleTrack): boolean {
   return codec === "ass" || codec === "ssa";
 }
 
-/* ---------- 进度记忆（与播放器实现无关，整段从 DPlayerPane 搬过来） ---------- */
+/* ---------- 进度与观看历史记忆 ---------- */
 
-function clearPlaybackProgress(): void {
-  if (!props.playbackKey) {
+function mergeHistoryMeta(
+  existing: ReturnType<typeof readPlaybackHistory>[string] | undefined,
+  meta: PlaybackHistoryMeta | undefined
+): PlaybackHistoryMeta {
+  return {
+    ...(existing?.kind ? { kind: existing.kind } : {}),
+    ...(existing?.title ? { title: existing.title } : {}),
+    ...(existing?.episodeLabel ? { episodeLabel: existing.episodeLabel } : {}),
+    ...(existing?.subgroup ? { subgroup: existing.subgroup } : {}),
+    ...(existing?.resolution ? { resolution: existing.resolution } : {}),
+    ...(existing?.imageUrl ? { imageUrl: existing.imageUrl } : {}),
+    ...(existing?.animeId ? { animeId: existing.animeId } : {}),
+    ...(existing?.folderLabel ? { folderLabel: existing.folderLabel } : {}),
+    ...(existing?.fileSource ? { fileSource: existing.fileSource } : {}),
+    ...(existing?.fileEntry ? { fileEntry: existing.fileEntry } : {}),
+    ...(meta
+      ? Object.fromEntries(Object.entries(meta).filter(([, v]) => v !== undefined && v !== null && v !== ""))
+      : {})
+  };
+}
+
+function clearPlaybackProgress(targetKey = activeSession?.key ?? props.playbackKey): void {
+  if (!targetKey) {
     return;
   }
   const history = readPlaybackHistory();
-  if (!(props.playbackKey in history)) {
+  if (!(targetKey in history)) {
     return;
   }
-  delete history[props.playbackKey];
+  delete history[targetKey];
   writePlaybackHistory(history);
 }
 
-function playbackDuration(): number {
-  const expected = props.expectedDurationSeconds;
+function playbackDuration(expectedOverride?: number | null): number {
+  const expected = expectedOverride !== undefined ? expectedOverride : props.expectedDurationSeconds;
   if (typeof expected === "number" && Number.isFinite(expected) && expected > 0) {
     return expected;
   }
   return player?.video.duration ?? 0;
 }
 
+function markPlaybackCompleted(forceWrite = false): void {
+  const session = activeSession;
+  const key = session?.key ?? props.playbackKey;
+  if (!key) {
+    return;
+  }
+  if (key.startsWith("share:")) {
+    clearPlaybackProgress(key);
+    return;
+  }
+  const duration = playbackDuration(session?.expectedDuration);
+  if (!Number.isFinite(duration) || duration <= 0) {
+    return;
+  }
+  const history = readPlaybackHistory();
+  const existing = history[key];
+  if (existing?.completed && !forceWrite) {
+    return;
+  }
+  const gid = session?.gid ?? props.gid;
+  const meta = mergeHistoryMeta(existing, session?.meta ?? props.historyMeta);
+  history[key] = {
+    ...meta,
+    currentTime: duration,
+    duration,
+    updatedAt: Date.now(),
+    ...(gid ? { gid } : {}),
+    completed: true
+  };
+  writePlaybackHistory(history);
+}
+
 function savePlaybackProgress(force = false): void {
-  if (!player || !props.playbackKey) {
+  const session = activeSession;
+  const key = session?.key ?? props.playbackKey;
+  if (!player || !key) {
     return;
   }
 
@@ -121,23 +195,40 @@ function savePlaybackProgress(force = false): void {
   }
 
   const currentTime = player.video.currentTime ?? 0;
-  const duration = playbackDuration();
-  if (!Number.isFinite(currentTime) || currentTime <= 0 || !Number.isFinite(duration) || duration <= 0) {
+  const duration = playbackDuration(session?.expectedDuration);
+  if (!Number.isFinite(currentTime) || currentTime < 1 || !Number.isFinite(duration) || duration <= 0) {
     return;
   }
 
   if (duration - currentTime <= RESUME_END_GAP_SECONDS) {
-    clearPlaybackProgress();
+    markPlaybackCompleted(false);
     lastSavedTime = currentTime;
     return;
   }
 
-  if (!force && Math.abs(currentTime - lastSavedTime) < SAVE_INTERVAL_SECONDS) {
+  const history = readPlaybackHistory();
+  const existing = history[key];
+
+  // 已看完的剧集若只是点开瞄了几秒（未满续播阈值），保留「已看完」状态，不误退回未看完
+  if (existing?.completed && currentTime < RESUME_MIN_SECONDS) {
     return;
   }
 
-  const history = readPlaybackHistory();
-  history[props.playbackKey] = { currentTime, duration, updatedAt: Date.now(), gid: props.gid };
+  const isFirstRecord = !existing && lastSavedTime === 0;
+  if (!force && !isFirstRecord && Math.abs(currentTime - lastSavedTime) < SAVE_INTERVAL_SECONDS) {
+    return;
+  }
+
+  const gid = session?.gid ?? props.gid;
+  const meta = mergeHistoryMeta(existing, session?.meta ?? props.historyMeta);
+  history[key] = {
+    ...meta,
+    currentTime,
+    duration,
+    updatedAt: Date.now(),
+    ...(gid ? { gid } : {}),
+    completed: false
+  };
   writePlaybackHistory(history);
   lastSavedTime = currentTime;
 }
@@ -151,7 +242,10 @@ function offerResume(): void {
 
   const record = readPlaybackHistory()[props.playbackKey];
   const duration = playbackDuration();
-  if (!record || !Number.isFinite(duration) || duration <= 0) {
+  if (!record || record.completed || !Number.isFinite(duration) || duration <= 0) {
+    return;
+  }
+  if (duration - record.currentTime <= RESUME_END_GAP_SECONDS) {
     return;
   }
 
@@ -197,7 +291,7 @@ function readAccentVivid(): string {
 }
 
 function readStoredRate(): number {
-  const raw = Number(window.localStorage.getItem(PLAYBACK_RATE_KEY) ?? "");
+  const raw = Number(window.localStorage.getItem(PLAYBACK_RATE_KEY) ?? window.localStorage.getItem(LEGACY_PLAYBACK_RATE_KEY) ?? "");
   return PLAYBACK_RATES.includes(raw) ? raw : 1;
 }
 
@@ -235,7 +329,7 @@ async function applySubtitleTrack(track: PlaybackSubtitleTrack | null): Promise<
     try {
       const [{ default: ASS }, content] = await Promise.all([
         import("assjs"),
-        fetch(url).then((response) => {
+        fetch(url, { credentials: "same-origin" }).then((response) => {
           if (!response.ok) {
             throw new Error(`HTTP ${response.status}`);
           }
@@ -305,12 +399,18 @@ function stopProgressPolling(): void {
 }
 
 async function pollProgressOnce(): Promise<void> {
-  if (!props.hls || !props.gid) {
+  if (!props.hls || (!props.progressLoader && !props.gid)) {
     return;
   }
   try {
-    const progress = await getDownloadPlaybackProgress(props.gid);
-    bufferedSeconds.value = Number.isFinite(progress.bufferedSeconds) ? progress.bufferedSeconds : null;
+    const progress = props.progressLoader
+      ? await props.progressLoader()
+      : await getDownloadPlaybackProgress(props.gid);
+    const secs =
+      progress.bufferedSeconds ??
+      ("producedSeconds" in progress ? progress.producedSeconds : null) ??
+      null;
+    bufferedSeconds.value = typeof secs === "number" && Number.isFinite(secs) ? secs : null;
     if (progress.error) {
       streamError.value = `转码失败：${progress.error}`;
     }
@@ -342,6 +442,7 @@ function destroyPlayer(): void {
   hlsInstance = null;
   player?.destroy(false);
   player = null;
+  activeSession = null;
 }
 
 async function mountPlayer(): Promise<void> {
@@ -349,16 +450,26 @@ async function mountPlayer(): Promise<void> {
     return;
   }
 
-  const { default: Artplayer } = await import("artplayer");
-  const Hls = props.hls ? (await import("hls.js")).default : null;
-
   savePlaybackProgress(true);
   destroyPlayer();
+
+  const { default: Artplayer } = await import("artplayer");
+  const Hls = props.hls ? (await import("hls.js")).default : null;
+  if (!containerRef.value || !props.streamUrl) {
+    return;
+  }
+
   lastSavedTime = 0;
   restoredForKey = null;
   resumePrompt.value = null;
   streamError.value = null;
   waitingForStream.value = Boolean(props.hls);
+  activeSession = {
+    key: props.playbackKey,
+    gid: props.gid,
+    expectedDuration: props.expectedDurationSeconds,
+    meta: props.historyMeta
+  };
 
   const storedRate = readStoredRate();
 
@@ -379,8 +490,12 @@ async function mountPlayer(): Promise<void> {
     lang: "zh-cn",
     // ArtPlayer 只吃字符串颜色，读不了 CSS 变量，所以在这里取一次当前的点缀色
     theme: readAccentVivid(),
+    icons: {
+      state: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M9.2 7.25c0-.86.94-1.39 1.68-.94l7.65 4.75c.7.43.7 1.45 0 1.88l-7.65 4.75c-.74.45-1.68-.08-1.68-.94V7.25Z"/></svg>`
+    },
     volume: 1,
     playsInline: true,
+    ...(props.disableDownload ? { contextmenu: [] } : {}),
     moreVideoAttr: { playsInline: true },
     customType: props.hls
       ? {
@@ -394,8 +509,11 @@ async function mountPlayer(): Promise<void> {
               return;
             }
             hlsInstance = new Hls({
-              // 播放流带 token：hls.js 自己发的 XHR 不走 api.ts 的封装，得手动补上
-              xhrSetup(xhr) {
+              xhrSetup(xhr, requestUrl) {
+                if (requestUrl.includes("/api/public/shares/")) {
+                  xhr.withCredentials = true;
+                  return;
+                }
                 const token = readApiToken();
                 if (token) {
                   xhr.setRequestHeader("Authorization", `Bearer ${token}`);
@@ -419,6 +537,10 @@ async function mountPlayer(): Promise<void> {
       : {}
   });
 
+  if (props.disableDownload && player?.video) {
+    player.video.setAttribute("controlslist", "nodownload");
+  }
+
   player.on("video:loadedmetadata", () => {
     waitingForStream.value = false;
     if (player) {
@@ -437,7 +559,7 @@ async function mountPlayer(): Promise<void> {
     }
   });
   player.on("video:ended", () => {
-    clearPlaybackProgress();
+    markPlaybackCompleted(true);
     emit("ended");
   });
   // 浏览器 / 外壳拒绝真全屏时（iPhone Safari、权限被拦），退到铺满窗口，别让按钮点了没反应
@@ -525,6 +647,34 @@ watch(
 );
 
 watch(
+  () => props.historyMeta,
+  (meta) => {
+    if (activeSession && activeSession.key === props.playbackKey) {
+      activeSession.meta = meta;
+    }
+    if (!meta || !props.playbackKey || props.playbackKey.startsWith("share:")) {
+      return;
+    }
+    const history = readPlaybackHistory();
+    const existing = history[props.playbackKey];
+    if (!existing) {
+      return;
+    }
+    const merged = mergeHistoryMeta(existing, meta);
+    const changed = (Object.keys(merged) as Array<keyof PlaybackHistoryMeta>).some(
+      (k) => merged[k] !== existing[k]
+    );
+    if (changed) {
+      history[props.playbackKey] = {
+        ...existing,
+        ...merged
+      };
+      writePlaybackHistory(history);
+    }
+  }
+);
+
+watch(
   () => props.subtitleTracks,
   (tracks) => {
     if (!player) {
@@ -553,7 +703,10 @@ onBeforeUnmount(() => {
 <template>
   <div class="grid min-h-0 gap-2">
     <!-- 播放器本体：16:9 黑底、无边框，像视频站那样让画面做主角 -->
-    <div class="relative aspect-video w-full overflow-hidden rounded-xl bg-black">
+    <div
+      class="@container relative aspect-video w-full overflow-hidden rounded-xl bg-black"
+      @contextmenu="disableDownload && $event.preventDefault()"
+    >
       <div ref="containerRef" class="art-host size-full"></div>
 
       <!-- 转码是边转边播的，黑屏期至少要让用户知道进度在动 -->
@@ -594,9 +747,55 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
+.art-host:not(:has(.art-fullscreen-web)) {
+  position: relative;
+  z-index: 1;
+  isolation: isolate;
+}
+
 .art-host :deep(.art-video-player) {
+  --art-state-size: 44px;
+  --art-state-opacity: 1;
+  --art-control-height: 38px;
+  --art-control-icon-size: 30px;
+  --art-control-icon-scale: 1;
+  --art-bottom-height: 76px;
+  --art-bottom-offset: 12px;
   height: 100%;
   background: #000;
+}
+
+.art-host :deep(.art-mask .art-state) {
+  width: var(--art-state-size);
+  height: var(--art-state-size);
+  border-radius: 999px;
+  border: 1px solid rgb(255 255 255 / 0.18);
+  background: rgb(10 12 18 / 0.62);
+  color: #fff;
+  backdrop-filter: blur(8px);
+  box-shadow: 0 6px 20px rgb(0 0 0 / 0.36);
+  transform: scale(0.92);
+  transition:
+    opacity 0.16s ease,
+    transform 0.16s ease,
+    background-color 0.16s ease,
+    border-color 0.16s ease;
+}
+
+.art-host :deep(.art-video-player.art-mask-show .art-state) {
+  opacity: 1;
+  transform: scale(1);
+}
+
+.art-host :deep(.art-mask .art-state:hover) {
+  background: rgb(10 12 18 / 0.78);
+  border-color: rgb(255 255 255 / 0.32);
+  transform: scale(1.05);
+}
+
+.art-host :deep(.art-mask .art-state svg) {
+  width: 18px;
+  height: 18px;
 }
 
 /*
@@ -606,7 +805,7 @@ onBeforeUnmount(() => {
  */
 .resume-toast {
   position: absolute;
-  bottom: 64px;
+  bottom: 54px;
   left: 14px;
   z-index: 30;
   display: flex;
@@ -627,6 +826,24 @@ onBeforeUnmount(() => {
 .resume-toast-leave-to {
   opacity: 0;
   transform: translateY(6px);
+}
+
+@container (max-width: 520px) {
+  .art-host :deep(.art-video-player) {
+    --art-state-size: 38px;
+    --art-control-height: 34px;
+    --art-control-icon-size: 26px;
+    --art-bottom-height: 64px;
+  }
+
+  .art-host :deep(.art-mask .art-state svg) {
+    width: 15px;
+    height: 15px;
+  }
+
+  .resume-toast {
+    bottom: 48px;
+  }
 }
 
 .art-host :deep(.ASS-box) {

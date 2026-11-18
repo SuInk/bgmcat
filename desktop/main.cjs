@@ -83,7 +83,7 @@ async function start() {
     webPreferences: { preload: join(__dirname, 'preload.cjs'), contextIsolation: true,
       sandbox: true, nodeIntegration: false, webSecurity: true, partition: 'persist:bgmcat-desktop' }
   });
-  window.webContents.setUserAgent(window.webContents.getUserAgent() + ' AnimeRSSShell/1');
+  window.webContents.setUserAgent(window.webContents.getUserAgent() + ' BgmcatShell/1');
   const session = window.webContents.session;
   // Deny everything except HTML fullscreen: the player's fullscreen button goes
   // through requestFullscreen(), which Electron gates behind the 'fullscreen'
@@ -114,17 +114,6 @@ async function start() {
   ]));
   await window.loadURL(origin);
   window.show();
-  // On a fresh machine, explain the optional download engine instead of silently failing.
-  const response = await fetch(`${origin}/api/system/status`, { headers: { Authorization: `Bearer ${token}` } });
-  const status = await response.json();
-  if (status.data && !status.data.aria2Online && status.data.downloadClient === 'native') {
-    void dialog.showMessageBox(window, { type: 'info', title: '下载引擎尚未就绪',
-      message: '浏览和订阅可以使用；HTTP / BT 下载需要 aria2。',
-      detail: '桌面包已包含 Go 服务和界面。请按安装说明安装 aria2，或在设置中配置已有的 qBittorrent，然后重新启动应用。',
-      buttons: ['稍后配置', '查看说明'], defaultId: 0 }).then(({ response }) => {
-      if (response === 1) openExternal('https://github.com/SuInk/bgmcat/blob/main/docs/desktop.md');
-    });
-  }
 }
 
 async function stopBackend() {

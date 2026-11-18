@@ -1,0 +1,61 @@
+#!/usr/bin/env bash
+# Copyright (c) 2025-now SuInk.
+# Licensed under the Limited Redistribution License in the repository root.
+
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$ROOT"
+
+failed=false
+
+report_matches() {
+	local label="$1"
+	local pattern="$2"
+	local allow="$3"
+	shift 3
+	local matches
+	matches="$(git grep -nI -E "$pattern" -- "$@" 2>/dev/null || true)"
+	if [[ -n "$matches" && -n "$allow" ]]; then
+		matches="$(printf '%s\n' "$matches" | grep -vE "$allow" || true)"
+	fi
+	if [[ -n "$matches" ]]; then
+		printf 'public-repo audit: %s\n%s\n' "$label" "$matches" >&2
+		failed=true
+	fi
+}
+
+report_matches \
+	"absolute user home path found" \
+	'(/Users/[A-Za-z0-9._-]+|/home/[A-Za-z0-9._-]+|[A-Za-z]:\\Users\\[A-Za-z0-9._-]+)' \
+	'(/home/linuxbrew/\.linuxbrew|/Users/demo(/|$))' \
+	. ':!scripts/check-public-repo.sh'
+
+report_matches \
+	"credential-like value found" \
+	'(sk-[A-Za-z0-9_-]{20,}|AKIA[0-9A-Z]{16}|AIza[0-9A-Za-z_-]{30,}|gh[pousr]_[A-Za-z0-9]{20,}|-----BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY-----|https?://[^/@[:space:]]+:[^/@[:space:]]+@)' \
+	'://(user|USER|username|admin):(pass|password|secret)@' \
+	. ':!scripts/check-public-repo.sh'
+
+report_matches \
+	"legacy AGPL license reference found" \
+	'(AGPL-3\.0|GNU Affero General Public License)' \
+	'' \
+	. ':!scripts/check-public-repo.sh'
+
+if ! head -n 1 LICENSE | grep -q 'Limited Redistribution License (SuInk)'; then
+	echo "public-repo audit: LICENSE header must be Limited Redistribution License (SuInk)" >&2
+	failed=true
+fi
+
+tracked_runtime_files="$(git ls-files | grep -E '(^|/)(runtime\.env|\.env|.*\.(db|sqlite|sqlite3)(-(shm|wal))?|.*\.log|.*\.keystore|.*\.jks)$' | grep -vE '(^|/)\.env\.example$' || true)"
+if [[ -n "$tracked_runtime_files" ]]; then
+	printf 'public-repo audit: tracked runtime or credential files found\n%s\n' "$tracked_runtime_files" >&2
+	failed=true
+fi
+
+if [[ "$failed" == "true" ]]; then
+	exit 1
+fi
+
+echo "public-repo audit passed"

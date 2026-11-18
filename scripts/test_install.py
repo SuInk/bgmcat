@@ -33,15 +33,11 @@ class InstallerTests(unittest.TestCase):
             entry.size = len(body)
             entry.mode = 0o755
             archive.addfile(entry, io.BytesIO(body))
-            helper = b'#!/bin/sh\necho dependency-helper-ran\n'
-            entry = tarfile.TarInfo(name + '/scripts/install-aria2.sh')
-            entry.size = len(helper)
-            archive.addfile(entry, io.BytesIO(helper))
         self.checksum = self.root / 'SHA256SUMS'
         self.checksum.write_text(hashlib.sha256(self.archive.read_bytes()).hexdigest() + '  ' + self.archive.name + '\n')
 
     def install(self):
-        return subprocess.run(['sh', str(SCRIPT), '--skip-aria2', '--local-dir', str(self.root), '--dir', str(self.dest)], capture_output=True, text=True)
+        return subprocess.run(['sh', str(SCRIPT), '--local-dir', str(self.root), '--dir', str(self.dest)], capture_output=True, text=True)
 
     def test_install_preserves_data_and_previous_binary(self):
         result = self.install()
@@ -54,7 +50,6 @@ class InstallerTests(unittest.TestCase):
         result = subprocess.run(['sh', '-s', '--', '--local-dir', str(self.root), '--dir', str(self.dest), '--start'],
                                 input=SCRIPT.read_text(), cwd=self.root, capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn('dependency-helper-ran', result.stdout)
         self.assertIn('Starting bgmcat', result.stdout)
         self.assertEqual(result.stdout.count('0.2.0'), 2)
 

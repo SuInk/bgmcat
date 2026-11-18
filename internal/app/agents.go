@@ -37,7 +37,8 @@ func (a *App) agentRoutes() {
 		for _, host := range []string{"diana", "codex", "claude", "cursor", "openclaw", "cherry-studio"} {
 			path, pathErr := a.agentPath(host)
 			data, e := os.ReadFile(path)
-			installed := strings.Contains(string(data), "anime-rss-go")
+			textData := string(data)
+			installed := strings.Contains(textData, `"bgmcat"`) || strings.Contains(textData, "[mcp_servers.bgmcat]") || strings.Contains(textData, "anime-rss-go")
 			name := host
 			details := ""
 			detected := e == nil
@@ -50,7 +51,10 @@ func (a *App) agentRoutes() {
 				}
 				var config Obj
 				if json.Unmarshal(data, &config) == nil {
-					_, installed = object(config["mcpServers"])["anime-rss-go"]
+					servers := object(config["mcpServers"])
+					_, okCur := servers["bgmcat"]
+					_, okLegacy := servers["anime-rss-go"]
+					installed = okCur || okLegacy
 				} else {
 					installed = false
 				}
@@ -76,7 +80,7 @@ func (a *App) agentRoutes() {
 				return e
 			}
 			if len(data) > 0 {
-				if e = os.WriteFile(path+".anime-rss-backup", data, 0600); e != nil {
+				if e = os.WriteFile(path+".bgmcat-backup", data, 0600); e != nil {
 					return e
 				}
 			}
@@ -87,17 +91,22 @@ func (a *App) agentRoutes() {
 			var next []byte
 			if host == "codex" {
 				text := string(data)
-				begin := "# anime-rss-go managed begin"
-				end := "# anime-rss-go managed end"
-				if pos := strings.Index(text, begin); pos >= 0 {
-					endPos := strings.Index(text[pos:], end)
-					if endPos < 0 {
-						return errors.New("已有配置区块不完整")
+				for _, markers := range [][2]string{
+					{"# bgmcat managed begin", "# bgmcat managed end"},
+					{"# anime-rss-go managed begin", "# anime-rss-go managed end"},
+				} {
+					if pos := strings.Index(text, markers[0]); pos >= 0 {
+						endPos := strings.Index(text[pos:], markers[1])
+						if endPos < 0 {
+							return errors.New("已有配置区块不完整")
+						}
+						text = text[:pos] + text[pos+endPos+len(markers[1]):]
 					}
-					text = text[:pos] + text[pos+endPos+len(end):]
 				}
 				if install {
-					text += fmt.Sprintf("\n%s\n[mcp_servers.anime-rss-go]\nurl = %q\nhttp_headers = { Authorization = %q }\n%s\n", begin, a.cfg.PublicURL+"/mcp", "Bearer "+str(a.Settings()["token"]), end)
+					begin := "# bgmcat managed begin"
+					end := "# bgmcat managed end"
+					text += fmt.Sprintf("\n%s\n[mcp_servers.bgmcat]\nurl = %q\nhttp_headers = { Authorization = %q }\n%s\n", begin, a.cfg.PublicURL+"/mcp", "Bearer "+str(a.Settings()["token"]), end)
 				}
 				next = []byte(text)
 			} else {
@@ -113,18 +122,19 @@ func (a *App) agentRoutes() {
 					}
 				}
 				servers := object(config["mcpServers"])
+				delete(servers, "anime-rss-go")
 				if install {
 					if host == "diana" {
 						entry, err := a.dianaServerConfig()
 						if err != nil {
 							return err
 						}
-						servers["anime-rss-go"] = entry
+						servers["bgmcat"] = entry
 					} else {
-						servers["anime-rss-go"] = Obj{"type": "http", "url": a.cfg.PublicURL + "/mcp", "headers": Obj{"Authorization": "Bearer " + str(a.Settings()["token"])}}
+						servers["bgmcat"] = Obj{"type": "http", "url": a.cfg.PublicURL + "/mcp", "headers": Obj{"Authorization": "Bearer " + str(a.Settings()["token"])}}
 					}
 				} else {
-					delete(servers, "anime-rss-go")
+					delete(servers, "bgmcat")
 				}
 				config["mcpServers"] = servers
 				next, e = json.MarshalIndent(config, "", "  ")
@@ -154,16 +164,22 @@ func (a *App) agentRoutes() {
 			} else if json.Unmarshal(raw, &config) != nil {
 				issues = append(issues, "MCP 配置不是有效 JSON")
 			}
-			entry := object(object(config["mcpServers"])["anime-rss-go"])
+			servers := object(config["mcpServers"])
+			entry := object(servers["bgmcat"])
+			if len(entry) == 0 {
+				entry = object(servers["anime-rss-go"])
+			}
 			env := object(entry["env"])
-			tokenConfigured := str(env["ANIME_RSS_MCP_TOKEN"]) != ""
+			cfgToken := firstNonEmpty(str(env["BGMCAT_MCP_TOKEN"]), str(env["ANIME_RSS_MCP_TOKEN"]))
+			cfgURL := firstNonEmpty(str(env["BGMCAT_MCP_URL"]), str(env["ANIME_RSS_MCP_URL"]))
+			tokenConfigured := cfgToken != ""
 			if len(entry) == 0 {
 				issues = append(issues, "尚未接入 Bangumi Cat")
 			}
-			if tokenConfigured && str(env["ANIME_RSS_MCP_TOKEN"]) != str(a.Settings()["token"]) {
+			if tokenConfigured && cfgToken != str(a.Settings()["token"]) {
 				issues = append(issues, "访问口令已改变，请重新接入")
 			}
-			if str(env["ANIME_RSS_MCP_URL"]) != a.cfg.PublicURL+"/mcp" {
+			if cfgURL != a.cfg.PublicURL+"/mcp" {
 				issues = append(issues, "服务地址不匹配，请重新接入")
 			}
 			if info, e := os.Stat(str(entry["command"])); e != nil || info.IsDir() {
@@ -179,7 +195,7 @@ func (a *App) agentRoutes() {
 }
 
 func atomicAgentWrite(path string, data []byte) error {
-	f, e := os.CreateTemp(filepath.Dir(path), ".anime-rss-config-*")
+	f, e := os.CreateTemp(filepath.Dir(path), ".bgmcat-config-*")
 	if e != nil {
 		return e
 	}

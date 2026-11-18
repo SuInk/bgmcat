@@ -1,30 +1,46 @@
-# 安装、升级与卸载
+# 服务版安装、升级与卸载
 
-普通桌面用户默认推荐 [Electron 桌面版](desktop.md)：双击启动并自动认证。本文描述无窗口的 Go 服务、服务器和 Docker 安装。
+个人电脑日常使用默认推荐 [Electron 桌面版](desktop.md)（双击启动并支持一键开启手机局域网直连）。本文说明无窗口的独立 Go 服务版与 Docker 容器部署，适合 Linux 服务器、家庭 NAS 或常驻后台运行。
 
 ## 选择安装方式
 
 | 方式 | 安装前准备 | 运行时依赖 |
 | --- | --- | --- |
-| Release 完整包 | 已发布的对应平台资产；SHA-256 工具 | aria2c；可选 FFmpeg、cloudflared |
-| 私有 Release 安装器 | GitHub CLI、`gh auth login`、仓库读取权限 | 同上 |
-| 公开 Release 安装器 | Shell/curl 或 PowerShell | 同上 |
-| Docker 源码构建 | Docker + Compose、项目源码 | 镜像包含 aria2 和 FFmpeg |
-| 源码构建 | Go 1.26+、Node.js 22+、npm | 构建后同 Release |
+| 公开 Release 安装脚本 | `curl` + `sh` 或 Windows PowerShell | **零必需外部依赖**（内置纯 Go 下载引擎）；可选 `ffmpeg`、`cloudflared` |
+| 私有 Release 安装脚本 | GitHub CLI (`gh auth login`) + 仓库读取权限 | 同上 |
+| Release 完整包手动解压 | 对应平台归档包 + SHA-256 校验工具 | 同上 |
+| Docker Compose 部署 | Docker + Docker Compose | 容器镜像已预装 `ffmpeg` |
+| 从源码构建 | Go 1.26+、Node.js 22+、npm | 构建后同 Release 单二进制 |
 
-仓库为 `SuInk/bgmcat`，Release 安装仍须等待实际发布对应版本。
+## 命令行一键安装
 
-## 原生安装
+`bgmcat` 将前端静态页面与纯 Go HTTP / BitTorrent 下载引擎完整嵌入单个无 CGO 二进制中，安装器会自动检测当前系统与 CPU 架构、校验 `SHA256SUMS` 并保留旧版本备份。
 
-发布首个 Release 后，登录有仓库读取权限的 GitHub 账号即可安装，无需克隆源码。先运行一次 `gh auth login`。
+### 公开仓库安装（切换 Public 并发布 Release 后）
 
-macOS / Linux（macOS 需先有 Homebrew）：
+macOS / Linux：
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/SuInk/bgmcat/main/scripts/install.sh | sh -s -- --start
+```
+
+Windows PowerShell：
+
+```powershell
+irm https://raw.githubusercontent.com/SuInk/bgmcat/main/scripts/install.ps1 | iex; .\install.ps1 -Start
+```
+
+### 私有仓库验证安装（当前 Private 阶段）
+
+先运行一次 `gh auth login` 登录具备 `SuInk/bgmcat` 读取权限的账号，无需克隆源码即可拉取安装：
+
+macOS / Linux：
 
 ```sh
 gh api repos/SuInk/bgmcat/contents/scripts/install.sh -H 'Accept: application/vnd.github.raw+json' | sh -s -- --private --start
 ```
 
-Windows PowerShell（需 GitHub CLI；自动安装 aria2 需要 winget）：
+Windows PowerShell：
 
 ```powershell
 $installer = gh api repos/SuInk/bgmcat/contents/scripts/install.ps1 -H 'Accept: application/vnd.github.raw+json'
@@ -32,13 +48,11 @@ if ($LASTEXITCODE -ne 0) { throw '下载安装脚本失败' }
 & ([scriptblock]::Create(($installer -join "`n"))) -Private -Start
 ```
 
-安装器选择当前系统和架构、校验发行包 SHA-256，并安装缺失的 aria2。`--start` / `-Start` 在当前终端启动，访问终端输出的地址，用 Ctrl+C 停止；不会配置后台服务或开机自启。只安装时省略该参数，之后执行 `"$HOME/.local/bin/bgmcat"`，Windows 执行 `& "$env:LOCALAPPDATA\AnimeRSS\bin\bgmcat.exe"`。
+### 常用安装参数与默认目录
 
-安装主程序无需管理员权限，安装 aria2 系统包可能需要 sudo。安装器不修改 PATH，也不会停止正在运行的服务；升级前先停止现有进程。私有仓库需要 GitHub 登录态，匿名 curl 无法访问。当前尚无正式 Release，上述命令须在发行资产发布后使用；现在可使用 README 的源码启动或 Docker 构建。
-
-手机和平板通过浏览器访问运行中的服务，不需要安装 Go 或 aria2。跨设备访问需显式配置服务监听地址及网络访问；默认仅本机访问，详细配置见使用文档。
-
-指定版本和安装目录：
+- `--start` / `-Start`：安装完成后立即在当前终端前台启动，按 `Ctrl+C` 停止；若省略该参数则仅安装二进制文件。
+- 默认安装路径：macOS / Linux 为 `$HOME/.local/bin/bgmcat`，Windows 为 `$env:LOCALAPPDATA\AnimeRSS\bin\bgmcat.exe`（无需管理员提权，不擅自修改系统全局 `PATH`）。
+- 指定版本与自定义安装目录：
 
 ```sh
 sh scripts/install.sh --repository SuInk/bgmcat --private --version v0.2.0 --dir "$HOME/.local/bin"
@@ -48,13 +62,11 @@ sh scripts/install.sh --repository SuInk/bgmcat --private --version v0.2.0 --dir
 .\scripts\install.ps1 -Repository SuInk/bgmcat -Private -Version v0.2.0 -InstallDir "$env:LOCALAPPDATA\AnimeRSS\bin"
 ```
 
-默认 `latest` 选择 GitHub 最新正式 Release；测试版必须明确指定 `v0.2.0-rc.1` 之类的标签。该标签也必须真实存在。
+## 手动解压完整包
 
-## 手动解压
+前往 Releases 下载对应平台的服务包与 `SHA256SUMS`：
 
-下载适合机器的完整包和 `SHA256SUMS`：
-
-| 平台 | 文件 |
+| 平台 | 归档文件 |
 | --- | --- |
 | Linux x86-64 | `bgmcat-linux-amd64.tar.gz` |
 | Linux ARM64 | `bgmcat-linux-arm64.tar.gz` |
@@ -62,50 +74,41 @@ sh scripts/install.sh --repository SuInk/bgmcat --private --version v0.2.0 --dir
 | macOS Apple Silicon | `bgmcat-macos-arm64.tar.gz` |
 | Windows x86-64 | `bgmcat-windows-amd64.zip` |
 
-计算对应文件的 SHA-256，与 `SHA256SUMS` 中该文件的行比较。Linux 用 `sha256sum 文件名`，macOS 用 `shasum -a 256 文件名`，Windows 用 `Get-FileHash 文件名 -Algorithm SHA256`。校验匹配后解压，运行包内 `run.sh` 或 `run.bat`。校验用于发现下载损坏和内容不匹配，不等同于独立签名。macOS 包尚无 Developer ID 签名或公证。
+先核对 SHA-256（Linux：`sha256sum`，macOS：`shasum -a 256`，Windows：`Get-FileHash -Algorithm SHA256`），确认与 `SHA256SUMS` 完全一致后解压，运行包内的 `run.sh` 或 `run.bat`。
 
-本地构建的包也可通过安装器验证：
+本地打包产物也可直接通过安装器做离线安装验证：
 
 ```sh
 sh scripts/install.sh --local-dir "$PWD/release"
 ```
 
+## 账号密码与手机跨设备访问
+
+- 服务首次启动会在终端日志打印初始管理员用户名与随机引导密码；登录后可在「设置 → 安全与访问」修改账号密码，忘记密码可执行：
+  ```sh
+  bgmcat --data ~/.bgmcat --reset-password
+  ```
+- 默认仅监听 `127.0.0.1:3001`。如需让同一局域网下的 **Android 客户端（`.apk`）** 或 **iOS / 手机浏览器** 直接播放视频，可在网页「设置 → 远程与隧道」一键开启 **允许局域网设备访问**（动态监听本机局域网 IP，无需重启），或在启动时指定 `--listen 0.0.0.0:3001`。
+
 ## 升级与回滚
 
-1. 在网页创建数据库备份并另存；确保当前无必须保持的转码或上传任务。
-2. 停止现有进程。Windows 必须先停止，否则系统可能拒绝替换 exe。
-3. 重跑安装命令或解压新完整包，保持原来的 `--data` 参数。
-4. 重启并检查 `--version`、网页登录、订阅及下载列表。
+1. 在控制台「设置 → 备份与恢复」创建一份数据库备份归档。
+2. 停止正在运行的 `bgmcat` 进程（Windows 升级前必须先停止进程以释放 `.exe` 文件锁）。
+3. 重新执行安装脚本或解压新版归档，使用原有的 `--data` 数据目录启动。
+4. 安装器会自动将上一版可执行文件保存为 `bgmcat.previous`（或 `bgmcat.exe.previous`）；如需紧急回退，停服后将 `.previous` 覆盖回原文件名即可（跨数据结构变更回退请同步恢复升级前备份）。
 
-安装器保留一个 `.previous` 程序副本。出问题时停服，用副本替换程序，再启动；跨数据库格式版本回退可能还需恢复升级前备份。安装器不自动回滚数据库、不承诺旧程序兼容新数据。
-
-Diana 的 MCP 配置指向安装时的可执行文件及服务地址；移动程序、改端口或轮换口令后，重新接入并在 Diana 重新加载 MCP。
-
-## Docker
-
-当前可用的是源码构建：
+## Docker 部署
 
 ```sh
 docker compose up -d --build
 docker compose logs -f bgmcat
 ```
 
-升级源码后再次执行 `docker compose up -d --build`。持久化卷保留数据。服务默认仅映射到宿主机 `127.0.0.1:3001`；需要外部访问时调整端口映射、反向代理及 `ANIME_RSS_PUBLIC_URL`。
-
-维护者启用 GHCR 发布后，可改用 `ghcr.io/实际账号/实际仓库:实际版本`。私有镜像必须先通过 Docker/GHCR 身份认证；本项目目前没有已经可拉取的镜像地址。
+- 容器镜像基于多阶段构建，内置 `ffmpeg` 与 `ca-certificates`，无需任何外部下载器进程，并以非 root 用户运行。
+- 默认映射 `127.0.0.1:3001:3001`；通过反向代理提供 HTTPS 公网访问时，请同步设置 `ANIME_RSS_PUBLIC_URL` 为外部访问根地址，确保 Google Drive OAuth 回调地址准确。
+- 仓库启用 `PUBLISH_CONTAINER=true` 变量并推送版本标签后，CI 也会构建对应的 GHCR 镜像。
 
 ## 卸载
 
-停止原生服务后，移除安装目录中的 `bgmcat`（Windows 为 `bgmcat.exe`）及其 `.previous` 副本。默认数据目录 `~/.anime-rss-go` 独立保留，恢复安装后可以继续使用。
-
-Docker 用 `docker compose down` 移除容器，保留数据卷；不要加 `-v`，除非明确要删除全部持久化数据。
-
-## 托管 aria2 下载引擎
-
-HTTP 与 BT 使用独立的 `aria2c`，由 Go 服务自动启动、关闭与恢复。RPC 仅监听随机本机端口，密钥保存在 0600 配置文件中，无需填写旧版 RPC 地址。主程序仍可 `CGO_ENABLED=0` 构建。
-
-安装器默认安装缺失的 aria2：macOS 使用 Homebrew，Linux 使用 apt/dnf/pacman/apk（可能需要 sudo），Windows 使用 winget。离线或仅使用 qBittorrent 时可传 `--skip-aria2` / `-SkipAria2`；手动解压运行前请自行安装 aria2，或执行包内 `sh scripts/install-aria2.sh`。Docker 已包含 aria2。
-
-查找顺序是 `BGMCAT_ARIA2_PATH`、bgmcat 可执行文件旁的 aria2c、系统 PATH。发行包本身不捆绑 aria2，安装依赖需要网络；Windows 安装后可能需要重开终端以刷新 PATH。
-
-暂停、关闭服务和进程恢复使用 `.aria2` 控制文件续传。不要删除任务目录中的这些文件。旧 Go 下载器的 `.part` 文件保留，首次切换会从头下载；旧 BT 文件由 aria2 按种子校验后复用。完成下载后不继续做种。Google Drive 上传、OAuth 和按需播放仍使用 Go 实现，IP 直连策略不变。
+- **原生服务版**：停止进程后删除安装目录中的 `bgmcat`（或 `bgmcat.exe`）及 `.previous` 备份。默认数据目录 `~/.bgmcat` 独立保留，确认不再需要时再手动删除。
+- **Docker 版**：执行 `docker compose down` 移除容器并保留持久化数据卷（仅在确认彻底清空全部数据库与下载缓存时才附加 `-v`）。

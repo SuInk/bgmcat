@@ -20,7 +20,7 @@ func (a *App) mcp(ctx context.Context, o Obj) Obj {
 	params := object(o["params"])
 	switch str(o["method"]) {
 	case "initialize":
-		result = Obj{"protocolVersion": "2024-11-05", "capabilities": Obj{"tools": Obj{}}, "serverInfo": Obj{"name": "anime-rss-go", "version": Version}}
+		result = Obj{"protocolVersion": "2024-11-05", "capabilities": Obj{"tools": Obj{}}, "serverInfo": Obj{"name": "bgmcat", "version": Version}}
 	case "ping":
 		result = Obj{}
 	case "tools/list":
@@ -73,7 +73,7 @@ func (a *App) mcp(ctx context.Context, o Obj) Obj {
 				data, e = a.refreshSubscription(ctx, sub)
 			}
 		case "list_feed_items":
-			data, e = a.Store.List("feed")
+			data, e = a.Store.ListLimit("feed", 2000)
 		case "create_download":
 			data, e = a.enqueue(arg)
 			data = publicDownloads(data)
@@ -98,7 +98,7 @@ func (a *App) mcp(ctx context.Context, o Obj) Obj {
 			}
 			data = Obj{"deleted": e == nil}
 		case "recent_logs":
-			data, e = a.Store.List("logs")
+			data, e = a.Store.ListLimit("logs", 200)
 		default:
 			e = errors.New("未知工具")
 		}
@@ -192,14 +192,12 @@ func (a *App) integrationRoutes() {
 		models := []string{}
 		var last any
 		if flag(s["localAiEnabled"]) {
-			o, e := a.requestJSON(r.Context(), "GET", strings.TrimRight(str(s["localAiBaseUrl"]), "/")+"/api/tags", nil, nil)
-			if e != nil {
-				last = e.Error()
+			mList, err := a.queryAIModels(r.Context(), str(s["localAiBaseUrl"]), str(s["localAiApiKey"]))
+			if err != nil {
+				last = err.Error()
 			} else {
 				reachable = true
-				for _, v := range list(o["models"]) {
-					models = append(models, str(object(v)["name"]))
-				}
+				models = mList
 			}
 		}
 		ok(w, Obj{"enabled": s["localAiEnabled"], "baseUrl": s["localAiBaseUrl"], "model": s["localAiModel"], "reachable": reachable, "availableModels": models, "lastError": last})
@@ -208,15 +206,15 @@ func (a *App) integrationRoutes() {
 	a.handle("POST /api/local-ai/chat", func(w http.ResponseWriter, r *http.Request) error {
 		s := a.Settings()
 		if !flag(s["localAiEnabled"]) {
-			return errors.New("本地 AI 未启用")
+			return errors.New("AI 精筛未启用")
 		}
 		o, e := body(w, r)
 		if e != nil {
 			return e
 		}
-		result, e := a.requestJSON(r.Context(), "POST", strings.TrimRight(str(s["localAiBaseUrl"]), "/")+"/api/chat", Obj{"model": s["localAiModel"], "messages": o["messages"], "stream": false}, nil)
+		msg, e := a.chatAI(r.Context(), str(s["localAiBaseUrl"]), str(s["localAiApiKey"]), str(s["localAiModel"]), o["messages"])
 		if e == nil {
-			ok(w, Obj{"message": result["message"], "model": s["localAiModel"]})
+			ok(w, Obj{"message": msg, "model": s["localAiModel"]})
 		}
 		return e
 	})
@@ -258,4 +256,119 @@ func (a *App) integrationRoutes() {
 	}
 	a.agentRoutes()
 	a.tunnelRoutes()
+}
+
+func aiIsOpenAIBase(base, apiKey string) bool {
+	low := strings.ToLower(strings.TrimRight(strings.TrimSpace(base), "/"))
+	return strings.TrimSpace(apiKey) != "" || strings.HasSuffix(low, "/v1") || strings.Contains(low, "openai") || strings.Contains(low, "deepseek") || strings.Contains(low, "openrouter") || strings.Contains(low, "siliconflow")
+}
+
+func aiOpenAIV1Base(base string) string {
+	trimmed := strings.TrimRight(strings.TrimSpace(base), "/")
+	if strings.HasSuffix(strings.ToLower(trimmed), "/v1") {
+		return trimmed
+	}
+	return trimmed + "/v1"
+}
+
+func (a *App) queryAIModels(ctx context.Context, rawBase, apiKey string) ([]string, error) {
+	base := strings.TrimRight(strings.TrimSpace(rawBase), "/")
+	if !httpURL(base) {
+		return nil, errors.New("AI 接口地址无效")
+	}
+	headers := map[string]string{}
+	if strings.TrimSpace(apiKey) != "" {
+		headers["Authorization"] = "Bearer " + strings.TrimSpace(apiKey)
+	}
+	tryOpenAI := func() ([]string, error) {
+		o, err := a.requestJSON(ctx, "GET", aiOpenAIV1Base(base)+"/models", nil, headers)
+		if err != nil {
+			return nil, err
+		}
+		models := []string{}
+		for _, v := range list(o["data"]) {
+			if id := strings.TrimSpace(str(object(v)["id"])); id != "" {
+				models = append(models, id)
+			}
+		}
+		return models, nil
+	}
+	tryOllama := func() ([]string, error) {
+		ollamaBase := strings.TrimSuffix(base, "/v1")
+		o, err := a.requestJSON(ctx, "GET", ollamaBase+"/api/tags", nil, headers)
+		if err != nil {
+			return nil, err
+		}
+		models := []string{}
+		for _, v := range list(o["models"]) {
+			if name := strings.TrimSpace(str(object(v)["name"])); name != "" {
+				models = append(models, name)
+			}
+		}
+		return models, nil
+	}
+	if aiIsOpenAIBase(base, apiKey) {
+		if m, err := tryOpenAI(); err == nil {
+			return m, nil
+		} else if m2, err2 := tryOllama(); err2 == nil {
+			return m2, nil
+		} else {
+			return nil, err
+		}
+	}
+	if m, err := tryOllama(); err == nil {
+		return m, nil
+	} else if m2, err2 := tryOpenAI(); err2 == nil {
+		return m2, nil
+	} else {
+		return nil, err
+	}
+}
+
+func (a *App) chatAI(ctx context.Context, rawBase, apiKey, model string, messages any) (any, error) {
+	base := strings.TrimRight(strings.TrimSpace(rawBase), "/")
+	if !httpURL(base) {
+		return nil, errors.New("AI 接口地址无效")
+	}
+	headers := map[string]string{}
+	if strings.TrimSpace(apiKey) != "" {
+		headers["Authorization"] = "Bearer " + strings.TrimSpace(apiKey)
+	}
+	tryOpenAI := func() (any, error) {
+		res, err := a.requestJSON(ctx, "POST", aiOpenAIV1Base(base)+"/chat/completions", Obj{
+			"model":    model,
+			"messages": messages,
+			"stream":   false,
+		}, headers)
+		if err != nil {
+			return nil, err
+		}
+		choices := list(res["choices"])
+		if len(choices) > 0 {
+			return object(choices[0])["message"], nil
+		}
+		return res["message"], nil
+	}
+	tryOllama := func() (any, error) {
+		ollamaBase := strings.TrimSuffix(base, "/v1")
+		res, err := a.requestJSON(ctx, "POST", ollamaBase+"/api/chat", Obj{
+			"model":    model,
+			"messages": messages,
+			"stream":   false,
+		}, headers)
+		if err != nil {
+			return nil, err
+		}
+		return res["message"], nil
+	}
+	if aiIsOpenAIBase(base, apiKey) {
+		if msg, err := tryOpenAI(); err == nil {
+			return msg, nil
+		}
+		return tryOllama()
+	}
+	if msg, err := tryOllama(); err == nil {
+		return msg, nil
+	}
+	return tryOpenAI()
 }

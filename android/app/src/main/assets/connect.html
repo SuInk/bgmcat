@@ -1,0 +1,379 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+<title>连接服务端 · 猫追番</title>
+<style>
+  :root {
+    --bg: #f6f7f9;
+    --card: #ffffff;
+    --panel: #f0f2f6;
+    --ink: #14171f;
+    --ink-2: #4b5262;
+    --muted: #767e8f;
+    --line: rgba(20, 23, 31, 0.1);
+    --accent: #0041fd;
+    --accent-soft: rgba(0, 65, 253, 0.1);
+    --err: #d92d20;
+    --err-soft: rgba(217, 45, 32, 0.1);
+    --ok: #079455;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0e1015;
+      --card: #161922;
+      --panel: #1e222e;
+      --ink: #f3f5f8;
+      --ink-2: #b9c0cf;
+      --muted: #848d9f;
+      --line: rgba(255, 255, 255, 0.09);
+      --accent: #4b83ff;
+      --accent-soft: rgba(75, 131, 255, 0.15);
+      --err: #f97066;
+      --err-soft: rgba(249, 112, 102, 0.14);
+      --ok: #47cd89;
+    }
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  body {
+    margin: 0;
+    min-height: 100dvh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: max(24px, env(safe-area-inset-top)) 20px max(24px, env(safe-area-inset-bottom));
+    background: var(--bg);
+    color: var(--ink);
+    font: 400 14px/1.5 -apple-system, BlinkMacSystemFont, "PingFang SC", "Noto Sans SC", system-ui, sans-serif;
+  }
+  .card {
+    width: min(400px, 100%);
+    padding: 28px 22px;
+    border-radius: 20px;
+    background: var(--card);
+    border: 1px solid var(--line);
+    box-shadow: 0 18px 42px rgba(0, 0, 0, 0.16);
+  }
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 18px;
+  }
+  .logo {
+    width: 44px;
+    height: 44px;
+    border-radius: 12px;
+    background: linear-gradient(135deg, #0041fd, #4b83ff);
+    color: #fff;
+    display: grid;
+    place-items: center;
+    font-weight: 800;
+    font-size: 20px;
+    flex-shrink: 0;
+  }
+  .brand h1 {
+    margin: 0;
+    font-size: 18px;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+  }
+  .brand p {
+    margin: 2px 0 0;
+    font-size: 12px;
+    color: var(--muted);
+  }
+  .lead {
+    margin: 0 0 16px;
+    font-size: 13px;
+    color: var(--ink-2);
+  }
+  .field {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-bottom: 13px;
+  }
+  .field label {
+    font-size: 12.5px;
+    font-weight: 600;
+    color: var(--ink-2);
+  }
+  .field small {
+    font-size: 11.5px;
+    color: var(--muted);
+  }
+  input {
+    width: 100%;
+    height: 40px;
+    padding: 0 12px;
+    border-radius: 11px;
+    border: 1px solid var(--line);
+    background: var(--panel);
+    color: var(--ink);
+    font-size: 14px;
+    outline: none;
+  }
+  input:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-soft);
+    background: var(--card);
+  }
+  .btn {
+    width: 100%;
+    height: 42px;
+    margin-top: 4px;
+    border: 0;
+    border-radius: 999px;
+    background: #0041fd;
+    color: #fff;
+    font-size: 14px;
+    font-weight: 650;
+    cursor: pointer;
+  }
+  .btn:disabled { opacity: 0.6; }
+  .msg {
+    margin-top: 12px;
+    padding: 10px 12px;
+    border-radius: 11px;
+    font-size: 12.5px;
+    display: none;
+  }
+  .msg.err { display: block; background: var(--err-soft); color: var(--err); }
+  .msg.info { display: block; background: var(--accent-soft); color: var(--accent); }
+  .profiles {
+    margin-top: 18px;
+    padding-top: 16px;
+    border-top: 1px solid var(--line);
+    display: none;
+  }
+  .profiles h2 {
+    margin: 0 0 10px;
+    font-size: 12px;
+    color: var(--muted);
+    font-weight: 600;
+  }
+  .prof-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 9px 11px;
+    border-radius: 11px;
+    background: var(--panel);
+    margin-bottom: 8px;
+  }
+  .prof-main {
+    min-width: 0;
+    flex: 1;
+    cursor: pointer;
+  }
+  .prof-main strong {
+    display: block;
+    font-size: 13px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .prof-main span {
+    display: block;
+    font-size: 11.5px;
+    color: var(--muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .prof-del {
+    border: 0;
+    background: transparent;
+    color: var(--muted);
+    font-size: 16px;
+    padding: 4px 8px;
+    cursor: pointer;
+  }
+  .tip {
+    margin-top: 16px;
+    padding: 10px 12px;
+    border-radius: 12px;
+    background: var(--panel);
+    font-size: 12px;
+    color: var(--muted);
+  }
+  .tip code {
+    font-family: ui-monospace, SFMono-Regular, monospace;
+    color: var(--ink-2);
+  }
+</style>
+</head>
+<body>
+  <main class="card">
+    <div class="brand">
+      <div class="logo">猫</div>
+      <div>
+        <h1>Bangumi Cat · 猫追番</h1>
+        <p id="ver">Android 客户端</p>
+      </div>
+    </div>
+
+    <p class="lead">连接电脑桌面端或自建服务端，直接流式播放本地与 Google Drive 归档番剧。</p>
+
+    <form id="form">
+      <div class="field">
+        <label for="primary">服务器主地址（局域网 IP 或域名）</label>
+        <input id="primary" type="url" inputmode="url" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="http://192.168.1.20:39123" required />
+        <small>在电脑端「设置 → 远程与安全」开启局域网访问即可复制</small>
+      </div>
+
+      <div class="field">
+        <label for="backup">备用公网 / 穿透地址（可选）</label>
+        <input id="backup" type="url" inputmode="url" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="https://xxx.trycloudflare.com" />
+        <small>在家优先走局域网高速直连；外出自动切换至公网穿透地址</small>
+      </div>
+
+      <div class="field">
+        <label for="label">备注名称（可选）</label>
+        <input id="label" type="text" placeholder="例如：书房电脑 / 家里 NAS" />
+      </div>
+
+      <button id="submitBtn" class="btn" type="submit">连接并进入控制台</button>
+    </form>
+
+    <div id="msg" class="msg" role="status"></div>
+
+    <section id="profilesSection" class="profiles">
+      <h2>最近连接的服务器</h2>
+      <div id="profilesList"></div>
+    </section>
+
+    <div class="tip">
+      首次连接后会自动记住登录状态（30 天有效）。全屏播放番剧时会自动切换横屏并保持屏幕常亮。
+    </div>
+  </main>
+
+<script>
+(function () {
+  const form = document.getElementById("form");
+  const primaryEl = document.getElementById("primary");
+  const backupEl = document.getElementById("backup");
+  const labelEl = document.getElementById("label");
+  const submitBtn = document.getElementById("submitBtn");
+  const msgEl = document.getElementById("msg");
+  const profilesSection = document.getElementById("profilesSection");
+  const profilesList = document.getElementById("profilesList");
+  const verEl = document.getElementById("ver");
+
+  function showMsg(text, kind) {
+    if (!text) {
+      msgEl.className = "msg";
+      msgEl.textContent = "";
+      return;
+    }
+    msgEl.className = "msg " + (kind || "info");
+    msgEl.textContent = text;
+  }
+
+  function normalizeInput(raw) {
+    const v = (raw || "").trim();
+    if (!v) return "";
+    if (/^https?:\/\//i.test(v)) return v.replace(/\/+$/, "");
+    if (/^(localhost|\d{1,3}(\.\d{1,3}){3}|\[)/i.test(v)) return "http://" + v.replace(/\/+$/, "");
+    return "https://" + v.replace(/\/+$/, "");
+  }
+
+  window.__onProbeResult = function (ok, message) {
+    submitBtn.disabled = false;
+    submitBtn.textContent = "连接并进入控制台";
+    if (!ok) {
+      showMsg(message || "无法连接到该服务器，请检查电脑端是否已运行并开启局域网访问或穿透。", "err");
+    } else if (message) {
+      showMsg(message, "info");
+    }
+  };
+
+  function renderState() {
+    if (!window.bgmcatAndroid) return;
+    try {
+      const ver = window.bgmcatAndroid.getAppVersion();
+      if (ver) verEl.textContent = "Android 客户端 v" + ver;
+      const raw = window.bgmcatAndroid.getSavedConfigJson();
+      if (!raw) return;
+      const state = JSON.parse(raw);
+      if (state.primaryUrl && !primaryEl.value) primaryEl.value = state.primaryUrl;
+      if (state.backupUrl && !backupEl.value) backupEl.value = state.backupUrl;
+      if (state.label && !labelEl.value) labelEl.value = state.label;
+
+      const profiles = Array.isArray(state.profiles) ? state.profiles : [];
+      profilesList.innerHTML = "";
+      if (profiles.length > 0) {
+        profilesSection.style.display = "block";
+        profiles.forEach(function (item) {
+          const row = document.createElement("div");
+          row.className = "prof-item";
+          const main = document.createElement("div");
+          main.className = "prof-main";
+          const title = document.createElement("strong");
+          title.textContent = item.label || item.primaryUrl;
+          const sub = document.createElement("span");
+          sub.textContent = item.backupUrl ? item.primaryUrl + " · 备 " + item.backupUrl : item.primaryUrl;
+          main.appendChild(title);
+          main.appendChild(sub);
+          main.onclick = function () {
+            primaryEl.value = item.primaryUrl || "";
+            backupEl.value = item.backupUrl || "";
+            labelEl.value = item.label || "";
+            connectNow();
+          };
+          const del = document.createElement("button");
+          del.type = "button";
+          del.className = "prof-del";
+          del.textContent = "×";
+          del.setAttribute("aria-label", "移除记录");
+          del.onclick = function (ev) {
+            ev.stopPropagation();
+            window.bgmcatAndroid.removeProfile(item.id || item.primaryUrl);
+            renderState();
+          };
+          row.appendChild(main);
+          row.appendChild(del);
+          profilesList.appendChild(row);
+        });
+      } else {
+        profilesSection.style.display = "none";
+      }
+    } catch (_) {}
+  }
+
+  function connectNow() {
+    const primary = normalizeInput(primaryEl.value);
+    const backup = normalizeInput(backupEl.value);
+    const label = (labelEl.value || "").trim();
+    if (!primary) {
+      showMsg("请填写服务器地址", "err");
+      return;
+    }
+    primaryEl.value = primary;
+    if (backup) backupEl.value = backup;
+    submitBtn.disabled = true;
+    submitBtn.textContent = "正在探测连通性…";
+    showMsg("正在检测服务器响应…", "info");
+    if (window.bgmcatAndroid) {
+      window.bgmcatAndroid.probeAndConnect(primary, backup, label);
+    }
+  }
+
+  form.addEventListener("submit", function (ev) {
+    ev.preventDefault();
+    connectNow();
+  });
+
+  const params = new URLSearchParams(window.location.search);
+  if (params.get("error")) {
+    showMsg(params.get("error"), "err");
+  }
+  renderState();
+})();
+</script>
+</body>
+</html>

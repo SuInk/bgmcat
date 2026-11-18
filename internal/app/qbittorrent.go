@@ -51,12 +51,20 @@ func (a *App) qbitDownload(ctx context.Context, j Obj) error {
 	if strings.TrimSpace(string(auth)) != "Ok." {
 		return errors.New("qBittorrent 登录失败")
 	}
-	tag := "anime-rss-" + str(j["gid"])
+	tag := "bgmcat-" + str(j["gid"])
 	remoteHash := str(j["qbitHash"])
 	if remoteHash == "" {
-		_, e = call(ctx, "POST", "torrents/add", url.Values{"urls": {str(j["sourceUrl"])}, "savepath": {str(j["directory"])}, "tags": {tag}, "paused": {"false"}})
-		if e != nil {
-			return e
+		resBody, errAdd := call(ctx, "POST", "torrents/add", url.Values{"urls": {str(j["sourceUrl"])}, "savepath": {str(j["directory"])}, "tags": {tag}, "paused": {"false"}})
+		if errAdd != nil || strings.EqualFold(strings.TrimSpace(string(resBody)), "Fails.") {
+			if fb := jobFallbackMagnet(j); fb != "" {
+				resBody, errAdd = call(ctx, "POST", "torrents/add", url.Values{"urls": {fb}, "savepath": {str(j["directory"])}, "tags": {tag}, "paused": {"false"}})
+			}
+		}
+		if errAdd != nil {
+			return errAdd
+		}
+		if strings.EqualFold(strings.TrimSpace(string(resBody)), "Fails.") {
+			return errors.New("qBittorrent 添加任务失败")
 		}
 	} else {
 		if _, e = call(ctx, "POST", "torrents/start", url.Values{"hashes": {remoteHash}}); e != nil {
@@ -101,6 +109,7 @@ func (a *App) qbitDownload(ctx context.Context, j Obj) error {
 		item := items[0]
 		remoteHash = str(item["hash"])
 		_, _ = a.Store.Patch("downloads", str(j["gid"]), Obj{"qbitHash": remoteHash, "totalLength": item["size"], "completedLength": item["completed"], "downloadSpeed": item["dlspeed"], "uploadSpeed": item["upspeed"]})
+		a.notifyDownloads()
 		if num(item["size"]) > 0 && num(item["completed"]) >= num(item["size"]) {
 			raw, e = call(ctx, "GET", "torrents/files?hash="+url.QueryEscape(remoteHash), nil)
 			if e != nil {

@@ -1,6 +1,8 @@
 {
   "name": "bgmcat-ui-build",
   "private": true,
+  "author": "SuInk",
+  "license": "SEE LICENSE IN LICENSE",
   "type": "module",
   "workspaces": [
     "frontend"

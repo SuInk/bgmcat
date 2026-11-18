@@ -4,6 +4,7 @@
  * 样式跟分段控件一套：无边框的浅底胶囊，当前页用主题色。
  */
 import AppNavIcon from "../layout/AppNavIcon.vue";
+import AppSelect from "./AppSelect.vue";
 
 const props = withDefaults(
   defineProps<{
@@ -39,19 +40,19 @@ const emit = defineEmits<{
     :class="props.plain ? '' : 'border-t border-[var(--line)] bg-[var(--table-panel)]'"
     aria-label="分页"
   >
-    <label class="flex items-center gap-2">
+    <div class="flex items-center gap-2">
       <span class="text-xs font-medium">{{ props.rowLabel }}</span>
-      <select
+      <AppSelect
         v-if="!props.readonlyCount && props.rowCountOptions.length"
-        :value="props.rowCount"
-        class="pager-select"
+        size="sm"
+        direction="up"
+        :model-value="props.rowCount"
         :aria-label="props.rowLabel"
-        @change="emit('update:rowCount', Number(($event.target as HTMLSelectElement).value))"
-      >
-        <option v-for="size in props.rowCountOptions" :key="size" :value="size">{{ size }}</option>
-      </select>
+        :options="props.rowCountOptions.map((size) => ({ value: size, label: String(size) }))"
+        @update:model-value="emit('update:rowCount', Number($event))"
+      />
       <span v-else class="pager-item pager-static">{{ props.rowCount }}</span>
-    </label>
+    </div>
 
     <div class="flex flex-wrap items-center justify-center gap-1">
       <button
@@ -97,8 +98,8 @@ const emit = defineEmits<{
   place-items: center;
   min-width: 32px;
   height: 32px;
-  padding: 0 8px;
-  border-radius: 9px;
+  padding: 0 10px;
+  border-radius: 999px;
   background: var(--panel);
   color: var(--ink-secondary);
   font-size: 13px;
@@ -121,9 +122,9 @@ const emit = defineEmits<{
 }
 .pager-select {
   height: 32px;
-  padding: 0 26px 0 10px;
+  padding: 0 26px 0 12px;
   border: 0;
-  border-radius: 9px;
+  border-radius: 999px;
   background: var(--panel);
   color: var(--ink);
   font-size: 13px;

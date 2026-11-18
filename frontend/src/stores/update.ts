@@ -15,6 +15,7 @@ import {
   saveUpdatePolicy
 } from "../api";
 import { isBusy, withBusy } from "./busy";
+import { markUpdateInstalling } from "../lib/backendState";
 import { refreshSettings } from "./session";
 import { toastError, updateFeedback } from "./toasts";
 
@@ -197,6 +198,7 @@ export async function runUpdateDownload(version?: string): Promise<void> {
 export async function runUpdateInstall(version?: string): Promise<void> {
   await withBusy("update-action", async () => {
     try {
+      markUpdateInstalling();
       updateStatus.value = await installUpdate(version);
       updateFeedback("正在备份并安装，应用会自动重启。", "success");
     } catch (error) {
@@ -209,6 +211,7 @@ export async function runUpdateInstall(version?: string): Promise<void> {
 export async function runUpdateRollback(version: string): Promise<void> {
   await withBusy("update-action", async () => {
     try {
+      markUpdateInstalling();
       updateStatus.value = await rollbackUpdate(version);
       updateFeedback(`正在回退到 ${version}。`, "success");
     } catch (error) {

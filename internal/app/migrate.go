@@ -192,5 +192,7 @@ func (a *App) ImportLegacy(path string) error {
 	if _, e = tx.Exec("INSERT OR IGNORE INTO ids(id) VALUES(?)", max); e != nil {
 		return e
 	}
-	return tx.Commit()
+	e = tx.Commit()
+	a.Store.InvalidateCache()
+	return e
 }

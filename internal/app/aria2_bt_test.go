@@ -79,7 +79,7 @@ func TestDeleteWithFilesRemovesAria2Leftovers(t *testing.T) {
 		t.Fatal(e)
 	}
 	video := filepath.Join(dir, "episode.mkv")
-	for _, name := range []string{"episode.mkv", "episode.mkv.aria2", "ea43743cde0cf627fa2ff1b02936ef6a2ab8a6a1.torrent"} {
+	for _, name := range []string{"episode.mkv", "episode.mkv.aria2", "episode.mkv.part", "episode.mkv.bgmcat-dl", "ea43743cde0cf627fa2ff1b02936ef6a2ab8a6a1.torrent"} {
 		if e := os.WriteFile(filepath.Join(dir, name), []byte("x"), 0600); e != nil {
 			t.Fatal(e)
 		}

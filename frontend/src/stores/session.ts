@@ -1,23 +1,40 @@
 import { computed, reactive, ref } from "vue";
 
-import type { AppSettings, AuthSessionSummary, SystemStatus } from "@shared/index";
-import { DEFAULT_THEME_ACCENT, updateSettingsSchema } from "@shared/index";
+import type {
+  AppSettings,
+  AuthLoginResult,
+  AuthSessionSummary,
+  AuthStatusResponse,
+  PublicSystemStatus,
+  SystemStatus
+} from "@shared/index";
+import { DEFAULT_THEME_ACCENT } from "@shared/index";
 
 import { syncThemeAccent } from "./theme";
 
 import {
+  changeAdminCredentials,
   clearApiToken,
-  exchangeGithubLogin,
+  dianaPasswordLogin,
+  exchangeOAuthLogin,
+  getAuthStatus,
+  getCloudStatus,
   getPublicSystemStatus,
   getSettings,
   getSystemStatus,
   githubLoginUrl,
+  googleLoginUrl,
+  isBackendUnreachable,
   isDesktopShellRuntime,
   listAuthSessions,
   logoutSession,
+  oidcLoginUrl,
+  passwordLogin,
   persistApiToken,
   readApiToken,
+  readDesktopShellToken,
   revokeAuthSession,
+  revokeOtherAuthSessions,
   rotateApiToken,
   tokenLogin,
   updateSettings
@@ -28,6 +45,9 @@ import { toastError, updateFeedback } from "./toasts";
 
 export const isAuthenticated = ref(false);
 export const authChecked = ref(false);
+export const adminUsername = ref("");
+export const passwordConfigured = ref(true);
+export const authMethod = ref("");
 export const status = ref<SystemStatus | null>(null);
 export const settings = ref<AppSettings | null>(null);
 export const loginToken = ref(readApiToken());
@@ -41,17 +61,28 @@ export const settingsForm = reactive<AppSettings>({
  dianaMcpConfigPath: "",
   bindHost: "127.0.0.1",
   port: 3000,
+  lanAccessEnabled: false,
   token: "",
   corsOrigins: [],
   pollIntervalMinutes: 30,
   downloadDir: "",
-    cloudArchiveEnabled: false,
-    googleClientId: "",
-    googleClientSecret: "",
-    cloudDriveFolderId: "root",
-    googleRedirectUri: "",
-    cloudDeleteLocal: false,
+  cloudProvider: "google",
+  cloudArchiveEnabled: false,
+  googleClientId: "",
+  googleClientSecret: "",
+  cloudDriveFolderId: "root",
+  googleRedirectUri: "",
+  onedriveClientId: "",
+  onedriveClientSecret: "",
+  onedriveRedirectUri: "",
+  onedriveFolderId: "root",
+  webdavUrl: "",
+  webdavUsername: "",
+  webdavPassword: "",
+  webdavRootPath: "Bangumi Cat",
+  cloudDeleteLocal: false,
   downloadClient: "native",
+  aria2RpcUrl: "http://127.0.0.1:6800/jsonrpc",
   aria2RpcHost: "127.0.0.1",
   aria2RpcPort: 16800,
   aria2RpcSecret: "",
@@ -64,12 +95,17 @@ export const settingsForm = reactive<AppSettings>({
   qbittorrentUsername: "admin",
   qbittorrentPassword: "",
   qbittorrentEnabled: false,
+  transmissionRpcUrl: "http://127.0.0.1:9091/transmission/rpc",
+  transmissionUsername: "",
+  transmissionPassword: "",
   mikanBaseUrl: "https://mikanani.me",
+  providerMirrors: {},
   mikanDirectAccessMode: "prefer",
   mikanDirectAccessEnabled: true,
   mikanResolverIps: [],
   localAiEnabled: false,
   localAiBaseUrl: "http://127.0.0.1:11434",
+  localAiApiKey: "",
   localAiModel: "gemma3:4b",
   localAiSystemPrompt: "",
   homepageSortMode: "default",
@@ -88,6 +124,18 @@ export const settingsForm = reactive<AppSettings>({
   githubClientId: "",
   githubClientSecret: "",
   githubAllowedLogins: [],
+  googleOAuthEnabled: false,
+  googleAuthClientId: "",
+  googleAuthClientSecret: "",
+  googleAllowedEmails: [],
+  dianaAuthEnabled: false,
+  dianaAuthBaseUrl: "",
+  oidcEnabled: false,
+  oidcDisplayName: "SSO",
+  oidcIssuerUrl: "",
+  oidcClientId: "",
+  oidcClientSecret: "",
+  oidcAllowedUsers: [],
   ffmpegPath: "",
   updateAutoDownload: true,
   updateAutoInstall: false,
@@ -95,18 +143,59 @@ export const settingsForm = reactive<AppSettings>({
   updateChannel: "stable",
   launchAtLogin: false,
   minimizeToTray: true,
-  enabledResourceProviders: ["mikan"],
-  resourceProviderOrder: ["mikan", "acgrip", "nyaa"],
+  enabledResourceProviders: ["mikan", "animegarden", "dmhy", "bangumimoe", "acgnx", "acgrip", "nyaa"],
+  resourceProviderOrder: [
+    "mikan",
+    "animegarden",
+    "dmhy",
+    "bangumimoe",
+    "acgnx",
+    "acgrip",
+    "nyaa",
+    "kisssub",
+    "comicat",
+    "tokyotosho"
+  ],
   enabledMetadataPlatforms: ["bangumi", "anilist"],
   tmdbApiKey: "",
   themeAccent: DEFAULT_THEME_ACCENT
 });
 
+function normalizeDownloadClient(value: string | undefined): AppSettings["downloadClient"] {
+  if (value === "qbittorrent" || value === "aria2-rpc" || value === "transmission") {
+    return value;
+  }
+  return "native";
+}
+
+function normalizeCloudProvider(value: string | undefined): AppSettings["cloudProvider"] {
+  if (value === "onedrive" || value === "webdav") {
+    return value;
+  }
+  return "google";
+}
+
+function cloneSettingValue<T>(value: T): T {
+  if (Array.isArray(value)) {
+    return [...value] as unknown as T;
+  }
+  if (value && typeof value === "object") {
+    return { ...(value as Record<string, unknown>) } as unknown as T;
+  }
+  return value;
+}
+
 export function syncSettingsForm(next: AppSettings): void {
   Object.assign(settingsForm, next, {
+    downloadClient: normalizeDownloadClient(next.downloadClient),
+    cloudProvider: normalizeCloudProvider(next.cloudProvider),
     corsOrigins: [...next.corsOrigins],
     mikanResolverIps: [...next.mikanResolverIps],
-    btTrackers: [...(next.btTrackers ?? [])]
+    btTrackers: [...(next.btTrackers ?? [])],
+    githubAllowedLogins: [...(next.githubAllowedLogins ?? [])],
+    googleAllowedEmails: [...(next.googleAllowedEmails ?? [])],
+    oidcAllowedUsers: [...(next.oidcAllowedUsers ?? [])],
+    providerMirrors: { ...(next.providerMirrors ?? {}) }
   });
   // 设置是主题色的真身：拿到就认账，顺手写进本地缓存给下次冷启动用
   syncThemeAccent(next.themeAccent);
@@ -116,10 +205,37 @@ export async function refreshStatus(): Promise<void> {
   status.value = await getSystemStatus();
 }
 
+export const cloudDriveConnected = ref(false);
+export const cloudDriveConfigured = ref(false);
+
+export async function refreshCloudStatus(): Promise<void> {
+  try {
+    const res = await getCloudStatus();
+    cloudDriveConnected.value = Boolean(res.connected);
+    cloudDriveConfigured.value = Boolean(res.configured);
+  } catch {
+    cloudDriveConnected.value = false;
+  }
+}
+
 export async function refreshSettings(): Promise<void> {
   const next = await getSettings();
   settings.value = next;
   syncSettingsForm(next);
+  void refreshCloudStatus();
+}
+
+export async function loginWithPassword(username: string, password: string): Promise<void> {
+  const result = await passwordLogin(username.trim(), password);
+  authCallbackError.value = "";
+  prefillPassword.value = "";
+  clearApiToken();
+  loginToken.value = readDesktopShellToken();
+  adminUsername.value = result.username;
+  passwordConfigured.value = true;
+  authMethod.value = "password";
+  status.value = result.status;
+  isAuthenticated.value = true;
 }
 
 export async function login(): Promise<boolean> {
@@ -139,27 +255,100 @@ export async function login(): Promise<boolean> {
 }
 
 export async function logout(): Promise<void> {
-  // 先让服务端撤销 GitHub 会话（静态 token 登录时是个 no-op），再清本地。
   try {
     await logoutSession();
   } catch {
-    // 登出失败(离线、token 已失效)也要让本地退出。
+    // 登出失败(离线、会话已失效)也要让本地退出。
   }
   clearApiToken();
-  loginToken.value = "";
+  prefillPassword.value = "";
+  loginToken.value = readDesktopShellToken();
   isAuthenticated.value = false;
-  githubSessions.value = [];
+  adminUsername.value = "";
+  authMethod.value = "";
+  authSessions.value = [];
   updateFeedback(t("auth.tokenCleared"), "info");
 }
 
-/** 未鉴权时也能读到的公开状态，只用来决定要不要显示 GitHub 登录按钮。 */
+/** 未鉴权时也能读到的公开状态，用来决定会话是否有效以及是否显示第三方/快捷登录入口。 */
 export const githubOAuthAvailable = ref(false);
+export const googleOAuthAvailable = ref(false);
+export const dianaAuthAvailable = ref(false);
+export const dianaOwnerPairAvailable = ref(false);
+export const oidcAvailable = ref(false);
+export const oidcDisplayName = ref("SSO");
+export const authCallbackError = ref("");
+export const prefillUsername = ref("");
+export const prefillPassword = ref("");
+export const recentSavedPassword = ref("");
+
+function applyPublicAuthFlags(flags: Partial<PublicSystemStatus | AuthStatusResponse> | null): void {
+  githubOAuthAvailable.value = Boolean(flags?.githubOAuthAvailable);
+  googleOAuthAvailable.value = Boolean(flags?.googleOAuthAvailable);
+  dianaAuthAvailable.value = Boolean(flags?.dianaAuthAvailable);
+  dianaOwnerPairAvailable.value = Boolean(flags?.dianaOwnerPairAvailable);
+  oidcAvailable.value = Boolean(flags?.oidcAvailable);
+  oidcDisplayName.value = flags?.oidcDisplayName || "SSO";
+}
+
+export function hydrateSessionFromBootstrap(
+  auth: AuthStatusResponse,
+  nextStatus?: SystemStatus | null,
+  nextSettings?: AppSettings | null
+): boolean {
+  applyPublicAuthFlags(auth);
+  passwordConfigured.value = auth.passwordConfigured;
+  authMethod.value = auth.authMethod;
+  if (auth.authenticated) {
+    adminUsername.value = auth.username;
+    isAuthenticated.value = true;
+    if (nextStatus) {
+      status.value = nextStatus;
+      cloudDriveConnected.value = Boolean(nextStatus.cloudConnected);
+    }
+    if (nextSettings) {
+      settings.value = nextSettings;
+      syncSettingsForm(nextSettings);
+    }
+    return true;
+  }
+  if (!isDesktopShell) {
+    isAuthenticated.value = false;
+    adminUsername.value = "";
+  }
+  return false;
+}
+
+export async function refreshAuthStatus(options: { throwOnUnreachable?: boolean } = {}): Promise<boolean> {
+  try {
+    const res = await getAuthStatus();
+    applyPublicAuthFlags(res);
+    passwordConfigured.value = res.passwordConfigured;
+    authMethod.value = res.authMethod;
+    if (res.authenticated) {
+      adminUsername.value = res.username;
+      isAuthenticated.value = true;
+      return true;
+    }
+    if (!isDesktopShell) {
+      isAuthenticated.value = false;
+      adminUsername.value = "";
+    }
+    return false;
+  } catch (error) {
+    if (options.throwOnUnreachable && isBackendUnreachable(error)) {
+      throw error;
+    }
+    await refreshPublicStatus();
+    return false;
+  }
+}
 
 export async function refreshPublicStatus(): Promise<void> {
   try {
-    githubOAuthAvailable.value = (await getPublicSystemStatus()).githubOAuthAvailable;
+    applyPublicAuthFlags(await getPublicSystemStatus());
   } catch {
-    githubOAuthAvailable.value = false;
+    applyPublicAuthFlags(null);
   }
 }
 
@@ -167,29 +356,107 @@ export function startGithubLogin(): void {
   window.location.href = githubLoginUrl();
 }
 
-/** 用 GitHub 回调带回来的一次性 code 换 token；成功后当前浏览器就算登录了。 */
-export async function completeGithubLogin(code: string): Promise<boolean> {
+export function startGoogleLogin(): void {
+  window.location.href = googleLoginUrl();
+}
+
+export function startOidcLogin(): void {
+  window.location.href = oidcLoginUrl();
+}
+
+export async function loginWithDianaPassword(username: string, password: string): Promise<void> {
+  const result = await dianaPasswordLogin(username.trim(), password);
+  completeDianaSessionResult(result);
+}
+
+export function completeDianaSessionResult(result: Partial<AuthLoginResult>): void {
+  authCallbackError.value = "";
+  clearApiToken();
+  prefillPassword.value = "";
+  loginToken.value = readDesktopShellToken();
+  if (result.username) {
+    adminUsername.value = result.username;
+  }
+  authMethod.value = "diana";
+  if (result.status) {
+    status.value = result.status;
+  }
+  isAuthenticated.value = true;
+}
+
+const OAUTH_METHOD_LABELS = (): Record<string, string> => ({
+  github: "GitHub",
+  google: "Google",
+  oidc: oidcDisplayName.value || "SSO",
+  diana: "Diana",
+  qrcode: "扫码登录"
+});
+
+/** 用 OAuth 回调带回来的一次性 code 换 HttpOnly 会话 Cookie；成功后当前浏览器即完成登录。 */
+export async function completeOAuthLogin(code: string): Promise<boolean> {
   try {
-    const result = await exchangeGithubLogin(code);
-    persistApiToken(result.token);
-    loginToken.value = result.token;
-    updateFeedback(`已通过 GitHub 账号 ${result.login} 登录。`, "success");
+    const result = await exchangeOAuthLogin(code);
+    const method = result.method || "github";
+    const label = OAUTH_METHOD_LABELS()[method] || method;
+    authCallbackError.value = "";
+    clearApiToken();
+    loginToken.value = readDesktopShellToken();
+    isAuthenticated.value = true;
+    adminUsername.value = result.login;
+    authMethod.value = method;
+    updateFeedback(`已通过 ${label} 账号 ${result.login} 登录。`, "success");
     return true;
   } catch (error) {
-    toastError(error, "GitHub 登录失败。");
+    toastError(error, "第三方登录失败。");
     return false;
   }
 }
 
-export const githubSessions = ref<AuthSessionSummary[]>([]);
+export const completeGithubLogin = completeOAuthLogin;
+
+export const authSessions = ref<AuthSessionSummary[]>([]);
+export const githubSessions = computed(() =>
+  authSessions.value.filter(
+    (item) =>
+      item.authMethod === "github" ||
+      item.authMethod === "google" ||
+      item.authMethod === "oidc" ||
+      item.authMethod === "diana" ||
+      item.authMethod === "qrcode" ||
+      Boolean(item.githubLogin)
+  )
+);
+export const otherSessionCount = computed(() => authSessions.value.filter((item) => !item.current).length);
 export const loadingSessions = computed(() => isBusy("auth-sessions"));
+export const savingCredentials = computed(() => isBusy("save-credentials"));
+
+export async function saveAdminCredentials(payload: {
+  newUsername: string;
+  newPassword: string;
+}): Promise<boolean> {
+  return withBusy("save-credentials", async () => {
+    try {
+      const wasConfigured = passwordConfigured.value;
+      const result = await changeAdminCredentials(payload);
+      adminUsername.value = result.username;
+      recentSavedPassword.value = payload.newPassword;
+      passwordConfigured.value = true;
+      void refreshAuthSessions();
+      updateFeedback(wasConfigured ? "管理员账号与密码已更新。" : "管理员密码已设置。", "success");
+      return true;
+    } catch (error) {
+      toastError(error, "更新账号与密码失败。");
+      return false;
+    }
+  });
+}
 
 export async function refreshAuthSessions(): Promise<void> {
   await withBusy("auth-sessions", async () => {
     try {
-      githubSessions.value = await listAuthSessions();
+      authSessions.value = await listAuthSessions();
     } catch {
-      githubSessions.value = [];
+      authSessions.value = [];
     }
   });
 }
@@ -197,26 +464,45 @@ export async function refreshAuthSessions(): Promise<void> {
 export async function revokeSession(id: number): Promise<void> {
   await withBusy(`auth-session:${id}`, async () => {
     try {
-      await revokeAuthSession(id);
+      const result = await revokeAuthSession(id);
+      if (result.current && !isDesktopShell) {
+        await logout();
+        return;
+      }
       await refreshAuthSessions();
-      updateFeedback("已撤销该登录会话。", "success");
+      updateFeedback("该设备已登出。", "success");
     } catch (error) {
       toastError(error, "撤销登录会话失败。");
     }
   });
 }
 
+export async function revokeOtherSessions(): Promise<void> {
+  await withBusy("auth-session:others", async () => {
+    try {
+      const result = await revokeOtherAuthSessions();
+      await refreshAuthSessions();
+      updateFeedback(`已登出其他 ${result.revoked} 个设备。`, "success");
+    } catch (error) {
+      toastError(error, "登出其他设备失败。");
+    }
+  });
+}
+
 export const rotatingToken = computed(() => isBusy("rotate-token"));
 
-/** 重新生成静态 token；当前会话立即换用新 token，避免自己把自己踢下线。 */
+/** 重新生成 API / MCP 静态令牌；若当前用的是静态令牌则同步刷新本地缓存。 */
 export async function rotateToken(): Promise<void> {
   await withBusy("rotate-token", async () => {
     try {
+      const hadStoredToken = Boolean(readApiToken() && !readDesktopShellToken());
       const next = await rotateApiToken();
       settings.value = next;
       syncSettingsForm(next);
-      persistApiToken(next.token);
-      loginToken.value = next.token;
+      if (hadStoredToken) {
+        persistApiToken(next.token);
+        loginToken.value = next.token;
+      }
       updateFeedback(t("settings.saved"), "success");
     } catch (error) {
       toastError(error, t("settings.saveFailed"));
@@ -250,8 +536,7 @@ let savedFlashTimer: ReturnType<typeof setTimeout> | null = null;
 function buildPatch(keys: ReadonlyArray<keyof AppSettings>): Partial<AppSettings> {
   const patch: Record<string, unknown> = {};
   for (const key of keys) {
-    const value = settingsForm[key];
-    patch[key] = Array.isArray(value) ? [...value] : value;
+    patch[key] = cloneSettingValue(settingsForm[key]);
   }
   return patch as Partial<AppSettings>;
 }
@@ -273,14 +558,13 @@ function flashSaved(): void {
 function acceptSaved(next: AppSettings, keys: ReadonlyArray<keyof AppSettings>): void {
   settings.value = next;
   for (const key of keys) {
-    const value = next[key];
-    (settingsForm as Record<string, unknown>)[key] = Array.isArray(value) ? [...value] : value;
+    (settingsForm as Record<string, unknown>)[key] = cloneSettingValue(next[key]);
   }
   syncThemeAccent(next.themeAccent);
 }
 
 /** 提交给定字段。非法值就地标红、不提交，也不静默丢弃。 */
-export function saveSettingsFields(inputKeys: ReadonlyArray<keyof AppSettings>): Promise<void> {
+export async function saveSettingsFields(inputKeys: ReadonlyArray<keyof AppSettings>): Promise<void> {
   let keys = inputKeys;
   if (!keys.length) {
     return saveQueue.then(() => undefined);
@@ -296,6 +580,7 @@ export function saveSettingsFields(inputKeys: ReadonlyArray<keyof AppSettings>):
   }
   keys = fresh;
 
+  const { updateSettingsSchema } = await import("@shared/schemas");
   const parsed = updateSettingsSchema.safeParse(buildPatch(keys));
   if (!parsed.success) {
     for (const issue of parsed.error.issues) {
@@ -306,7 +591,7 @@ export function saveSettingsFields(inputKeys: ReadonlyArray<keyof AppSettings>):
     }
     settingsSaveState.value = "error";
     settingsSaveError.value = "有字段填得不对，这次没有保存。";
-    return Promise.resolve();
+    return;
   }
 
   for (const key of keys) {
@@ -360,6 +645,9 @@ export function changedSettingKeys(keys: ReadonlyArray<keyof AppSettings>): Arra
     const savedValue = saved[key];
     if (Array.isArray(formValue) && Array.isArray(savedValue)) {
       return formValue.join("\u0000") !== savedValue.join("\u0000");
+    }
+    if (formValue && savedValue && typeof formValue === "object" && typeof savedValue === "object") {
+      return JSON.stringify(formValue) !== JSON.stringify(savedValue);
     }
     return formValue !== savedValue;
   });

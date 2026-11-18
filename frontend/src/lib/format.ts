@@ -11,14 +11,24 @@ export function formatBytes(value: number): string {
 }
 
 export function formatSpeed(value: number): string {
-  return `${formatBytes(value)}/s`;
+  if (value <= 0) {
+    return "0 B/s";
+  }
+  const units = ["B/s", "KB/s", "MB/s", "GB/s", "TB/s"];
+  const exponent = Math.min(Math.floor(Math.log(value) / Math.log(1024)), units.length - 1);
+  const size = value / 1024 ** exponent;
+  const decimals = exponent >= 2 && size < 100 ? 1 : 0;
+  return `${size.toFixed(decimals)} ${units[exponent]}`;
 }
 
 export function progressPercent(download: DownloadJob): number {
   if (!download.totalLength) {
     return 0;
   }
-  return Math.min(100, Math.round((download.completedLength / download.totalLength) * 100));
+  if (download.status === "complete" || download.completedLength >= download.totalLength) {
+    return 100;
+  }
+  return Math.min(99, Math.max(0, Math.floor((download.completedLength / download.totalLength) * 100)));
 }
 
 export function formatDateTime(value: string | null, fallback = "未刷新"): string {

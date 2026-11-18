@@ -37,12 +37,16 @@ func (a *App) discoveryCached(ctx context.Context, key string, ttl, stale time.D
 		}
 		_ = a.Store.Put("discovery-cache", key, Obj{"value": result, "savedAt": time.Now().Unix()})
 		// Bound storage even when users explore many titles and search terms.
-		_, _ = a.Store.db.Exec("DELETE FROM documents WHERE kind='discovery-cache' AND rowid NOT IN (SELECT rowid FROM documents WHERE kind='discovery-cache' ORDER BY rowid DESC LIMIT 512)")
+		_, _ = a.Store.db.Exec("DELETE FROM documents WHERE kind='discovery-cache' AND rowid NOT IN (SELECT rowid FROM documents WHERE kind='discovery-cache' ORDER BY rowid DESC LIMIT 2048)")
 		return result, nil
 	})
 	if err != nil {
 		return nil, err
 	}
+	return cloneCachedObj(value)
+}
+
+func cloneCachedObj(value any) (Obj, error) {
 	// singleflight shares its result: callers must not share mutable maps/slices.
 	data, err := json.Marshal(value)
 	if err != nil {
@@ -51,4 +55,33 @@ func (a *App) discoveryCached(ctx context.Context, key string, ttl, stale time.D
 	var copy Obj
 	err = json.Unmarshal(data, &copy)
 	return copy, err
+}
+
+func (a *App) peekDiscoveryCache(key string, ttl time.Duration) (Obj, bool) {
+	cached, err := a.Store.Get("discovery-cache", key)
+	if err != nil || cached == nil {
+		return nil, false
+	}
+	age := time.Now().Unix() - num(cached["savedAt"])
+	if age < 0 || age >= int64(ttl.Seconds()) {
+		return nil, false
+	}
+	copied, err := cloneCachedObj(cached["value"])
+	if err != nil || copied == nil {
+		return nil, false
+	}
+	return copied, true
+}
+
+func (a *App) seedDiscoveryCacheIfAbsent(key string, value Obj, ttl time.Duration) {
+	if value == nil {
+		return
+	}
+	if cached, err := a.Store.Get("discovery-cache", key); err == nil && cached != nil {
+		age := time.Now().Unix() - num(cached["savedAt"])
+		if age >= 0 && age < int64(ttl.Seconds()) {
+			return
+		}
+	}
+	_ = a.Store.Put("discovery-cache", key, Obj{"value": value, "savedAt": time.Now().Unix()})
 }

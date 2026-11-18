@@ -1,12 +1,15 @@
 import { computed, ref } from "vue";
 
 import { DEFAULT_THEME_ACCENT } from "@shared/index";
+import { readStorageItem } from "../lib/storageKeys";
 
 export type ThemeMode = "system" | "light" | "dark";
 
-const THEME_MODE_KEY = "anime-rss-theme-mode";
+const THEME_MODE_KEY = "bgmcat.theme.mode";
+const LEGACY_THEME_MODE_KEY = "anime-rss-theme-mode";
 /** 主题色的真身在设置里（跟着账号走）；这里只缓存一份，用来在设置到达前先上色，免得闪一下默认蓝。 */
-const THEME_ACCENT_KEY = "anime-rss-theme-accent";
+const THEME_ACCENT_KEY = "bgmcat.theme.accent";
+const LEGACY_THEME_ACCENT_KEY = "anime-rss-theme-accent";
 
 const HEX_RE = /^#[0-9a-fA-F]{6}$/u;
 
@@ -16,11 +19,11 @@ function normalizeAccent(value: unknown): string | null {
 }
 
 export const themeAccent = ref<string>(
-  normalizeAccent(window.localStorage.getItem(THEME_ACCENT_KEY)) ?? DEFAULT_THEME_ACCENT
+  normalizeAccent(readStorageItem(THEME_ACCENT_KEY, LEGACY_THEME_ACCENT_KEY)) ?? DEFAULT_THEME_ACCENT
 );
 
 export const themeMode = ref<ThemeMode>(
-  (window.localStorage.getItem(THEME_MODE_KEY) as ThemeMode | null) ?? "system"
+  (readStorageItem(THEME_MODE_KEY, LEGACY_THEME_MODE_KEY) as ThemeMode | null) ?? "system"
 );
 
 export const activeThemeLabel = computed(() => {

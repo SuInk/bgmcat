@@ -5,18 +5,25 @@ import type { Component } from "vue";
 import type { AppSettings } from "@shared/index";
 
 import AppNavIcon from "../components/layout/AppNavIcon.vue";
-import { settingsPageVisibleKey, type SettingsPageKey } from "../components/settings/context";
+import {
+  normalizeSettingsPageKey,
+  requestedProbeTarget,
+  settingsOpenPageKey,
+  settingsOpenProbeKey,
+  settingsPageVisibleKey,
+  type SettingsPageKey
+} from "../components/settings/context";
 import AboutPage from "../components/settings/pages/AboutPage.vue";
 import DataPage from "../components/settings/pages/DataPage.vue";
 import AiPage from "../components/settings/pages/AiPage.vue";
-import CloudPage from "../components/settings/pages/CloudPage.vue";
 import DownloadPage from "../components/settings/pages/DownloadPage.vue";
 import GeneralPage from "../components/settings/pages/GeneralPage.vue";
-import GithubPage from "../components/settings/pages/GithubPage.vue";
-import MetadataPage from "../components/settings/pages/MetadataPage.vue";
+import NetworkPage from "../components/settings/pages/NetworkPage.vue";
 import RemotePage from "../components/settings/pages/RemotePage.vue";
 import SourcesPage from "../components/settings/pages/SourcesPage.vue";
 import TunnelPage from "../components/settings/pages/TunnelPage.vue";
+import { readStorageItem } from "../lib/storageKeys";
+import { requestedSettingsPage } from "../stores/router";
 import {
   changedSettingKeys,
   retrySettingsSave,
@@ -47,27 +54,25 @@ const PAGE_GROUPS: Array<{ label: string; pages: SettingsPage[] }> = [
   {
     label: "应用",
     pages: [
-      { key: "general", label: "常规", desc: "外观、刷新频率和 Go 服务。", icon: "settings", component: GeneralPage },
-      { key: "data", label: "数据与备份", desc: "订阅、下载记录和设置都存在数据目录里，可以随时备份与恢复。", icon: "database", component: DataPage, single: true },
-      { key: "about", label: "关于与更新", desc: "当前版本与自动更新策略。", icon: "info", component: AboutPage, single: true }
+      { key: "general", label: "常规", desc: "", icon: "settings", component: GeneralPage },
+      { key: "data", label: "存储与备份", desc: "", icon: "database", component: DataPage },
+      { key: "about", label: "关于与更新", desc: "", icon: "info", component: AboutPage, single: true }
     ]
   },
   {
-    label: "下载与资源",
+    label: "下载与数据",
     pages: [
-      { key: "download", label: "下载", desc: "下载目录、下载器、Tracker 和在线播放。", icon: "downloads", component: DownloadPage },
-      { key: "cloud", label: "云盘归档", desc: "下载完成后自动上传到 Google Drive，校验通过后可清理本地文件。", icon: "cloud-upload", component: CloudPage, single: true },
-      { key: "sources", label: "资源站", desc: "种子从哪些站点找，以及蜜柑计划的访问方式。", icon: "subscriptions", component: SourcesPage },
-      { key: "metadata", label: "番剧信息", desc: "番名、评分、简介和封面从哪儿来。", icon: "book", component: MetadataPage, single: true },
-      { key: "ai", label: "本地 AI", desc: "用本机的 Ollama 模型帮你挑资源，数据不出这台机器。", icon: "sparkles", component: AiPage, single: true }
+      { key: "download", label: "下载", desc: "", icon: "downloads", component: DownloadPage, single: true },
+      { key: "sources", label: "数据源", desc: "", icon: "subscriptions", component: SourcesPage },
+      { key: "ai", label: "AI 精筛", desc: "", icon: "sparkles", component: AiPage, single: true }
     ]
   },
   {
-    label: "远程访问",
+    label: "网络与安全",
     pages: [
-      { key: "remote", label: "访问与口令", desc: "从其他设备打开 WebUI 需要的地址、口令和网络设置。", icon: "globe", component: RemotePage },
-      { key: "tunnel", label: "Cloudflare 隧道", desc: "不开端口、不配路由器，把 WebUI 安全地放到公网上。", icon: "cloud", component: TunnelPage, single: true },
-      { key: "github", label: "GitHub 登录", desc: "从公网打开时，用 GitHub 账号登录代替粘贴 token。", icon: "key", component: GithubPage, single: true }
+      { key: "network", label: "网络直连", desc: "", icon: "integrations", component: NetworkPage, single: true },
+      { key: "remote", label: "访问与安全", desc: "", icon: "globe", component: RemotePage },
+      { key: "tunnel", label: "公网隧道", desc: "", icon: "cloud", component: TunnelPage, single: true }
     ]
   }
 ];
@@ -75,12 +80,14 @@ const PAGE_GROUPS: Array<{ label: string; pages: SettingsPage[] }> = [
 const ALL_PAGES = PAGE_GROUPS.flatMap((group) => group.pages);
 
 // —— 分类导航 ——
-const SETTINGS_PAGE_KEY = "anime-rss.settings.page";
+const SETTINGS_PAGE_KEY = "bgmcat.settings.page";
+const LEGACY_SETTINGS_PAGE_KEY = "anime-rss.settings.page";
 
 function readStoredPage(): SettingsPageKey {
   try {
-    const stored = window.localStorage.getItem(SETTINGS_PAGE_KEY) as SettingsPageKey | null;
-    return stored && ALL_PAGES.some((page) => page.key === stored) ? stored : "general";
+    const raw = readStorageItem(SETTINGS_PAGE_KEY, LEGACY_SETTINGS_PAGE_KEY);
+    const normalized = normalizeSettingsPageKey(raw);
+    return ALL_PAGES.some((page) => page.key === normalized) ? normalized : "general";
   } catch {
     return "general";
   }
@@ -102,14 +109,20 @@ watch(activePage, () => nextTick(revealActiveNavLink));
 watch(settingsLayoutRef, (el) => el && nextTick(revealActiveNavLink));
 
 function openPage(key: SettingsPageKey): void {
-  activePage.value = key;
+  const normalized = normalizeSettingsPageKey(key);
+  activePage.value = normalized;
   settingsQuery.value = "";
   settingsLayoutRef.value?.scrollTo({ top: 0 });
   try {
-    window.localStorage.setItem(SETTINGS_PAGE_KEY, key);
+    window.localStorage.setItem(SETTINGS_PAGE_KEY, normalized);
   } catch {
     // 存不了就每次从「常规」开始，不影响使用
   }
+}
+
+function openProbe(targetId: string, host?: string, name?: string): void {
+  requestedProbeTarget.value = { id: targetId, host, name };
+  openPage("network");
 }
 
 // —— 搜索 ——
@@ -125,6 +138,19 @@ function isPageVisible(key: SettingsPageKey): boolean {
 }
 
 provide(settingsPageVisibleKey, isPageVisible);
+provide(settingsOpenPageKey, openPage);
+provide(settingsOpenProbeKey, openProbe);
+
+watch(
+  requestedSettingsPage,
+  (nextPage) => {
+    if (nextPage) {
+      openPage(nextPage);
+      requestedSettingsPage.value = null;
+    }
+  },
+  { immediate: true }
+);
 
 function applySettingsSearch(): void {
   const root = settingsShellRef.value;
@@ -182,7 +208,16 @@ watch(settingsQuery, async () => {
 
 // 这几个开关会让小节或行出现/消失，搜索中的话重新过滤一遍
 watch(
-  () => [settingsForm.downloadClient, settingsForm.githubOAuthEnabled, settingsForm.tunnelMode, settingsForm.tunnelCredentialMode],
+  () => [
+    settingsForm.downloadClient,
+    settingsForm.cloudProvider,
+    settingsForm.githubOAuthEnabled,
+    settingsForm.googleOAuthEnabled,
+    settingsForm.dianaAuthEnabled,
+    settingsForm.oidcEnabled,
+    settingsForm.tunnelMode,
+    settingsForm.tunnelCredentialMode
+  ],
   () => {
     if (searching.value) {
       void nextTick(applySettingsSearch);
@@ -202,9 +237,13 @@ const IMMEDIATE_KEYS = [
   // themeAccent 不在这里：取色器拖动时每一帧都会写它，得由外观页自己决定何时提交
   "exposeMcpPublicly",
   "githubOAuthEnabled",
+  "googleOAuthEnabled",
+  "dianaAuthEnabled",
+  "oidcEnabled",
   "minimizeToTray",
   "launchAtLogin",
   "downloadClient",
+  "cloudProvider",
   "defaultSaveTo",
   "localAiEnabled",
   "aria2Enabled",
@@ -219,7 +258,8 @@ const IMMEDIATE_KEYS = [
   "tunnelCredentialMode",
   "tunnelAutoRestart",
   "enabledResourceProviders",
-  "resourceProviderOrder"
+  "resourceProviderOrder",
+  "providerMirrors"
 ] as const satisfies ReadonlyArray<keyof AppSettings>;
 
 /** 其余全是自由文本/数字，只在失焦或回车时提交。 */
@@ -289,14 +329,8 @@ const SAVE_STATE_LABEL: Record<string, string> = {
         <header class="settings-page-head">
           <div class="min-w-0">
             <h2 class="settings-page-title">{{ searching ? `搜索「${settingsQuery.trim()}」` : activePageMeta.label }}</h2>
-            <p class="settings-page-desc">
-              {{ searching ? (hasSearchHits ? "下面是所有分类里匹配的设置项。" : "没有匹配的设置项，换个关键词试试。") : activePageMeta.desc }}
-            </p>
+            <p v-if="searching && !hasSearchHits" class="settings-page-desc">无匹配设置项</p>
           </div>
-          <!--
-            自动保存的代价是「存没存上」变得不可见，所以这条指示器是必需品：
-            失败时不能只弹个 toast 就完事，得留在原地、能点重试。
-          -->
           <span
             v-if="settingsSaveState !== 'idle'"
             class="status-pill shrink-0"
@@ -308,7 +342,6 @@ const SAVE_STATE_LABEL: Record<string, string> = {
             {{ SAVE_STATE_LABEL[settingsSaveState] }}
             <button v-if="settingsRetryable" type="button" class="ml-1 underline" @click="retrySettingsSave">重试</button>
           </span>
-          <span v-else class="shrink-0 pt-1.5 text-xs text-[var(--muted)]">改动自动保存</span>
         </header>
 
         <form

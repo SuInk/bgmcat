@@ -2,8 +2,18 @@
 import { computed, ref, watch } from "vue";
 
 import type { AnimeDetail, DownloadConflictStrategy, DownloadJob } from "@shared/index";
-import { cloudArchiveLabel } from "../../lib/cloudArchive";
+import {
+  canArchiveToCloud,
+  canCancelCloudArchive,
+  cloudArchiveLabel,
+  cloudUploadProgress,
+  isCloudFailed,
+  isCloudStored,
+  isCloudTransferring
+} from "../../lib/cloudArchive";
 import { extractResolutionLabel } from "../../lib/mikan";
+import { computeDownloadsTotalProgress } from "../../lib/downloadGrouping";
+import { formatSpeed } from "../../lib/format";
 import AppNavIcon from "../layout/AppNavIcon.vue";
 
 export interface DownloadEpisodeGroup {
@@ -23,8 +33,10 @@ type DetailTab = "episodes" | "files" | "logs" | "history";
  * 集数 / 发布名 / 状态 / 进度 / 大小 / 操作 各占一列，发布名拿主要份额。
  */
 const props = defineProps<{
-  /** 手机上的独立详情页里用：不要缩进和左侧竖线，那是「挂在上面那一行下面」的视觉提示 */
+  /** 手机上的独立详情页或右侧栏里用：不要缩进和左侧竖线，那是「挂在上面那一行下面」的视觉提示 */
   flat?: boolean;
+  /** 是否显示顶部状态/速度/进度概览条（仅全屏详情页需要，右侧并排栏与左侧列表同屏无需重复） */
+  showOverview?: boolean;
   downloads: DownloadJob[];
   episodes: DownloadEpisodeGroup[];
   animeDetail: AnimeDetail | null;
@@ -45,52 +57,111 @@ const emit = defineEmits<{
   (event: "pause", gid: string): void;
   (event: "resume", gid: string): void;
   (event: "remove", download: DownloadJob): void;
+  (event: "archive", gid: string): void;
+  (event: "cancel-archive", gid: string): void;
+  (event: "archive-batch", gids: string[]): void;
+  (event: "share-group"): void;
+  (event: "share-episode", payload: { download: DownloadJob; episodeLabel: string | null }): void;
 }>();
 
 const activeTab = ref<DetailTab>("episodes");
 /** 一集有多个版本时才需要再往下钻一层；同样只展开一个，展开区不至于无限长 */
 const expandedEpisodeKey = ref<string | null>(null);
 
-const statusPriority: Record<DownloadJob["status"], number> = {
-  active: 0,
-  waiting: 1,
-  queued: 2,
-  paused: 3,
-  error: 4,
-  complete: 5,
-  removed: 6
-};
+function rowPriority(item: DownloadJob): number {
+  if (item.status === "complete") {
+    if (isCloudTransferring(item)) return 0.5;
+    if (isCloudFailed(item)) return 4;
+  }
+  const map: Record<DownloadJob["status"], number> = {
+    active: 0,
+    waiting: 1,
+    queued: 2,
+    paused: 3,
+    error: 4,
+    complete: 5,
+    removed: 6
+  };
+  return map[item.status];
+}
 
 const primaryDownload = computed(() => primaryForDownloads(props.downloads));
-const completedLength = computed(() => props.downloads.reduce((sum, download) => sum + download.completedLength, 0));
-const totalLength = computed(() => props.downloads.reduce((sum, download) => sum + download.totalLength, 0));
-const aggregateProgress = computed(() => progressForDownloads(props.downloads));
-const totalDownloadSpeed = computed(() => props.downloads.reduce((sum, download) => sum + download.downloadSpeed, 0));
-const totalUploadSpeed = computed(() => props.downloads.reduce((sum, download) => sum + download.uploadSpeed, 0));
-const remainingSeconds = computed(() => {
-  const remaining = Math.max(0, totalLength.value - completedLength.value);
-  if (remaining <= 0 || totalDownloadSpeed.value <= 0) {
-    return null;
-  }
-  return Math.ceil(remaining / totalDownloadSpeed.value);
-});
+const overviewSummary = computed(() => computeDownloadsTotalProgress(props.downloads));
+const totalLength = computed(() =>
+  overviewSummary.value.localTotalBytes > 0
+    ? overviewSummary.value.localTotalBytes
+    : overviewSummary.value.estimatedTotalBytes
+);
+const aggregateProgress = computed(() => overviewSummary.value.percent);
+const aggregateProgressWidth = computed(() => overviewSummary.value.widthPercent);
+const totalDownloadSpeed = computed(() => overviewSummary.value.downloadSpeed);
+const totalUploadSpeed = computed(() => overviewSummary.value.uploadSpeed);
+const totalCloudSpeed = computed(() => overviewSummary.value.cloudSpeed);
+const remainingSeconds = computed(() => overviewSummary.value.etaSeconds);
 const detailReady = computed(() => props.detailBelongsToGroup && !props.detailLoading);
 const displaySummary = computed(() =>
   detailReady.value ? props.animeDetail?.summary || props.animeDetail?.intro || null : null
 );
-const sourceLabel = computed(() => {
-  if (detailReady.value && props.animeDetail?.anime.mikanId) {
-    return "Mikan RSS";
+/** 全部下完且没有进行中/报错转存：概览只说「已完成 · 大小」 */
+const allComplete = computed(
+  () =>
+    props.downloads.length > 0 &&
+    overviewSummary.value.finishedTaskCount === props.downloads.length
+);
+const overviewStatusLabel = computed(() => {
+  if (allComplete.value) {
+    return overviewSummary.value.cloudStoredCount > 0 ? "已存云盘" : "已完成";
   }
-  if (primaryDownload.value?.feedItemSubscriptionId) {
-    return `订阅 #${primaryDownload.value.feedItemSubscriptionId}`;
+  const hasActiveDl = props.downloads.some((d) => d.status === "active");
+  const hasCloudActive = props.downloads.some(isCloudTransferring);
+  if (hasActiveDl && hasCloudActive) {
+    return "下载与转存中";
   }
-  return primaryDownload.value?.feedItemSourceUrl ? "RSS / Torrent" : "下载任务";
+  if (hasActiveDl) {
+    return "下载中";
+  }
+  if (hasCloudActive) {
+    return "转存云盘中";
+  }
+  if (props.downloads.some((d) => d.status === "error" || isCloudFailed(d))) {
+    return "异常";
+  }
+  if (props.downloads.some((d) => d.status === "waiting" || d.status === "queued")) {
+    return "等待中";
+  }
+  if (props.downloads.some((d) => d.status === "paused")) {
+    return "暂停中";
+  }
+  return primaryDownload.value ? statusLabel(primaryDownload.value.status) : "等待中";
 });
-/** 全部下完：概览只说「已完成 · 大小」，0 B/s 的速度和满格进度条都是噪音 */
-const allComplete = computed(() => props.downloads.length > 0 && props.downloads.every((download) => download.status === "complete"));
+const overviewBytesLabel = computed(() => {
+  const s = overviewSummary.value;
+  const approx = s.hasUnresolvedSize ? "~" : "";
+  if (s.hasCloudPipeline && s.cloudTotalBytes > 0) {
+    if (!s.allLocalComplete) {
+      return `下载 ${props.formatBytes(s.localCompletedBytes)} / ${approx}${props.formatBytes(s.estimatedTotalBytes)} · 云盘 ${props.formatBytes(s.cloudUploadedBytes)} / ${approx}${props.formatBytes(s.cloudTotalBytes)}`;
+    }
+    return `云盘 ${props.formatBytes(s.cloudUploadedBytes)} / ${props.formatBytes(s.cloudTotalBytes)}`;
+  }
+  if (s.estimatedTotalBytes > 0) {
+    return `${props.formatBytes(s.localCompletedBytes)} / ${approx}${props.formatBytes(s.estimatedTotalBytes)}`;
+  }
+  return "";
+});
+const taskCompletionLabel = computed(() => {
+  if (props.downloads.length <= 1) {
+    return null;
+  }
+  return `已完成 ${overviewSummary.value.finishedTaskCount} / ${overviewSummary.value.totalTaskCount}`;
+});
 const resumableDownloads = computed(() => props.downloads.filter(canResume));
 const pausableDownloads = computed(() => props.downloads.filter(canPause));
+const archivableCompletedGids = computed(() =>
+  props.downloads.filter((download) => download.status === "complete" && canArchiveToCloud(download)).map((d) => d.gid)
+);
+const shareableCount = computed(() =>
+  props.downloads.filter((download) => download.canPlayExistingFile || download.status === "complete").length
+);
 const conflictDownloads = computed(() =>
   props.downloads.filter((download) => download.canResolveConflict && download.issueKind === "file-conflict")
 );
@@ -104,7 +175,7 @@ const logEntries = computed(() =>
     return [
       {
         gid: download.gid,
-        level: download.status === "error" || download.issueKind ? "异常" : "提示",
+        level: download.status === "error" || download.issueKind || isCloudFailed(download) ? "异常" : "提示",
         message,
         time: download.updatedAt
       }
@@ -121,7 +192,7 @@ const historyEntries = computed(() =>
     },
     {
       key: `${download.gid}:updated`,
-      label: statusLabel(download.status),
+      label: cloudArchiveLabel(download) || statusLabel(download.status),
       detail: `GID ${download.gid}`,
       time: download.updatedAt
     }
@@ -191,8 +262,14 @@ function statusLabel(status: DownloadJob["status"]): string {
   }
 }
 
-function statusPillClass(status: DownloadJob["status"]): string {
-  switch (status) {
+function rowStatusPillClass(download: DownloadJob): string {
+  if (isCloudTransferring(download)) {
+    return "border-[var(--accent-line)] bg-[var(--accent-soft)] text-[var(--accent-vivid)]";
+  }
+  if (isCloudFailed(download)) {
+    return "border-[var(--err-soft)] bg-[var(--err-soft)] text-[var(--err)]";
+  }
+  switch (download.status) {
     case "active":
       return "border-[var(--accent-line)] bg-[var(--accent-soft)] text-[var(--accent)]";
     case "complete":
@@ -209,17 +286,49 @@ function statusPillClass(status: DownloadJob["status"]): string {
   }
 }
 
-/** 已完成才用绿色；其余进度一律走主色，避免「绿色=完成」的语义被稀释 */
+/** 已完成且未在转存时用绿色；转存报错用红色；其余进行中进度一律走主色 */
 function progressBarClass(downloads: DownloadJob[]): string {
+  if (downloads.some((d) => d.status === "error" || isCloudFailed(d))) {
+    return "bg-[var(--err)]";
+  }
+  if (downloads.some(isCloudTransferring)) {
+    return "bg-[var(--accent-vivid)]";
+  }
   return downloads.every((download) => download.status === "complete")
     ? "bg-[var(--ok)]"
     : "bg-[var(--accent-vivid)]";
 }
 
+function rowEffectivePercent(download: DownloadJob): number {
+  if (download.status === "complete" && (isCloudTransferring(download) || isCloudFailed(download))) {
+    return cloudUploadProgress(download).percent;
+  }
+  return props.progressPercent(download);
+}
+
+function rowEffectiveWidth(download: DownloadJob): number {
+  if (download.status === "complete" && (isCloudTransferring(download) || isCloudFailed(download))) {
+    const prog = cloudUploadProgress(download);
+    return prog.total > 0 ? Math.max(0, Math.min(100, Math.round((prog.uploaded / prog.total) * 1000) / 10)) : 0;
+  }
+  if (!download.totalLength) {
+    return 0;
+  }
+  return Math.max(0, Math.min(100, Math.round((download.completedLength / download.totalLength) * 1000) / 10));
+}
+
 function primaryForDownloads(downloads: DownloadJob[]): DownloadJob | undefined {
-  return [...downloads].sort(
-    (left, right) => statusPriority[left.status] - statusPriority[right.status] || right.updatedAt.localeCompare(left.updatedAt)
-  )[0];
+  let best: DownloadJob | undefined;
+  for (const item of downloads) {
+    if (
+      !best ||
+      rowPriority(item) < rowPriority(best) ||
+      (rowPriority(item) === rowPriority(best) && item.updatedAt > best.updatedAt)
+    ) {
+      best = item;
+    }
+  }
+  return best;
 }
 
 /** 一集有多个版本时，代表任务可能是正在下的那个；播放要挑真正能播的版本 */
@@ -227,16 +336,34 @@ function playableForDownloads(downloads: DownloadJob[]): DownloadJob | undefined
   return downloads.find(canPlay);
 }
 
-function progressForDownloads(downloads: DownloadJob[]): number {
-  if (!downloads.length) {
-    return 0;
+function episodeCloudTarget(downloads: DownloadJob[]): DownloadJob | undefined {
+  return downloads.find((d) => isCloudTransferring(d) || isCloudFailed(d));
+}
+
+function episodeRowPercent(downloads: DownloadJob[]): number {
+  const cloudTarget = episodeCloudTarget(downloads);
+  if (episodeComplete(downloads) && cloudTarget) {
+    return cloudUploadProgress(cloudTarget).percent;
   }
-  const total = downloads.reduce((sum, download) => sum + download.totalLength, 0);
-  const completed = downloads.reduce((sum, download) => sum + download.completedLength, 0);
+  const total = downloads.reduce((sum, d) => sum + d.totalLength, 0);
+  const completed = downloads.reduce((sum, d) => sum + d.completedLength, 0);
   if (total > 0) {
-    return Math.max(0, Math.min(100, Math.round((completed / total) * 100)));
+    return completed >= total ? 99 : Math.max(0, Math.min(99, Math.floor((completed / total) * 100)));
   }
-  return Math.max(...downloads.map(props.progressPercent), 0);
+  return Math.round(downloads.reduce((sum, d) => sum + props.progressPercent(d), 0) / Math.max(1, downloads.length));
+}
+
+function episodeRowWidth(downloads: DownloadJob[]): number {
+  const cloudTarget = episodeCloudTarget(downloads);
+  if (episodeComplete(downloads) && cloudTarget) {
+    return rowEffectiveWidth(cloudTarget);
+  }
+  const total = downloads.reduce((sum, d) => sum + d.totalLength, 0);
+  const completed = downloads.reduce((sum, d) => sum + d.completedLength, 0);
+  if (total > 0) {
+    return Math.max(0, Math.min(100, Math.round((completed / total) * 1000) / 10));
+  }
+  return episodeRowPercent(downloads);
 }
 
 function sizeForDownloads(downloads: DownloadJob[]): string {
@@ -245,15 +372,23 @@ function sizeForDownloads(downloads: DownloadJob[]): string {
   return total > 0 ? `${props.formatBytes(completed)} / ${props.formatBytes(total)}` : props.formatBytes(completed);
 }
 
-/** 展开区的主列：优先给完整发布名，只有拿不到才退回集数标题 */
-/** 窄屏分集行第二行：字幕组 · 分辨率 · 大小，代替整条发布名 */
+/** 窄屏分集行第二行：字幕组 · 分辨率 · 大小 · 云盘归档状态 */
 function releaseMeta(downloads: DownloadJob[]): string {
   const name = releaseName(downloads);
   const subgroup = name.match(/^\s*[[【]([^\]】]+)[\]】]/)?.[1]?.trim();
   const size = episodeComplete(downloads)
     ? props.formatBytes(downloads.reduce((sum, download) => sum + download.totalLength, 0))
     : sizeForDownloads(downloads);
-  return [subgroup, extractResolutionLabel(name), size].filter(Boolean).join(" · ");
+  const primary = primaryForDownloads(downloads);
+  const cloudNote =
+    primary && isCloudStored(primary)
+      ? primary.cloudArchive?.status === "archived"
+        ? "已存云盘"
+        : "云端已校验"
+      : primary && primary.saveTo === "cloud" && !primary.cloudArchive && primary.status !== "complete"
+        ? "完成后存云盘"
+        : null;
+  return [subgroup, extractResolutionLabel(name), size, cloudNote].filter(Boolean).join(" · ");
 }
 
 function episodeComplete(downloads: DownloadJob[]): boolean {
@@ -303,19 +438,19 @@ function formatDuration(seconds: number | null): string {
   return `${rest}s`;
 }
 
+const dateTimeFormatter = new Intl.DateTimeFormat("zh-CN", {
+  month: "2-digit",
+  day: "2-digit",
+  hour: "2-digit",
+  minute: "2-digit"
+});
+
 function formatDateTime(value: string): string {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) {
     return value;
   }
-  return new Intl.DateTimeFormat("zh-CN", {
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit"
-  })
-    .format(date)
-    .replace(/\//g, "-");
+  return dateTimeFormatter.format(date).replace(/\//g, "-");
 }
 </script>
 
@@ -329,30 +464,30 @@ function formatDateTime(value: string): string {
     :class="props.flat ? '' : 'motion-drop px-2 pb-3 @min-[640px]:pl-[4.75rem]'"
   >
     <div class="grid gap-2">
-      <!-- 概览条：状态、进度、统计、批量操作全部横排，全宽下不必再竖着堆 -->
-      <!-- 就地展开时上面那一行已经有状态、进度和大小，这里不再抄一遍；手机全屏详情没有那一行，才要这条概览 -->
-      <div v-if="primaryDownload && props.flat" class="flex flex-wrap items-center gap-x-3 gap-y-2">
-        <span class="shrink-0 rounded-md border px-2 py-0.5 text-xs font-semibold" :class="statusPillClass(primaryDownload.status)">
-          {{ statusLabel(primaryDownload.status) }}
+      <!-- 概览条：状态、总进度、分阶段字节统计、批量操作全部横排 -->
+      <div v-if="primaryDownload && (props.showOverview ?? props.flat)" class="flex flex-wrap items-center gap-x-3 gap-y-2">
+        <span class="shrink-0 rounded-full border px-2.5 py-0.5 text-xs font-semibold" :class="rowStatusPillClass(primaryDownload)">
+          {{ overviewStatusLabel }}
         </span>
         <span v-if="allComplete" class="shrink-0 text-xs font-semibold tabular-nums text-[var(--muted)]">{{ props.formatBytes(totalLength) }}</span>
         <template v-else>
-          <span class="h-1.5 min-w-[8rem] flex-1 overflow-hidden rounded-full bg-[var(--tint-4)]">
+          <span class="progress-track w-32 shrink-0 sm:w-44">
             <span
-              class="block h-full rounded-full transition-[width] duration-300"
+              class="progress-fill"
               :class="progressBarClass(downloads)"
-              :style="{ width: `${aggregateProgress}%` }"
+              :style="{ width: `${aggregateProgressWidth}%` }"
             ></span>
           </span>
-          <span class="shrink-0 text-xs font-semibold tabular-nums text-[var(--ink)]">{{ aggregateProgress }}%</span>
-          <span class="shrink-0 text-xs font-semibold tabular-nums text-[var(--muted)]">
-            {{ props.formatBytes(completedLength) }} / {{ props.formatBytes(totalLength) }}
+          <span class="shrink-0 text-xs font-semibold tabular-nums text-[var(--ink)]">总进度 {{ aggregateProgress }}%</span>
+          <span v-if="overviewBytesLabel" class="shrink-0 text-xs font-semibold tabular-nums text-[var(--muted)]">
+            {{ overviewBytesLabel }}
           </span>
-          <span class="shrink-0 text-xs font-semibold tabular-nums text-[var(--muted)]">↓ {{ props.formatBytes(totalDownloadSpeed) }}/s</span>
-          <span class="shrink-0 text-xs font-semibold tabular-nums text-[var(--muted)]">↑ {{ props.formatBytes(totalUploadSpeed) }}/s</span>
-          <span v-if="remainingSeconds" class="shrink-0 text-xs font-semibold text-[var(--muted)]">剩余 {{ formatDuration(remainingSeconds) }}</span>
+          <span v-if="totalDownloadSpeed > 0" class="shrink-0 text-xs font-semibold tabular-nums text-[var(--muted)]">↓ {{ formatSpeed(totalDownloadSpeed) }}</span>
+          <span v-if="totalUploadSpeed > 0" class="shrink-0 text-xs font-semibold tabular-nums text-[var(--muted)]">↑ {{ formatSpeed(totalUploadSpeed) }}</span>
+          <span v-if="totalCloudSpeed > 0" class="shrink-0 text-xs font-semibold tabular-nums text-[var(--accent-vivid)]">☁↑ {{ formatSpeed(totalCloudSpeed) }}</span>
+          <span v-if="remainingSeconds" class="shrink-0 text-xs font-semibold tabular-nums text-[var(--muted)]">剩余 {{ formatDuration(remainingSeconds) }}</span>
         </template>
-        <span class="shrink-0 text-xs font-semibold text-[var(--muted)]">{{ sourceLabel }}</span>
+        <span v-if="taskCompletionLabel" class="shrink-0 text-xs font-semibold tabular-nums text-[var(--muted)]">{{ taskCompletionLabel }}</span>
         <span v-if="detailLoading" class="shrink-0 text-xs font-semibold text-[var(--muted)]">加载详情…</span>
 
         <span class="ml-auto flex shrink-0 flex-wrap gap-1.5">
@@ -380,7 +515,7 @@ function formatDateTime(value: string): string {
         {{ displaySummary }}
       </p>
 
-      <!-- 文件冲突以前只有 toast 能触发，现在就地给出三种处理方式 -->
+      <!-- 文件冲突就地给出三种处理方式 -->
       <div
         v-for="download in conflictDownloads"
         :key="`conflict:${download.gid}`"
@@ -399,27 +534,48 @@ function formatDateTime(value: string): string {
         </button>
       </div>
 
-      <!-- 分集是主角，文件 / 日志 / 记录是排查用的：做成一排安静的文字标签，不和行上的按钮抢 -->
-      <nav class="detail-tabs" aria-label="任务详情">
-        <button
-          v-for="tab in detailTabs"
-          :key="tab.key"
-          type="button"
-          class="detail-tab"
-          :class="{ 'is-active': activeTab === tab.key }"
-          :aria-pressed="activeTab === tab.key"
-          @click="activeTab = tab.key"
-        >
-          <span>{{ tab.label }}</span>
-          <span class="tabular-nums opacity-70">{{ tab.count }}</span>
-        </button>
-      </nav>
+      <!-- 分集标签栏 + 一键全部转存快捷入口 -->
+      <div class="detail-tabs-wrap">
+        <nav class="detail-tabs" aria-label="任务详情">
+          <button
+            v-for="tab in detailTabs"
+            :key="tab.key"
+            type="button"
+            class="detail-tab"
+            :class="{ 'is-active': activeTab === tab.key }"
+            :aria-pressed="activeTab === tab.key"
+            @click="activeTab = tab.key"
+          >
+            <span>{{ tab.label }}</span>
+            <span class="tabular-nums opacity-70">{{ tab.count }}</span>
+          </button>
+        </nav>
+
+        <div class="flex shrink-0 items-center gap-1.5">
+          <button
+            v-if="shareableCount > 0"
+            type="button"
+            class="cloud-batch-btn"
+            title="生成在线播放分享链接"
+            @click="emit('share-group')"
+          >
+            <AppNavIcon name="share" class="size-3.5" aria-hidden="true" />
+            <span>{{ episodes.length > 1 ? "分享整部" : "分享" }}</span>
+          </button>
+          <button
+            v-if="archivableCompletedGids.length > 1"
+            type="button"
+            class="cloud-batch-btn"
+            title="将本番所有已完成本地分集并发转存至 Google Drive"
+            @click="emit('archive-batch', archivableCompletedGids)"
+          >
+            <AppNavIcon name="cloud-upload" class="size-3.5" aria-hidden="true" />
+            <span>全部转存 ({{ archivableCompletedGids.length }})</span>
+          </button>
+        </div>
+      </div>
 
       <template v-if="activeTab === 'episodes'">
-        <!--
-          像视频 App 的「下载」页：左边集号方块，中间「第 N 集」+ 字幕组 · 清晰度 · 大小，
-          右边只放这集现在能做的事。以前宽屏是七列表格，整条发布名和「1 版」「已完成」挤在一行里抓不住重点。
-        -->
         <div v-for="episode in episodes" :key="episode.key" class="grid">
           <div
             class="episode-row"
@@ -437,27 +593,61 @@ function formatDateTime(value: string): string {
             <span class="grid min-w-0 gap-0.5">
               <span class="flex min-w-0 items-center gap-1.5 text-[13px] font-semibold text-[var(--ink)]">
                 <span class="truncate">{{ episode.episodeLabel ?? "未知集数" }}</span>
+                <span
+                  v-if="episode.downloads.some(isCloudStored)"
+                  class="inline-flex shrink-0 items-center gap-0.5 rounded-full border border-[var(--accent-line)] bg-[var(--accent-soft)] px-1.5 py-0.5 text-[10px] font-semibold text-[var(--accent-vivid)]"
+                >
+                  <AppNavIcon name="cloud" class="size-2.5" aria-hidden="true" />
+                  云盘
+                </span>
                 <span v-if="episode.downloads.length > 1" class="shrink-0 text-[11px] font-medium text-[var(--muted)]">
                   {{ episode.downloads.length }} 个版本
                   <span class="inline-block transition-transform" :class="expandedEpisodeKey === episode.key ? 'rotate-90' : ''" aria-hidden="true">›</span>
                 </span>
               </span>
-              <span class="truncate text-[11px] text-[var(--muted)]">{{ releaseMeta(episode.downloads) }}</span>
-              <span v-if="!episodeComplete(episode.downloads)" class="mt-1 flex max-w-sm items-center gap-2">
-                <span class="h-1 min-w-0 flex-1 overflow-hidden rounded-full bg-[var(--tint-4)]">
+              <span class="truncate text-[11px] tabular-nums text-[var(--muted)]">{{ releaseMeta(episode.downloads) }}</span>
+
+              <!-- 下载中或转存云盘中都显示实时进度条 -->
+              <span v-if="!episodeComplete(episode.downloads) || episodeCloudTarget(episode.downloads)" class="mt-1 flex min-w-0 items-center gap-2.5">
+                <span class="progress-track w-28 shrink-0 sm:w-36">
                   <span
-                    class="block h-full rounded-full"
+                    class="progress-fill"
                     :class="progressBarClass(episode.downloads)"
-                    :style="{ width: `${progressForDownloads(episode.downloads)}%` }"
+                    :style="{ width: `${episodeRowWidth(episode.downloads)}%` }"
                   ></span>
                 </span>
-                <span class="shrink-0 text-[11px] tabular-nums text-[var(--muted)]">
-                  {{ statusLabel(primaryForDownloads(episode.downloads)?.status ?? "waiting") }} · {{ progressForDownloads(episode.downloads) }}%
+                <span
+                  class="min-w-0 truncate text-[11px] tabular-nums"
+                  :class="episode.downloads.some(isCloudFailed) ? 'text-[var(--err)]' : 'text-[var(--muted)]'"
+                >
+                  <template v-if="episodeComplete(episode.downloads) && episodeCloudTarget(episode.downloads)">
+                    {{ cloudArchiveLabel(episodeCloudTarget(episode.downloads)!) }}
+                  </template>
+                  <template v-else>
+                    {{ statusLabel(primaryForDownloads(episode.downloads)?.status ?? "waiting") }} · {{ episodeRowPercent(episode.downloads) }}%
+                  </template>
                 </span>
+              </span>
+              <span
+                v-if="episodeCloudTarget(episode.downloads)?.cloudArchive?.error"
+                class="truncate text-[11px] text-[var(--err)]"
+                :title="episodeCloudTarget(episode.downloads)?.cloudArchive?.error ?? undefined"
+              >
+                {{ episodeCloudTarget(episode.downloads)?.cloudArchive?.error }}
               </span>
             </span>
 
             <span class="flex shrink-0 items-center gap-1" @click.stop>
+              <button
+                v-if="playableForDownloads(episode.downloads)"
+                type="button"
+                class="icon-btn reveal-on-hover"
+                :title="`分享 ${episode.episodeLabel ?? '该集'}`"
+                :aria-label="`分享 ${episode.episodeLabel ?? '该集'}`"
+                @click="emit('share-episode', { download: playableForDownloads(episode.downloads)!, episodeLabel: episode.episodeLabel })"
+              >
+                <AppNavIcon name="share" />
+              </button>
               <button
                 v-if="primaryForDownloads(episode.downloads)"
                 type="button"
@@ -468,6 +658,45 @@ function formatDateTime(value: string): string {
               >
                 <AppNavIcon name="trash" />
               </button>
+
+              <!-- 云盘转存操作：重试 / 取消 / 一键转存 -->
+              <template v-if="primaryForDownloads(episode.downloads)">
+                <button
+                  v-if="isCloudFailed(primaryForDownloads(episode.downloads)!)"
+                  type="button"
+                  class="icon-btn text-[var(--warn)] hover:text-[var(--accent-vivid)]"
+                  title="立即重试云盘转存"
+                  aria-label="立即重试云盘转存"
+                  :disabled="props.isDownloadRowBusy(primaryForDownloads(episode.downloads)!.gid)"
+                  @click="emit('archive', primaryForDownloads(episode.downloads)!.gid)"
+                >
+                  <AppNavIcon name="refresh" />
+                </button>
+                <button
+                  v-else-if="canArchiveToCloud(primaryForDownloads(episode.downloads)!)"
+                  type="button"
+                  class="icon-btn reveal-on-hover text-[var(--accent-vivid)]"
+                  :title="primaryForDownloads(episode.downloads)!.status === 'complete' ? '转存至 Google Drive' : '完成后自动转存至 Google Drive'"
+                  aria-label="转存至 Google Drive"
+                  :disabled="props.isDownloadRowBusy(primaryForDownloads(episode.downloads)!.gid)"
+                  @click="emit('archive', primaryForDownloads(episode.downloads)!.gid)"
+                >
+                  <AppNavIcon name="cloud-upload" />
+                </button>
+
+                <button
+                  v-if="isCloudTransferring(primaryForDownloads(episode.downloads)!) || isCloudFailed(primaryForDownloads(episode.downloads)!)"
+                  type="button"
+                  class="icon-btn text-[var(--muted)] hover:text-[var(--err)]"
+                  title="取消云盘转存"
+                  aria-label="取消云盘转存"
+                  :disabled="props.isDownloadRowBusy(primaryForDownloads(episode.downloads)!.gid)"
+                  @click="emit('cancel-archive', primaryForDownloads(episode.downloads)!.gid)"
+                >
+                  <AppNavIcon name="close" />
+                </button>
+              </template>
+
               <button
                 v-if="primaryForDownloads(episode.downloads) && (canPause(primaryForDownloads(episode.downloads)!) || canResume(primaryForDownloads(episode.downloads)!))"
                 type="button"
@@ -497,33 +726,55 @@ function formatDateTime(value: string): string {
             <div
               v-for="download in episode.downloads"
               :key="download.gid"
-              class="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1 rounded-md border-l-2 border-[var(--line)] px-2 py-1.5 hover:bg-[var(--tint-2)] @min-[820px]:grid-cols-[minmax(10rem,1fr)_5rem_minmax(7rem,9rem)_7.5rem_auto]"
+              class="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1 rounded-md border-l-2 border-[var(--line)] px-2 py-1.5 hover:bg-[var(--tint-2)] @min-[820px]:grid-cols-[minmax(10rem,1fr)_6.5rem_minmax(7rem,9rem)_7.5rem_auto]"
             >
               <span class="min-w-0 truncate text-xs text-[var(--muted)]" :title="props.downloadDisplayTitle(download)">
                 {{ props.downloadDisplayTitle(download) }}
               </span>
               <span
-                class="hidden w-fit shrink-0 rounded-md border px-2 py-0.5 text-[11px] font-semibold @min-[820px]:block"
-                :class="statusPillClass(download.status)"
+                class="hidden w-fit max-w-full shrink-0 truncate rounded-md border px-2 py-0.5 text-[11px] font-semibold @min-[820px]:block"
+                :class="rowStatusPillClass(download)"
               >
                 {{ cloudArchiveLabel(download) || statusLabel(download.status) }}
               </span>
               <span class="col-span-2 flex min-w-0 items-center gap-2 @min-[820px]:col-span-1">
                 <span class="h-1.5 min-w-0 flex-1 overflow-hidden rounded-full bg-[var(--tint-4)]">
                   <span
-                    class="block h-full rounded-full"
+                    class="block h-full rounded-full transition-[width] duration-300 ease-linear"
                     :class="progressBarClass([download])"
-                    :style="{ width: `${props.progressPercent(download)}%` }"
+                    :style="{ width: `${rowEffectiveWidth(download)}%` }"
                   ></span>
                 </span>
                 <span class="w-9 shrink-0 text-right text-[11px] font-semibold tabular-nums text-[var(--muted)]">
-                  {{ props.progressPercent(download) }}%
+                  {{ rowEffectivePercent(download) }}%
                 </span>
               </span>
               <span class="hidden truncate text-right text-[11px] font-semibold tabular-nums text-[var(--muted)] @min-[820px]:block">
                 {{ props.formatBytes(download.completedLength) }} / {{ props.formatBytes(download.totalLength) }}
               </span>
-              <span class="flex shrink-0 justify-end gap-1.5">
+              <span class="flex shrink-0 justify-end gap-1">
+                <button
+                  v-if="canArchiveToCloud(download)"
+                  type="button"
+                  class="icon-btn text-[var(--accent-vivid)]"
+                  :title="isCloudFailed(download) ? '重试转存' : '转存至 Google Drive'"
+                  :aria-label="isCloudFailed(download) ? '重试转存' : '转存至 Google Drive'"
+                  :disabled="props.isDownloadRowBusy(download.gid)"
+                  @click="emit('archive', download.gid)"
+                >
+                  <AppNavIcon :name="isCloudFailed(download) ? 'refresh' : 'cloud-upload'" />
+                </button>
+                <button
+                  v-if="canCancelCloudArchive(download) && (isCloudTransferring(download) || isCloudFailed(download))"
+                  type="button"
+                  class="icon-btn"
+                  title="取消转存"
+                  aria-label="取消转存"
+                  :disabled="props.isDownloadRowBusy(download.gid)"
+                  @click="emit('cancel-archive', download.gid)"
+                >
+                  <AppNavIcon name="close" />
+                </button>
                 <button
                   type="button"
                   class="icon-btn"
@@ -542,7 +793,7 @@ function formatDateTime(value: string): string {
                   :disabled="(!canPause(download) && !canResume(download)) || props.isDownloadRowBusy(download.gid)"
                   @click="triggerTransfer(download)"
                 >
-                  <AppNavIcon :name="canResume(download) ? 'play' : 'pause'" />
+                  <AppNavIcon :name="canResume(download) ? 'download' : 'pause'" />
                 </button>
                 <button
                   type="button"
@@ -561,7 +812,7 @@ function formatDateTime(value: string): string {
 
       <template v-else-if="activeTab === 'files'">
         <div
-          class="hidden grid-cols-[minmax(10rem,1fr)_5rem_minmax(7rem,9rem)_7.5rem_11rem_auto] items-center gap-3 border-b border-[var(--line)] px-2 pb-1.5 text-[11px] font-semibold text-[var(--muted)] @min-[820px]:grid"
+          class="hidden grid-cols-[minmax(10rem,1fr)_6.5rem_minmax(7rem,9rem)_7.5rem_9rem_auto] items-center gap-3 border-b border-[var(--line)] px-2 pb-1.5 text-[11px] font-semibold text-[var(--muted)] @min-[820px]:grid"
         >
           <span>文件 / 发布名</span>
           <span>状态</span>
@@ -573,34 +824,56 @@ function formatDateTime(value: string): string {
         <div
           v-for="download in downloads"
           :key="download.gid"
-          class="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1 rounded-md px-2 py-1.5 transition hover:bg-[var(--tint-2)] @min-[820px]:grid-cols-[minmax(10rem,1fr)_5rem_minmax(7rem,9rem)_7.5rem_11rem_auto]"
+          class="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1 rounded-md px-2 py-1.5 transition hover:bg-[var(--tint-2)] @min-[820px]:grid-cols-[minmax(10rem,1fr)_6.5rem_minmax(7rem,9rem)_7.5rem_9rem_auto]"
         >
           <span class="min-w-0 truncate text-xs font-semibold text-[var(--ink)]" :title="props.downloadDisplayTitle(download)">
             {{ props.downloadDisplayTitle(download) }}
           </span>
           <span
-            class="hidden w-fit shrink-0 rounded-md border px-2 py-0.5 text-[11px] font-semibold @min-[820px]:block"
-            :class="statusPillClass(download.status)"
+            class="hidden w-fit max-w-full shrink-0 truncate rounded-md border px-2 py-0.5 text-[11px] font-semibold @min-[820px]:block"
+            :class="rowStatusPillClass(download)"
           >
             {{ cloudArchiveLabel(download) || statusLabel(download.status) }}
           </span>
           <span class="col-span-2 flex min-w-0 items-center gap-2 @min-[820px]:col-span-1">
             <span class="h-1.5 min-w-0 flex-1 overflow-hidden rounded-full bg-[var(--tint-4)]">
               <span
-                class="block h-full rounded-full"
+                class="block h-full rounded-full transition-[width] duration-300 ease-linear"
                 :class="progressBarClass([download])"
-                :style="{ width: `${props.progressPercent(download)}%` }"
+                :style="{ width: `${rowEffectiveWidth(download)}%` }"
               ></span>
             </span>
             <span class="w-9 shrink-0 text-right text-[11px] font-semibold tabular-nums text-[var(--muted)]">
-              {{ props.progressPercent(download) }}%
+              {{ rowEffectivePercent(download) }}%
             </span>
           </span>
           <span class="hidden truncate text-right text-[11px] font-semibold tabular-nums text-[var(--muted)] @min-[820px]:block">
             {{ props.formatBytes(download.completedLength) }} / {{ props.formatBytes(download.totalLength) }}
           </span>
           <span class="hidden truncate text-[11px] font-semibold text-[var(--muted)] @min-[820px]:block">{{ download.gid }}</span>
-          <span class="flex shrink-0 justify-end gap-1.5">
+          <span class="flex shrink-0 justify-end gap-1">
+            <button
+              v-if="canArchiveToCloud(download)"
+              type="button"
+              class="icon-btn text-[var(--accent-vivid)]"
+              :title="isCloudFailed(download) ? '重试转存' : '转存至 Google Drive'"
+              :aria-label="isCloudFailed(download) ? '重试转存' : '转存至 Google Drive'"
+              :disabled="props.isDownloadRowBusy(download.gid)"
+              @click="emit('archive', download.gid)"
+            >
+              <AppNavIcon :name="isCloudFailed(download) ? 'refresh' : 'cloud-upload'" />
+            </button>
+            <button
+              v-if="canCancelCloudArchive(download) && (isCloudTransferring(download) || isCloudFailed(download))"
+              type="button"
+              class="icon-btn"
+              title="取消转存"
+              aria-label="取消转存"
+              :disabled="props.isDownloadRowBusy(download.gid)"
+              @click="emit('cancel-archive', download.gid)"
+            >
+              <AppNavIcon name="close" />
+            </button>
             <button type="button" class="icon-btn" title="播放" aria-label="播放" :disabled="!canPlay(download)" @click="emit('playback', download)">
               <AppNavIcon name="play" />
             </button>
@@ -612,7 +885,7 @@ function formatDateTime(value: string): string {
               :disabled="(!canPause(download) && !canResume(download)) || props.isDownloadRowBusy(download.gid)"
               @click="triggerTransfer(download)"
             >
-              <AppNavIcon :name="canResume(download) ? 'play' : 'pause'" />
+              <AppNavIcon :name="canResume(download) ? 'download' : 'pause'" />
             </button>
             <button
               type="button"
@@ -656,9 +929,9 @@ function formatDateTime(value: string): string {
         <div
           v-for="entry in historyEntries"
           :key="entry.key"
-          class="grid grid-cols-[minmax(0,1fr)_auto] items-baseline gap-x-3 gap-y-1 rounded-md px-2 py-1.5 @min-[820px]:grid-cols-[5.5rem_minmax(0,1fr)_7rem]"
+          class="grid grid-cols-[minmax(0,1fr)_auto] items-baseline gap-x-3 gap-y-1 rounded-md px-2 py-1.5 @min-[820px]:grid-cols-[7.5rem_minmax(0,1fr)_7rem]"
         >
-          <strong class="shrink-0 text-[11px] font-semibold text-[var(--ink)]">{{ entry.label }}</strong>
+          <strong class="shrink-0 truncate text-[11px] font-semibold text-[var(--ink)]">{{ entry.label }}</strong>
           <span class="min-w-0 truncate text-xs text-[var(--muted)]" :title="entry.detail">{{ entry.detail }}</span>
           <span class="shrink-0 text-right text-[11px] font-semibold tabular-nums text-[var(--muted)]">{{ formatDateTime(entry.time) }}</span>
         </div>
@@ -668,11 +941,18 @@ function formatDateTime(value: string): string {
 </template>
 
 <style scoped>
+.detail-tabs-wrap {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  border-bottom: 1px solid var(--line);
+}
 .detail-tabs {
   display: flex;
+  min-width: 0;
   gap: 18px;
   overflow-x: auto;
-  border-bottom: 1px solid var(--line);
   scrollbar-width: none;
 }
 .detail-tabs::-webkit-scrollbar {
@@ -700,13 +980,36 @@ function formatDateTime(value: string): string {
   color: var(--ink);
 }
 
+.cloud-batch-btn {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 4px;
+  height: 32px;
+  margin-bottom: 3px;
+  padding: 0 11px;
+  border-radius: 999px;
+  border: 1px solid var(--accent-line);
+  background: var(--accent-soft);
+  color: var(--accent-vivid);
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+.cloud-batch-btn:hover {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--accent-contrast);
+}
+
 .episode-row {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
   gap: 12px;
-  padding: 8px;
-  border-radius: 10px;
+  padding: 8px 10px;
+  border-radius: 12px;
   transition: background 0.15s;
 }
 .episode-row:hover,
@@ -719,7 +1022,7 @@ function formatDateTime(value: string): string {
   place-items: center;
   width: 40px;
   height: 40px;
-  border-radius: 9px;
+  border-radius: 12px;
   background: var(--panel);
   color: var(--ink-secondary);
   font-size: 14px;

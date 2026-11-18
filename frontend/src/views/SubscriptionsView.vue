@@ -7,15 +7,20 @@
  */
 import { computed, reactive, ref, watch } from "vue";
 
-import type { FeedItem, Subscription } from "@shared/index";
+import type { AnimeSubscriptionOptions, FeedItem, HomepageAnime, Subscription } from "@shared/index";
 
 import { copyText } from "../lib/actions";
 import AppDialog from "../components/common/AppDialog.vue";
 import SegmentedControl from "../components/common/SegmentedControl.vue";
+import AnimeSubscribeDialog from "../components/discovery/AnimeSubscribeDialog.vue";
 import AppNavIcon from "../components/layout/AppNavIcon.vue";
 import { formatDateTime } from "../lib/format";
 import { isBusy } from "../stores/busy";
-import { favoriteAnimeMap } from "../stores/favorites";
+import {
+  cancelSubscriptionForAnime,
+  createSubscriptionFromAnime,
+  favoriteAnimeMap
+} from "../stores/favorites";
 import {
   editingSubscriptionId,
   failedSubscriptionCount,
@@ -131,6 +136,7 @@ function splitName(subscription: Subscription): { title: string; source: string 
 
 interface SubscriptionGroup {
   key: string;
+  animeId: string | null;
   title: string;
   imageUrl: string | null;
   items: Subscription[];
@@ -146,6 +152,7 @@ const groupedSubscriptions = computed<SubscriptionGroup[]>(() => {
       const favorite = subscription.animeId ? favoriteAnimeMap.value.get(subscription.animeId) : undefined;
       group = {
         key,
+        animeId: subscription.animeId ?? null,
         title: favorite?.title ?? splitName(subscription).title,
         imageUrl: favorite?.imageUrl ?? null,
         items: []
@@ -160,6 +167,74 @@ const groupedSubscriptions = computed<SubscriptionGroup[]>(() => {
       Number(right.items.some((item) => item.enabled)) - Number(left.items.some((item) => item.enabled))
   );
 });
+
+function groupRuleSummary(group: SubscriptionGroup): string {
+  const rule = group.items[0]?.rule;
+  if (!rule) {
+    return "";
+  }
+  const parts: string[] = [];
+  const subgroup = rule.lockedSubgroup?.trim() || rule.preferredSubgroups?.[0]?.trim();
+  parts.push(subgroup || "自动优选");
+  if (rule.onlyNew) {
+    parts.push("仅追新集");
+  }
+  return parts.join(" · ");
+}
+
+const editingAnimeGroup = ref<SubscriptionGroup | null>(null);
+const editingAnimeModel = computed<HomepageAnime | null>(() => {
+  const group = editingAnimeGroup.value;
+  if (!group?.animeId) {
+    return null;
+  }
+  const fav = favoriteAnimeMap.value.get(group.animeId);
+  if (fav) {
+    return fav;
+  }
+  return {
+    animeId: group.animeId,
+    bangumiId: group.animeId,
+    title: group.title,
+    imageUrl: group.imageUrl,
+    searchKeyword: group.title,
+    airDay: null,
+    isOnAir: true,
+    isRestricted: false,
+    rating: null,
+    source: "bangumi",
+    mikanId: null,
+    officialSite: null
+  };
+});
+
+async function handleSaveAnimeGroupRule(payload: {
+  anime: HomepageAnime;
+  mikanKeyword?: string;
+  providerIds: string[];
+  options: AnimeSubscriptionOptions;
+}): Promise<void> {
+  const ok = await createSubscriptionFromAnime(
+    payload.anime,
+    payload.mikanKeyword,
+    payload.providerIds,
+    payload.options
+  );
+  if (ok) {
+    editingAnimeGroup.value = null;
+  }
+}
+
+async function handleUnsubscribeAnimeGroup(): Promise<void> {
+  const animeId = editingAnimeGroup.value?.animeId;
+  if (!animeId) {
+    return;
+  }
+  const ok = await cancelSubscriptionForAnime(animeId);
+  if (ok) {
+    editingAnimeGroup.value = null;
+  }
+}
 
 /** 组的汇总状态：有一个源出错就提示出错；有一个源在自动下载就算追更中。 */
 function groupState(group: SubscriptionGroup): { label: string; className: string } {
@@ -419,17 +494,17 @@ watch(editingSubscriptionId, (id) => {
           <input v-model="subscriptionForm.downloadDirOverride" class="input-base px-4 py-3" placeholder="可选；留空使用默认下载目录" />
         </label>
 
-        <div class="grid gap-3 rounded-lg border border-[var(--line)] bg-[var(--tint-2)] p-3">
+        <div class="grid gap-3 rounded-xl border border-[var(--line)] bg-[var(--tint-2)] p-3.5">
           <label class="grid gap-1.5">
             <span class="text-sm font-semibold text-[var(--muted)]">必须包含</span>
-            <input v-model="subscriptionForm.includeKeywords" class="input-base rounded-lg px-3 py-2.5" placeholder="番剧名, 字幕组" />
+            <input v-model="subscriptionForm.includeKeywords" class="input-base px-3 py-2.5" placeholder="番剧名, 字幕组" />
           </label>
           <div class="flex flex-wrap gap-2">
             <button
               v-for="keyword in ['简体', '繁体', 'CHS', 'CHT']"
               :key="keyword"
               type="button"
-              class="chip rounded-lg px-3 py-1.5 text-xs"
+              class="chip px-3 py-1 text-xs"
               :class="{ 'chip-active': fieldContains('includeKeywords', keyword) }"
               @click="toggleCsvValue('includeKeywords', keyword)"
             >
@@ -439,14 +514,14 @@ watch(editingSubscriptionId, (id) => {
 
           <label class="grid gap-1.5">
             <span class="text-sm font-semibold text-[var(--muted)]">排除关键词</span>
-            <input v-model="subscriptionForm.excludeKeywords" class="input-base rounded-lg px-3 py-2.5" placeholder="合集, NCOP, NCED, SP, PV" />
+            <input v-model="subscriptionForm.excludeKeywords" class="input-base px-3 py-2.5" placeholder="合集, NCOP, NCED, SP, PV" />
           </label>
           <div class="flex flex-wrap gap-2">
             <button
               v-for="keyword in ['合集', 'NCOP', 'NCED', 'SP', 'PV']"
               :key="keyword"
               type="button"
-              class="chip rounded-lg px-3 py-1.5 text-xs"
+              class="chip px-3 py-1 text-xs"
               :class="{ 'chip-active': fieldContains('excludeKeywords', keyword) }"
               @click="toggleCsvValue('excludeKeywords', keyword)"
             >
@@ -456,14 +531,14 @@ watch(editingSubscriptionId, (id) => {
 
           <label class="grid gap-1.5">
             <span class="text-sm font-semibold text-[var(--muted)]">分辨率偏好</span>
-            <input v-model="subscriptionForm.preferredResolutions" class="input-base rounded-lg px-3 py-2.5" placeholder="1080p, 2160p" />
+            <input v-model="subscriptionForm.preferredResolutions" class="input-base px-3 py-2.5" placeholder="1080p, 2160p" />
           </label>
           <div class="flex flex-wrap gap-2">
             <button
               v-for="keyword in ['720p', '1080p', '2160p']"
               :key="keyword"
               type="button"
-              class="chip rounded-lg px-3 py-1.5 text-xs"
+              class="chip px-3 py-1 text-xs"
               :class="{ 'chip-active': fieldContains('preferredResolutions', keyword) }"
               @click="toggleCsvValue('preferredResolutions', keyword)"
             >
@@ -518,7 +593,7 @@ watch(editingSubscriptionId, (id) => {
               v-for="name in knownSubgroups"
               :key="name"
               type="button"
-              class="chip rounded-lg px-3 py-1.5 text-xs"
+              class="chip px-3 py-1 text-xs"
               :class="{ 'chip-active': fieldContains('preferredSubgroups', name) }"
               @click="toggleCsvValue('preferredSubgroups', name)"
             >
@@ -534,6 +609,16 @@ watch(editingSubscriptionId, (id) => {
         </button>
       </template>
     </AppDialog>
+
+    <AnimeSubscribeDialog
+      v-if="editingAnimeGroup && editingAnimeModel"
+      :anime="editingAnimeModel"
+      :mikan-keyword="favoriteAnimeMap.get(editingAnimeModel.animeId)?.mikanKeyword ?? editingAnimeModel.title"
+      :submitting="isBusy(`favorite-subscribe:${editingAnimeModel.animeId}`) || isBusy(`favorite-unsubscribe:${editingAnimeModel.animeId}`)"
+      @close="editingAnimeGroup = null"
+      @confirm="handleSaveAnimeGroupRule"
+      @unsubscribe="handleUnsubscribeAnimeGroup"
+    />
 
     <!-- 删除确认弹窗 -->
     <AppDialog
@@ -593,7 +678,7 @@ watch(editingSubscriptionId, (id) => {
       <div class="page-body">
         <div v-if="!subscriptions.length" class="empty-state h-full">
           <div class="grid max-w-sm gap-3">
-            <AppNavIcon name="subscriptions" class="mx-auto size-8 text-[var(--muted)]" aria-hidden="true" />
+            <span class="empty-icon"><AppNavIcon name="subscriptions" class="size-6" aria-hidden="true" /></span>
             <p class="text-sm font-semibold text-[var(--ink)]">还没有订阅</p>
             <p class="text-sm text-[var(--muted)]">在番剧详情里点「订阅并自动追更」，或者点右上角「新建订阅」手动添加 RSS。</p>
           </div>
@@ -603,8 +688,8 @@ watch(editingSubscriptionId, (id) => {
         <div v-else class="grid content-start gap-3">
           <section v-for="group in groupedSubscriptions" :key="group.key" class="list-panel">
             <!-- 卡头：这部番整体在干什么 -->
-            <header class="flex min-w-0 items-center gap-3 bg-[var(--tint-1)] px-3 py-2.5">
-              <div class="grid h-12 w-9 shrink-0 place-items-center overflow-hidden rounded bg-[var(--panel)] text-sm font-semibold text-[var(--muted)]">
+            <header class="flex min-w-0 items-center gap-3 bg-[var(--tint-1)] px-3.5 py-3">
+              <div class="grid h-12 w-9 shrink-0 place-items-center overflow-hidden rounded-[9px] bg-[var(--panel)] text-sm font-semibold text-[var(--muted)]">
                 <img v-if="group.imageUrl" :src="group.imageUrl" alt="" class="size-full object-cover" loading="lazy" />
                 <span v-else aria-hidden="true">{{ group.title.slice(0, 1) }}</span>
               </div>
@@ -612,11 +697,22 @@ watch(editingSubscriptionId, (id) => {
                 <h3 class="truncate text-sm font-semibold text-[var(--ink)]" :title="group.title">{{ group.title }}</h3>
                 <p class="text-xs text-[var(--muted)]">
                   {{ group.items.length }} 个源
+                  <template v-if="group.animeId && groupRuleSummary(group)">
+                    · {{ groupRuleSummary(group) }}
+                  </template>
                   <template v-if="groupDownloaded(group).count">
                     · 已下 {{ groupDownloaded(group).count }}{{ groupDownloaded(group).latest ? ` / ${groupDownloaded(group).latest}` : "" }} 集
                   </template>
                 </p>
               </div>
+              <button
+                v-if="group.animeId"
+                type="button"
+                class="btn-ghost shrink-0 px-2.5 py-1 text-xs font-semibold"
+                @click="editingAnimeGroup = group"
+              >
+                追更设置
+              </button>
               <span class="status-pill shrink-0" :class="groupState(group).className">{{ groupState(group).label }}</span>
             </header>
 

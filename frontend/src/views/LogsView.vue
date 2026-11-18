@@ -16,7 +16,8 @@ import { logFilePath, logs, refreshLogs } from "../stores/logs";
 
 type LogLevelFilter = "all" | LogEntry["level"];
 
-const LOG_FONT_SIZE_KEY = "anime-rss.logs.font-size";
+const LOG_FONT_SIZE_KEY = "bgmcat.logs.font-size";
+const LEGACY_LOG_FONT_SIZE_KEY = "anime-rss.logs.font-size";
 const MIN_LOG_FONT_SIZE = 10;
 const MAX_LOG_FONT_SIZE = 18;
 /** 超过这么多行的消息先折起来：Aria2 的下载摘要一段就是十几行 */
@@ -38,7 +39,7 @@ const LEVELS: Array<{ key: LogLevelFilter; label: string }> = [
 ];
 
 function readLogFontSize(): number {
-  const parsed = Number.parseInt(window.localStorage.getItem(LOG_FONT_SIZE_KEY) ?? "12", 10);
+  const parsed = Number.parseInt(window.localStorage.getItem(LOG_FONT_SIZE_KEY) ?? window.localStorage.getItem(LEGACY_LOG_FONT_SIZE_KEY) ?? "12", 10);
   if (!Number.isFinite(parsed)) {
     return 12;
   }
@@ -241,13 +242,13 @@ onUnmounted(() => {
     <div class="min-h-0 pb-4">
       <div
         ref="outputRef"
-        class="log-output h-full overflow-auto rounded-lg border border-[var(--line)] bg-[var(--card)] font-mono"
+        class="log-output h-full overflow-auto rounded-[18px] border border-[var(--line)] bg-[var(--card)] font-mono"
         :style="{ fontSize: `${logFontSize}px` }"
         @scroll.passive="handleScroll"
       >
         <div v-if="!visibleLogs.length" class="empty-state h-full font-sans">
-          <div class="grid max-w-sm gap-2">
-            <AppNavIcon name="logs" class="mx-auto size-8 text-[var(--muted)]" aria-hidden="true" />
+          <div class="grid max-w-sm gap-2.5">
+            <span class="empty-icon"><AppNavIcon name="logs" class="size-6" aria-hidden="true" /></span>
             <p class="text-sm font-semibold text-[var(--ink)]">{{ logs.length ? "没有符合条件的日志" : "还没有日志" }}</p>
             <p v-if="!logs.length" class="text-xs text-[var(--muted)]">订阅刷新、下载、云盘归档等后台动作会记录在这里。</p>
           </div>

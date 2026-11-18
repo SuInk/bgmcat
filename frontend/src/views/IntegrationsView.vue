@@ -75,11 +75,24 @@ const detectedCount = computed(() => agents.value.filter((agent) => agent.detect
         「接入」会把 Bangumi Cat 写进该客户端的 MCP 配置，之后在客户端里就能用自然语言查番、订阅、看下载。
       </p>
 
-      <details class="mb-4 px-1 text-sm">
-        <summary class="cursor-pointer">Diana 配置位置</summary>
-        <p class="my-2 text-xs text-[var(--muted)]">默认自动检测。自定义部署填写 Diana 数据目录下 .mcp.json 的绝对路径；此接入方式要求 Diana 与 Bangumi Cat 在同一台机器、且能够运行同一个 Go 可执行文件。</p>
-        <div class="flex gap-2"><input v-model="settingsForm.dianaMcpConfigPath" aria-label="Diana MCP 配置路径" class="settings-input flex-1" placeholder="留空自动检测" @keydown.enter="saveDianaPath" /><button class="btn-ghost" @click="saveDianaPath">保存并检测</button></div>
-      </details>
+      <div class="mb-4 grid gap-2 rounded-xl border border-[var(--line)] bg-[var(--card)] px-4 py-3 text-sm">
+        <div class="flex flex-wrap items-center justify-between gap-2">
+          <strong class="text-sm font-semibold text-[var(--ink)]">Diana 配置路径</strong>
+          <span class="text-xs text-[var(--muted)]">留空自动检测（支持填入 Diana 数据目录下 .mcp.json 绝对路径）</span>
+        </div>
+        <div class="flex gap-2">
+          <input
+            v-model="settingsForm.dianaMcpConfigPath"
+            aria-label="Diana MCP 配置路径"
+            class="settings-input flex-1"
+            placeholder="留空自动检测"
+            @keydown.enter="saveDianaPath"
+          />
+          <button type="button" class="btn-ghost shrink-0 px-3 py-1.5 text-xs font-semibold" @click="saveDianaPath">
+            保存并检测
+          </button>
+        </div>
+      </div>
       <div v-if="!agents.length" class="empty-state text-sm text-[var(--muted)]">
         {{ agentsLoaded() ? "没有检测到支持的 AI 客户端。装好 Diana / Codex / Claude / Cursor / Cherry Studio 后点右上角重新检测。" : "正在检测本机的 AI 客户端…" }}
       </div>

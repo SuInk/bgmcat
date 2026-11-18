@@ -1,0 +1,76 @@
+# Copyright (c) 2025-now SuInk.
+# Licensed under the Limited Redistribution License in the repository root.
+
+name: Website and Documentation Pages
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "site/**"
+      - "docs/**"
+      - "frontend/**"
+      - "shared/**"
+      - "scripts/install.sh"
+      - "scripts/install.ps1"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    name: Build and deploy GitHub Pages
+    if: "!github.event.repository.private"
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Build interactive WebUI demo
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+          VITE_DEMO_MODE: "true"
+          VITE_BASE_PATH: "./"
+        run: |
+          npm ci
+          npm run typecheck
+          npm run build
+
+      - name: Assemble Pages site
+        run: |
+          mkdir -p _site/demo _site/scripts
+          cp -R site/. _site/
+          cp -R web/dist/. _site/demo/
+          cp scripts/install.sh scripts/install.ps1 _site/scripts/
+          cp frontend/public/icons/icon-192.png _site/assets/icon-192.png
+          touch _site/.nojekyll
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: _site
+
+      - name: Deploy Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

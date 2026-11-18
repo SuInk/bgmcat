@@ -1,52 +1,40 @@
 # 在线服务与故障处理
 
-本文按 Go 实现列出依赖。第三方服务不能保证永久在线；优先使用项目自身公开的接口，不把免费代理、镜像或某个私人中转当作必要依赖。可用性还取决于部署机器的 DNS、代理、地区与限流。
+本文按当前 Go 实现列出所有外部在线交互与本地可选工具依赖。第三方站点不提供永久在线承诺；系统内置多层缓存与降级回退，不将任何私人中转或不可信免费代理作为必需依赖。
 
-## 番剧信息和资源
+## 番剧元数据与资源站点
 
 | 服务 / 域名 | 用途与接口 | 默认使用 | 故障时的行为与限制 |
 | --- | --- | --- | --- |
-| [Bangumi API](https://bangumi.github.io/api/) · `api.bgm.tv` | `/calendar` 当季日历，`/v0/search/subjects` 搜索，`/v0/subjects` 简介评分，`/v0/episodes` 集数 | 首页主源，搜索开启 | 首页没有第二个等价日历源；搜索可返回其他开启平台的结果。成功的日历、详情及集数会缓存；短期故障可回退旧数据。 |
-| [AniList API](https://github.com/AniList/ApiV2-GraphQL-Docs) · `graphql.anilist.co` | GraphQL 番剧搜索、封面、简介、评分 | 搜索开启 | 官方接口；失败单独列在搜索平台失败信息中，不使其他平台结果丢失。不是 Bangumi ID 的直接替换。 |
-| [Jikan](https://docs.api.jikan.moe/) · `api.jikan.moe` | 获取 MyAnimeList 搜索结果 | 默认关闭 | **第三方非官方 MAL 接口**，额外依赖 Jikan 和 MAL；作为可选补充，不能视为官方 MAL 的稳定性承诺。 |
-| [TMDB API](https://developer.themoviedb.org/docs/getting-started) · `api.themoviedb.org` | TV 搜索、简介与评分；封面 `image.tmdb.org` | 默认关闭，需 API key | 官方接口；配额和 429 限流仍可能发生。不配置不影响主功能。 |
-| 蜜柑 · 默认 `mikanani.me` | `/RSS/Search?searchstr=...` 资源搜索与订阅 | 默认资源源，可修改地址 | 网站 RSS，并非有可用性承诺的服务；可能超时、域名变更或受地区网络影响。可在设置中测试、禁用或改用其他源。旧镜像 `mikanime.tv` 现只 302 跳转到 `mikanani.me`，已保存的旧地址会直接按 `mikanani.me` 请求。 |
-| Nyaa · `nyaa.si` | RSS 搜索与订阅 | 默认关闭 | 可选资源源；独立失败，不阻止其他资源源返回。 |
-| Acg.Rip · `acg.rip` | `.xml?term=...` RSS 搜索与订阅 | 默认关闭 | 同上。 |
-| 用户填写的 RSS、种子和 HTTP 下载地址 | 订阅更新、下载实际文件 | 按用户配置 | 可用性由对应站点决定；BT 还依赖 tracker、DHT 和在线 peer，不能仅凭资源列表判断下载速度。 |
-| 元数据返回的封面 URL | 浏览器直接加载图片（例如 Bangumi、AniList、MAL 的图片 CDN） | 有封面时 | 图片使用懒加载和异步解码；失败显示占位，不依赖图片才能使用列表。图片域名由上游返回，不能列成固定白名单。 |
+| [Bangumi API](https://bangumi.github.io/api/) · `api.bgm.tv` | `/calendar` 当季每日放送，`/v0/search/subjects` 全库多维筛选与关键词搜索，`/v0/subjects` 简介评分，`/v0/episodes` 分集 | 首页当季与全库主源 | 成功的当季日历、全库筛选页、条目详情与分集均持久化缓存；短期上游波动可自动回退近 7 天缓存数据。 |
+| [AniList API](https://github.com/AniList/ApiV2-GraphQL-Docs) · `graphql.anilist.co` | GraphQL 番剧聚合搜索、封面、简介、评分 | 聚合搜索开启 | 独立超时隔离；失败只记录在平台状态提示中，不影响 Bangumi 与其他平台返回。 |
+| [Jikan](https://docs.api.jikan.moe/) · `api.jikan.moe` | MyAnimeList 番剧搜索补充 | 默认关闭 | 第三方非官方 MAL 接口，仅作可选补充。 |
+| [TMDB API](https://developer.themoviedb.org/docs/getting-started) · `api.themoviedb.org` | TV 搜索、简介评分与 `image.tmdb.org` 封面 | 默认关闭（需配置 API Key） | 不配置不影响任何核心追番与全库筛选功能。 |
+| 蜜柑（Mikan）· 默认 `mikanani.me` | `/RSS/Search?searchstr=...` 资源检索与连载订阅 | 默认启用，可在设置修改域名 | 站点超时或地区网络受阻时回退最近有效缓存并在详情抽屉提示源状态；旧 `mikanime.tv` 地址会自动规范化至 `mikanani.me`。 |
+| Nyaa · `nyaa.si` | RSS 资源检索与订阅 | 默认关闭，可按需开启 | 独立并发请求与失败隔离，不阻塞其他资源站。 |
+| Acg.Rip · `acg.rip` | `.xml?term=...` RSS 资源检索与订阅 | 默认关闭，可按需开启 | 同上。 |
+| BT Tracker / DHT 网络与 HTTP 直链源 | 内置纯 Go `NativeEngine` 下载实际媒体文件 | 下载任务执行时 | 可用性与速度取决于做种 peer 数量、Tracker 可达性及本机 UDP/TCP 网络环境。 |
+| 封面图片 CDN | 浏览器与手机客户端懒加载海报封面 | 展示卡片时 | 采用异步解码与失败占位兜底，封面不可达不阻塞列表筛选、订阅或播放。 |
 
-详情先通过 `?view=summary` 返回基本信息，再独立补充分集和资源；简介不再等待资源站。资源搜索与集数请求并发执行，单次上游等待预算为 **6 秒**。完整详情接口仍兼容原有客户端，其冷请求最坏仍可能接近 **12 秒**。搜索平台也各自最多等待 6 秒。这个预算不改变实际文件下载、云盘上传或常规订阅轮询的超时。
+详情抽屉采用两阶段渐进加载：先通过 `?view=summary` 快速返回番剧简介与评分，再并发拉取分集列表与各资源站 RSS（单次上游等待预算 **6 秒**），切换或关闭抽屉不会让旧响应串台覆盖当前番剧。
 
-## 缓存与加载
+## 缓存与首屏体验
 
-- 详情悬停只预取基本信息，点击复用同一请求；浏览器缓存最多 64 部、有效期 5 分钟，失败可重试。资源另行加载，关闭或切换番剧后旧结果不会覆盖当前详情。
+- 前端首屏优先渲染浏览器本地缓存的上次排期快照，后台静默同步最新数据，不再因外网 API 慢响应阻塞界面。
+- 当季日历缓存 1 小时，全库多维索引查询按筛选组合缓存，Bangumi 条目详情缓存 6 小时，资源检索缓存 2 分钟；并发相同查询自动合并（Singleflight），本地 SQLite 持久化最多 512 条发现缓存。
+- 应用自身的脚本、样式与图标全部内置打包在二进制或 APK 本地资源中，不依赖任何第三方前端公共 CDN。
 
-- 首页日历缓存 1 小时，Bangumi 条目缓存 6 小时，集数缓存 1 小时；刷新失败可使用 7 天内的成功数据。旧数据可能落后于实际播出安排。
-- 资源搜索缓存 2 分钟，失败可保留 10 分钟内的结果，并在资源源状态中显示失败/旧结果提示。失败不会覆盖成功内容；存在可回退数据时，失败后 30 秒内直接返回旧结果，避免重复等待。
-- 同一个缓存键的并发请求合并；发现缓存持久化到本地数据库，最多 512 条。资源缓存键包含实际查询地址，修改源地址不会误用旧地址的结果。
-- 番剧聚合搜索本身没有结果缓存；可选外部平台的详情来自最近搜索时保存的内容，找不到时要求重新搜索。
-- 前端先显示浏览器内上次首页数据，再同步；外网日历请求不再触发全屏锁定。应用自己的脚本、样式、字体不依赖在线 CDN；含内容哈希的构建资源长期缓存，HTML 每次重新验证。
-- 不自动对失败接口反复重试，不自动切换到不可信的代理。首次访问、缓存过期、封面 CDN 或本机网络不佳时，不能承诺秒开。
+## 其他在线与本机可选组件
 
-## 其他在线依赖
-
-| 服务 | 用途 | 是否必需 |
+| 服务 / 组件 | 用途 | 是否必需 |
 | --- | --- | --- |
-| Google · `accounts.google.com`、`oauth2.googleapis.com`、`www.googleapis.com`、`drive.usercontent.google.com` | Drive 授权、文件查询/上传、按需播放与可选 IP 探测 | 仅云盘功能需要。IP 探测还使用一个公开测试文件；文件失效时不能据此保证下载链路正常。 |
-| GitHub · `github.com`、`api.github.com` 及其发行资产下载域名 | 私有仓库安装、发行包下载，可选 GitHub 登录 | 原生运行与口令登录不需要 GitHub；私有发行包需要有读取权限的登录态。 |
-| Cloudflare Tunnel / `trycloudflare.com` 或用户绑定域名 | 可选远程访问 | 本地使用不需要。临时隧道地址不适合作为永久服务地址。 |
-| Homebrew、apt/dnf/pacman/apk、winget 的软件源 | 安装 aria2 等依赖 | 安装阶段需要；装好后不参与页面加载。 |
-| 用户配置的 Ollama 地址（默认 `127.0.0.1:11434`） | 可选 AI 模型查询及聊天；远程地址由用户配置 | 不参与番剧信息和首屏加载。 |
-| Electron 官方 GitHub Release、electron-builder 工具资产 | 桌面构建时下载运行时和打包工具 | 仅构建需要；已安装桌面包启动不需要在线下载 Electron。 |
-| npm、Go 模块源、容器基础镜像仓库 | 从源码构建 | 发布包运行不需要。 |
+| Google Drive API · `accounts.google.com`、`oauth2.googleapis.com`、`www.googleapis.com`、`drive.usercontent.google.com` | 网盘 OAuth 授权、8 MiB 分块归档上传、云端 HTTP Range 流式播放与可选 IP 直连测速 | 仅启用 Google Drive 归档时需要；纯本地下载与局域网播放无需连接 Google。 |
+| GitHub · `github.com`、`api.github.com` | 检查版本更新、下载 Release 资产、可选 GitHub 白名单登录 | 日常运行与本地账号密码登录完全不依赖 GitHub。 |
+| Cloudflare Tunnel · `trycloudflare.com` 或自有绑定域名 | 外网加密穿透供手机远程点播 | 仅外网远程访问需要；家庭 Wi-Fi 局域网直连或 Tailscale 无需开启。 |
+| 本机 `ffmpeg` / `ffprobe` | MKV / HEVC 等非浏览器原生格式的按需 HLS 实时转码与软字幕提取 | 可选组件（Docker 镜像已内置）；H.264 MP4 原画流式播放无需安装。 |
+| 本机 / 局域网 `qBittorrent` | 可选替代外部下载客户端 | 不必需；默认由内置纯 Go `NativeEngine` 直接完成全部 HTTP 与 BT 下载。 |
+| 本机 / 远程 `Ollama`（默认 `127.0.0.1:11434`） | 可选 AI 模型辅助对话与筛选 | 不参与核心追番、下载与播放链路。 |
 
-aria2、FFmpeg、qBittorrent 是本地或用户自建组件，不是固定在线信息服务。gdirect、rclone、Diana 也不是本应用运行所需的在线服务。
+## 版本检查说明
 
-## 本次验证的边界
-
-2026-10-25 在开发机器探测 Bangumi、AniList、Jikan、蜜柑、Nyaa 和 Acg.Rip 时，多个不同站点均出现 TLS EOF，无法据此判定站点宕机或承诺本机可达。需要在实际部署网络中使用设置页的来源测试复核。性能回归使用可控的模拟上游验证并发、缓存、故障回退，不能把该测试耗时当作真实外网测速。
-
-## 版本检查
-
-用户点击「检查更新」时访问 `api.github.com/repos/SuInk/bgmcat/releases`，最长等待 15 秒，读取最近 30 条 Release；GitHub 仍可能限流或不可达。私有仓库使用服务端环境变量或 GitHub CLI 已登录凭据。失败会保留已知版本信息并显示错误。当前只有稳定通道检查，没有自动安装或第三方下载镜像。
+仅当用户在侧栏底部打开「版本与更新」并主动点击「检查更新」时，服务端才会请求 `api.github.com/repos/SuInk/bgmcat/releases`（超时预算 15 秒）；页面平时打开绝不静默联网上报。私有仓库阶段支持读取服务端环境变量 `GH_TOKEN` / `GITHUB_TOKEN` 或已登录的 `gh` CLI 凭据。
