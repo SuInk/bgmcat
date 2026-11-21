@@ -204,12 +204,6 @@ func (m *Media) serveStreamByGID(w http.ResponseWriter, r *http.Request, gid str
 	}
 	return nil
 }
-func (m *Media) ffmpeg() string {
-	if p := str(m.a.Settings()["ffmpegPath"]); p != "" {
-		return p
-	}
-	return "ffmpeg"
-}
 func (m *Media) probe(ctx context.Context, gid string) (Obj, error) {
 	m.mu.Lock()
 	if cached, ok := m.probeCache[gid]; ok {
@@ -217,13 +211,7 @@ func (m *Media) probe(ctx context.Context, gid string) (Obj, error) {
 		return cached, nil
 	}
 	m.mu.Unlock()
-	binary := "ffprobe"
-	if p := str(m.a.Settings()["ffmpegPath"]); p != "" {
-		binary = filepath.Join(filepath.Dir(p), "ffprobe")
-		if strings.HasSuffix(p, ".exe") {
-			binary += ".exe"
-		}
-	}
+	binary := m.ffprobe()
 	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
 	out, e := exec.CommandContext(ctx, binary, "-v", "error", "-show_format", "-show_streams", "-of", "json", m.inputURL(gid)).Output()
@@ -298,7 +286,7 @@ func (m *Media) servePlaybackByGID(w http.ResponseWriter, r *http.Request, gid s
 	mode := "direct"
 	if !direct {
 		if ffErr != nil {
-			return errors.New("此视频需要 FFmpeg 转码；请使用包含 FFmpeg 的发布包或 Docker 镜像")
+			return errors.New("此视频需要 FFmpeg 转码；请安装 FFmpeg 或在设置里填写 ffmpeg 路径（桌面版和 Docker 镜像已内置）")
 		}
 		mode = "hls-transcode"
 	}

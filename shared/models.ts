@@ -100,7 +100,7 @@ export interface AppSettings {
   oidcClientSecret: string;
   /** 允许通过 OIDC 登录的用户名/邮箱/sub 白名单。 */
   oidcAllowedUsers: string[];
-  /** 覆盖内置 ffmpeg 的可执行文件路径；留空用内置产物，内置缺失时回落到 PATH */
+  /** 覆盖内置 ffmpeg 的可执行文件路径；留空时依次找后端旁边的内置程序、PATH、常见安装目录 */
   ffmpegPath: string;
   /** 发现新版本后自动下载并校验（不安装）。默认开。 */
   updateAutoDownload: boolean;
