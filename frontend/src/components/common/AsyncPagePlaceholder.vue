@@ -14,6 +14,7 @@
 </template>
 
 <style scoped>
+/* 对齐 Diana 骨架屏：平滑扫光 shimmer，替代生硬的整体闪烁 */
 .async-page-placeholder {
   display: grid;
   align-content: start;
@@ -32,9 +33,15 @@
 
 .async-bar {
   height: 12px;
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--line) 70%, transparent);
-  animation: async-pulse 1.4s ease-in-out infinite;
+  border-radius: 6px;
+  background: linear-gradient(
+    90deg,
+    var(--panel) 25%,
+    color-mix(in srgb, var(--line) 90%, transparent) 50%,
+    var(--panel) 75%
+  );
+  background-size: 200% 100%;
+  animation: skeleton-shimmer 1.4s infinite;
 }
 
 .async-bar-title {
@@ -54,12 +61,18 @@
   width: 32%;
 }
 
-@keyframes async-pulse {
-  0%, 100% {
-    opacity: 0.45;
+@keyframes skeleton-shimmer {
+  0% {
+    background-position: 200% 0;
   }
-  50% {
-    opacity: 0.85;
+  100% {
+    background-position: -200% 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .async-bar {
+    animation: none;
   }
 }
 </style>
