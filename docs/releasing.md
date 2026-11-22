@@ -25,6 +25,29 @@
 - 应用内「设置 → 版本」的更新通道选 Canary 后，检查更新时会把 Canary（以及 beta / rc）算进去；选稳定版只看正式版。
 - 仓库变量 `PUBLISH_CONTAINER=true` 时，Canary 也会推送 GHCR 镜像，标签为版本号和 `canary`。
 
+## macOS 签名与公证
+
+没有签名时，Mac 安装包只有临时签名（ad-hoc）。macOS 按每次构建的哈希识别应用，每次升级都被当成新应用：本地网络、文件夹等权限要重新授权，首次打开还会提示「无法验证开发者」。配置好 Apple Developer ID 后，CI 的两个 macOS 作业会自动签名、公证并装订 .app 和 .dmg；没配置时照旧打未签名包。
+
+一次性准备（需要 Apple 开发者账号，每年 99 美元）：
+
+1. 在 [Apple Developer](https://developer.apple.com/programs/) 加入开发者计划。
+2. 在 Xcode →「设置 → 账户 → 管理证书」新建 **Developer ID Application** 证书（或在开发者网站用钥匙串生成的 CSR 创建），然后在「钥匙串访问」里把这张证书连同私钥导出为 `.p12`，设一个导出密码。
+3. 在 [App Store Connect → 用户和访问 → 集成 → 团队密钥](https://appstoreconnect.apple.com/access/integrations/api) 新建一个 API 密钥（角色选「开发者」），下载 `AuthKey_XXXX.p8`，记下 **密钥 ID** 和页面上方的 **Issuer ID**。`.p8` 只能下载一次。
+4. 在仓库 Settings → Secrets and variables → Actions 添加以下密钥（也可以在自己电脑上用 `gh secret set` 添加）：
+
+| 密钥 | 内容 |
+| --- | --- |
+| `MAC_CERT_P12_BASE64` | `.p12` 文件的 base64：`base64 -i DeveloperID.p12 \| pbcopy` |
+| `MAC_CERT_PASSWORD` | 导出 `.p12` 时设的密码 |
+| `APPLE_API_KEY_P8` | `.p8` 文件的完整文本内容 |
+| `APPLE_API_KEY_ID` | API 密钥 ID |
+| `APPLE_API_ISSUER` | Issuer ID |
+
+之后的每次构建（正式版和 Canary）都会签名并公证，用户下载后双击就能打开。只配证书、不配 API 密钥时只签名不公证（CI 会给出警告）。
+
+注意：从未签名版本升级到第一个签名版本时，macOS 仍会当成新应用（签名身份变了），需要再授权一次；之后的升级就会被认成同一个应用。
+
 ## 发布前本地检查清单
 
 1. 更新 `internal/version/VERSION` 并编写中文发布说明 `docs/releases/<版本>.md`（不得包含 `YOUR_ACCOUNT` 等占位符，否则 CI `Validate release tag` 步骤会直接拦截失败）。
