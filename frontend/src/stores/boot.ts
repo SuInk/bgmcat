@@ -17,7 +17,6 @@ import {
   markAutoReloaded,
   updateInstallingRecently
 } from "../lib/backendState";
-import { agentsLoaded, refreshAgents } from "./agents";
 import { withBusy } from "./busy";
 import {
   closeAnimeDetail,
@@ -27,7 +26,8 @@ import {
   refreshHomepage,
   homepageAnime,
   homepageError,
-  resetDiscoveryView
+  resetDiscoveryView,
+  restoreAnimeDetailFromLocation
 } from "./discovery";
 import { bumpPlaybackHistoryVersion } from "../lib/playbackHistory";
 import {
@@ -261,6 +261,7 @@ async function applyBootstrapSnapshot(payload: BootstrapResponse): Promise<boole
   feedback.value = t("dashboard.ready");
   connectDownloadEvents();
   await restorePlaybackFromLocation(activeTab.value);
+  void restoreAnimeDetailFromLocation();
   loadTabData(activeTab.value);
   return true;
 }
@@ -301,6 +302,7 @@ export async function loadDashboard(): Promise<void> {
     }
     connectDownloadEvents();
     await restorePlaybackFromLocation(activeTab.value);
+    void restoreAnimeDetailFromLocation();
     void loadTabData(activeTab.value);
   } catch (error) {
     if (error instanceof ApiRequestError && error.code === "AUTH_INVALID") {
@@ -435,9 +437,6 @@ export async function refreshCurrentView(): Promise<void> {
     }
     if (activeTab.value === "logs") {
       tasks.push(refreshLogs());
-    }
-    if (activeTab.value === "integrations") {
-      tasks.push(refreshAgents());
     }
     const results = await Promise.allSettled(tasks);
     if (results[0]?.status === "rejected" && isBackendUnreachable(results[0].reason)) {
@@ -588,6 +587,7 @@ watch(sseConnected, (connected, prev) => {
 function handlePopState(): void {
   syncTabFromLocation();
   void restorePlaybackFromLocation(activeTab.value);
+  void restoreAnimeDetailFromLocation();
 }
 
 watch(hasConsoleAccess, (allowed) => {
@@ -610,9 +610,6 @@ function loadTabData(tab: TabKey): void {
   }
   if (tab === "logs") {
     void refreshLogs();
-  }
-  if (tab === "integrations" && !agentsLoaded()) {
-    void refreshAgents().catch(() => undefined);
   }
   if (tab === "home" && !homepageAnime.value.length && !homepageError.value) {
     void refreshHomepage({ silent: true });

@@ -31,6 +31,9 @@ type NativeEngine struct {
 	closed   bool
 	activeBT map[string]*activeBTStream
 
+	seedMu    sync.Mutex
+	seedTasks map[string]*btSeedTask
+
 	httpTransport *http.Transport
 	httpClient    *http.Client
 	httpLimiter   *rate.Limiter
@@ -58,6 +61,7 @@ func NewNativeEngine(a *App) *NativeEngine {
 	return &NativeEngine{
 		app:           a,
 		activeBT:      map[string]*activeBTStream{},
+		seedTasks:     map[string]*btSeedTask{},
 		httpTransport: tr,
 		httpClient:    &http.Client{Transport: tr},
 		httpLimiter:   rate.NewLimiter(rate.Inf, 1<<20),
@@ -181,6 +185,8 @@ func (e *NativeEngine) Close() {
 	e.closed = true
 	e.activeBT = map[string]*activeBTStream{}
 	e.mu.Unlock()
+
+	e.StopAllSeeding()
 
 	e.btInitMu.Lock()
 	btClient := e.btClient

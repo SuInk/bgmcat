@@ -645,16 +645,48 @@ export async function cancelCloudArchive(
   });
 }
 
+function parseEpisodeNumber(title: string): number | null {
+  const m =
+    /第\s*0*(\d{1,4})\s*[话話集回]/u.exec(title) ??
+    /\bS\d{1,2}\s*E0*(\d{1,4})\b/i.exec(title) ??
+    /\b(?:EP?|Episode)\s*0*(\d{1,4})\b/i.exec(title) ??
+    /(?:[\[【]\s*|\s[-–—]\s)0*(\d{1,4})(?:v\d+)?(?:\s*[\]】]|\s|$)/i.exec(title);
+  if (!m) return null;
+  const n = Number(m[1]);
+  return Number.isFinite(n) && n >= 0 && n < 1900 ? n : null;
+}
+
+function sortGidsByEpisodeOrder(gids: string[]): string[] {
+  const byGid = new Map(downloads.value.map((item) => [item.gid, item]));
+  return [...gids].sort((a, b) => {
+    const ja = byGid.get(a);
+    const jb = byGid.get(b);
+    const ea = ja ? parseEpisodeNumber(displayTitle(ja)) : null;
+    const eb = jb ? parseEpisodeNumber(displayTitle(jb)) : null;
+    if (ea !== null && eb !== null && ea !== eb) {
+      return ea - eb;
+    }
+    if (ea !== null && eb === null) return -1;
+    if (ea === null && eb !== null) return 1;
+    return String(ja?.createdAt ?? "").localeCompare(String(jb?.createdAt ?? ""));
+  });
+}
+
 export async function archiveBatchDownloads(gids: string[]): Promise<void> {
-  const uniqueGids = Array.from(new Set(gids));
+  const uniqueGids = sortGidsByEpisodeOrder(Array.from(new Set(gids)));
   if (!uniqueGids.length) {
     updateFeedback("没有可转存至云盘的任务。", "info");
     return;
   }
-  const results = await Promise.allSettled(
-    uniqueGids.map((gid) => triggerCloudArchive(gid, { silent: true, skipRefresh: true }))
-  );
-  const succeeded = results.filter((r) => r.status === "fulfilled" && r.value).length;
+  let succeeded = 0;
+  for (const gid of uniqueGids) {
+    try {
+      const ok = await triggerCloudArchive(gid, { silent: true, skipRefresh: true });
+      if (ok) succeeded++;
+    } catch {
+      // counted in failed below
+    }
+  }
   const failed = uniqueGids.length - succeeded;
   await refreshDownloads().catch(() => undefined);
   if (failed > 0) {
@@ -726,15 +758,28 @@ async function runBatch(
   action: "pause" | "resume",
   messages: { none: string; done: (count: number) => string; partial: (count: number, failed: number) => string }
 ): Promise<void> {
-  const uniqueGids = Array.from(new Set(gids));
+  const deduped = Array.from(new Set(gids));
+  const uniqueGids = action === "resume" ? sortGidsByEpisodeOrder(deduped) : deduped;
   if (!uniqueGids.length) {
     updateFeedback(messages.none, "info");
     return;
   }
-  const results = await Promise.allSettled(
-    uniqueGids.map((gid) => updateDownloadState(action, gid, { silent: true, skipRefresh: true }))
-  );
-  const failedCount = results.filter((r) => r.status !== "fulfilled" || !r.value).length;
+  let failedCount = 0;
+  if (action === "resume") {
+    for (const gid of uniqueGids) {
+      try {
+        const ok = await updateDownloadState(action, gid, { silent: true, skipRefresh: true });
+        if (!ok) failedCount++;
+      } catch {
+        failedCount++;
+      }
+    }
+  } else {
+    const results = await Promise.allSettled(
+      uniqueGids.map((gid) => updateDownloadState(action, gid, { silent: true, skipRefresh: true }))
+    );
+    failedCount = results.filter((r) => r.status !== "fulfilled" || !r.value).length;
+  }
   await refreshDownloads().catch(() => undefined);
   updateFeedback(
     failedCount ? messages.partial(uniqueGids.length, failedCount) : messages.done(uniqueGids.length),

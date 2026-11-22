@@ -255,7 +255,7 @@ func TestGenericWebDAVCloudArchiveAndStream(t *testing.T) {
 	}
 
 	// Create local completed download and archive to WebDAV with cloudDeleteLocal=true
-	_, _ = a.Store.Patch("config", "settings", Obj{"cloudArchiveEnabled": true, "cloudDeleteLocal": true})
+	_, _ = a.Store.Patch("config", "settings", Obj{"cloudArchiveEnabled": true, "cloudDeleteLocal": true, "downloadFolderMode": "flat"})
 	jobDir := filepath.Join(a.downloadsDir(), "show1")
 	_ = os.MkdirAll(jobDir, 0700)
 	videoData := bytes.Repeat([]byte("WEBDAV_STREAM_DATA_"), 1024)

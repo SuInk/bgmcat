@@ -13,5 +13,13 @@ onUnmounted(() => dialog.value?.close());
  </dialog></Teleport>
 </template>
 <style scoped>
-.version-modal { border:1px solid var(--line); border-radius:20px; padding:0; margin:auto; width:min(720px,calc(100vw - 32px)); max-height:calc(100dvh - 48px); background:var(--app-bg); color:var(--ink); box-shadow:var(--strong-shadow); overflow:hidden; }.version-modal::backdrop { background:rgb(0 0 0 / .45); backdrop-filter:blur(4px); }.modal-surface { display:flex; flex-direction:column; max-height:calc(100dvh - 50px); }.modal-surface > header { display:flex; align-items:center; justify-content:space-between; padding:16px 20px; border-bottom:1px solid var(--line); flex-shrink:0; }h2 { font-size:16px; font-weight:650; }header button { display:grid; place-items:center; width:32px; height:32px; border-radius:10px; color:var(--muted); transition:background .15s, color .15s; }header button:hover { background:var(--panel); color:var(--ink); }.modal-body { padding:20px; overflow:auto; min-height:0; }@media(max-width:480px) { .version-modal { width:calc(100vw - 16px); max-height:calc(100dvh - 24px); }.modal-surface { max-height:calc(100dvh - 26px); }.modal-body { padding:14px; } }
+.version-modal { border:1px solid var(--line); border-radius:16px; padding:0; margin:auto; width:min(620px,calc(100vw - 32px)); max-height:calc(100dvh - 48px); background:var(--app-bg); color:var(--ink); box-shadow:var(--strong-shadow); overflow:hidden; }
+.version-modal::backdrop { background:rgb(0 0 0 / .45); backdrop-filter:blur(4px); }
+.modal-surface { display:flex; flex-direction:column; max-height:calc(100dvh - 50px); }
+.modal-surface > header { display:flex; align-items:center; justify-content:space-between; padding:14px 18px; border-bottom:1px solid var(--line); flex-shrink:0; }
+h2 { font-size:15px; font-weight:650; }
+header button { display:grid; place-items:center; width:30px; height:30px; border-radius:8px; color:var(--muted); transition:background .15s, color .15s; }
+header button:hover { background:var(--panel); color:var(--ink); }
+.modal-body { padding:16px 18px 18px; overflow:auto; min-height:0; }
+@media(max-width:480px) { .version-modal { width:calc(100vw - 16px); max-height:calc(100dvh - 24px); }.modal-surface { max-height:calc(100dvh - 26px); }.modal-body { padding:14px; } }
 </style>

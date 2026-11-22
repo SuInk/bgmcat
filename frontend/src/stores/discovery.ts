@@ -39,6 +39,7 @@ import { detailSearchKeyword, displayTitle, downloads, refreshDownloads, selecte
 import { feedback, toastError, updateFeedback } from "./toasts";
 import { favorites } from "./favorites";
 import { hiddenAnimeIds } from "./hiddenAnime";
+import { readAnimeIdFromLocation, syncLocationWithTab } from "./router";
 import { settings } from "./session";
 import { refreshFeedItems, subscriptions } from "./subscriptions";
 import { viewportHeight } from "./ui";
@@ -463,6 +464,11 @@ export const discoveryBaseTotal = computed(() => discoveryBaseAnime.value.length
 /** 评分排序开关存在服务端设置里（homepageSortMode），由视图层同步进来 */
 export const animeSortMode = ref<"default" | "rating">("default");
 
+function minuteOfDay(anime: HomepageAnime): number {
+  const date = anime.broadcastAt ? new Date(anime.broadcastAt) : null;
+  return date && !Number.isNaN(date.getTime()) ? date.getHours() * 60 + date.getMinutes() : Number.MAX_SAFE_INTEGER;
+}
+
 export const sortedHomepageAnime = computed(() => {
   return [...displayedHomepageAnime.value].sort((left, right) => {
     const coverDiff = (hasAnimeCover(left) ? 0 : 1) - (hasAnimeCover(right) ? 0 : 1);
@@ -470,6 +476,12 @@ export const sortedHomepageAnime = computed(() => {
       return coverDiff;
     }
     if (animeSortMode.value !== "rating") {
+      if (discoveryForm.weekday !== "all" && !isHistoricalSearchActive.value) {
+        const timeDiff = minuteOfDay(left) - minuteOfDay(right);
+        if (timeDiff !== 0) {
+          return timeDiff;
+        }
+      }
       return 0;
     }
     const leftRating = left.rating ?? -1;
@@ -761,12 +773,19 @@ export function useDiscoverySearchHistory(keyword: string): void {
   void runDiscoverySearch();
 }
 
-export function closeAnimeDetail(): void {
+function clearAnimeDetailState(): void {
   stopPendingPoll();
   animeDetail.value = null;
   animeDetailError.value = null;
   selectedAnimeId.value = null;
   selectedDownloadDetailGid.value = null;
+}
+
+export function closeAnimeDetail(): void {
+  clearAnimeDetailState();
+  if (readAnimeIdFromLocation()) {
+    syncLocationWithTab("replace", { animeId: null });
+  }
 }
 
 
@@ -982,7 +1001,10 @@ export function prefetchAnimeDetail(animeId: string, keyword?: string): void {
     });
 }
 
-export async function openAnimeDetail(anime: HomepageAnime): Promise<void> {
+export async function openAnimeDetail(
+  anime: HomepageAnime,
+  options: { syncUrl?: boolean } = {}
+): Promise<void> {
   stopPendingPoll();
   selectedAnimeId.value = anime.animeId;
   selectedSubgroup.value = "all";
@@ -990,6 +1012,9 @@ export async function openAnimeDetail(anime: HomepageAnime): Promise<void> {
   selectedProvider.value = "all";
   downloadPage.value = 1;
   animeDetailError.value = null;
+  if (options.syncUrl !== false) {
+    syncLocationWithTab(readAnimeIdFromLocation() ? "replace" : "push", { animeId: anime.animeId });
+  }
 
   const cached = readDetailCache(anime.animeId);
   if (cached) {
@@ -1039,6 +1064,100 @@ export async function openAnimeDetail(anime: HomepageAnime): Promise<void> {
       }
     }
   });
+}
+
+function findLoadedAnimeById(animeId: string): HomepageAnime | null {
+  const fromHomepage = homepageAnime.value.find((item) => item.animeId === animeId);
+  if (fromHomepage) {
+    return fromHomepage;
+  }
+  const fromCatalog = catalogItems.value.find((item) => item.animeId === animeId);
+  if (fromCatalog) {
+    return fromCatalog;
+  }
+  const fromFavorite = favorites.value.find((item) => item.animeId === animeId);
+  if (fromFavorite) {
+    return {
+      animeId: fromFavorite.animeId,
+      title: fromFavorite.title,
+      source: "bangumi",
+      imageUrl: fromFavorite.imageUrl,
+      mikanId: fromFavorite.mikanId,
+      bangumiId: fromFavorite.bangumiId,
+      searchKeyword: fromFavorite.mikanKeyword ?? fromFavorite.title,
+      airDay: 0,
+      isOnAir: true,
+      isRestricted: false,
+      rating: null,
+      officialSite: null
+    };
+  }
+  return null;
+}
+
+export async function openAnimeDetailById(
+  animeId: string,
+  options: { syncUrl?: boolean } = {}
+): Promise<void> {
+  const normalized = animeId.trim();
+  if (!normalized) {
+    return;
+  }
+  const known = findLoadedAnimeById(normalized);
+  if (known) {
+    await openAnimeDetail(known, options);
+    return;
+  }
+  stopPendingPoll();
+  selectedAnimeId.value = normalized;
+  selectedSubgroup.value = "all";
+  selectedResolution.value = "all";
+  selectedProvider.value = "all";
+  downloadPage.value = 1;
+  animeDetailError.value = null;
+  if (options.syncUrl !== false) {
+    syncLocationWithTab("replace", { animeId: normalized });
+  }
+  const cached = readDetailCache(normalized);
+  if (cached) {
+    detailLoadingAnimeId.value = null;
+    applyAnimeDetail(cached.detail, cached.detail.anime.imageUrl);
+    return;
+  }
+  detailLoadingAnimeId.value = normalized;
+  animeDetail.value = null;
+  await withBusy(`anime-detail:${normalized}`, async () => {
+    try {
+      const detail = await fetchProgressiveDetail(normalized);
+      if (selectedAnimeId.value !== normalized) {
+        return;
+      }
+      applyAnimeDetail(detail, detail.anime.imageUrl);
+    } catch (error) {
+      if (selectedAnimeId.value === normalized) {
+        animeDetailError.value = formatAnimeDetailError(normalized, error);
+        feedback.value = animeDetailError.value;
+      }
+    } finally {
+      if (detailLoadingAnimeId.value === normalized) {
+        detailLoadingAnimeId.value = null;
+      }
+    }
+  });
+}
+
+export async function restoreAnimeDetailFromLocation(): Promise<void> {
+  const animeId = readAnimeIdFromLocation();
+  if (!animeId) {
+    if (selectedAnimeId.value) {
+      clearAnimeDetailState();
+    }
+    return;
+  }
+  if (selectedAnimeId.value === animeId && animeDetail.value) {
+    return;
+  }
+  await openAnimeDetailById(animeId, { syncUrl: false });
 }
 
 function downloadDetailAnimeId(download: DownloadJob): string | null {

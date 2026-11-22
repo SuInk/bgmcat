@@ -270,7 +270,9 @@ func (a *App) catalogAnime(ctx context.Context, rawQuery url.Values) (Obj, error
 	}
 	items := make([]Obj, 0, len(list(result["items"])))
 	for _, item := range list(result["items"]) {
-		items = append(items, object(item))
+		obj := object(item)
+		a.enrichAnimeBroadcast(obj)
+		items = append(items, obj)
 	}
 	total := num(result["total"])
 	hasMore := flag(result["hasMore"])

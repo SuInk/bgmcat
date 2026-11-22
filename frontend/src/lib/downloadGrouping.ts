@@ -326,6 +326,18 @@ export function compareDownloadsByMode(left: DownloadJob, right: DownloadJob, so
   if (statusDelta !== 0) {
     return statusDelta;
   }
+  const speedDelta = (right.downloadSpeed || 0) - (left.downloadSpeed || 0);
+  if (speedDelta !== 0) {
+    return speedDelta;
+  }
+  const progressDelta = progressPercent(right) - progressPercent(left);
+  if (progressDelta !== 0) {
+    return progressDelta;
+  }
+  const bytesDelta = (right.completedLength || 0) - (left.completedLength || 0);
+  if (bytesDelta !== 0) {
+    return bytesDelta;
+  }
   return right.updatedAt.localeCompare(left.updatedAt) || left.gid.localeCompare(right.gid);
 }
 
@@ -725,14 +737,29 @@ export function groupStatus(group: SeriesDownloadGroup): DownloadJob["status"] {
   return group.primary.status;
 }
 
-/** 仍在下载、正在转存云盘、或云盘转存报错待重试的番组都留在上方实时进度区 */
+/** 仍在下载、正在转存云盘、或云盘转存报错待重试的番组都留在上方实时进度区；
+ *  若每一集都已有完成且云盘转存就绪的版本，其余被自动暂停的 0% 冗余死种不再把整部番卡在「正在缓存」。
+ */
 export function isGroupActiveOrTransferring(group: SeriesDownloadGroup): boolean {
-  return group.downloads.some(
-    (download) =>
-      download.status !== "complete" ||
-      isCloudTransferring(download) ||
-      isCloudFailed(download)
+  const hasCloudPending = group.downloads.some(
+    (download) => isCloudTransferring(download) || isCloudFailed(download)
   );
+  if (hasCloudPending) {
+    return true;
+  }
+  const hasActiveOrQueued = group.downloads.some((download) =>
+    ["active", "waiting", "queued", "error"].includes(download.status)
+  );
+  if (hasActiveOrQueued) {
+    return true;
+  }
+  const everyEpisodeHasCompleteVersion =
+    group.episodes.length > 0 &&
+    group.episodes.every((ep) => ep.downloads.some((d) => d.status === "complete"));
+  if (everyEpisodeHasCompleteVersion) {
+    return false;
+  }
+  return group.downloads.some((download) => download.status !== "complete");
 }
 
 export function groupCloudTransferSummary(group: SeriesDownloadGroup): {
@@ -785,10 +812,16 @@ export function groupArchivableGids(group: SeriesDownloadGroup): string[] {
 }
 
 export function groupProgress(group: SeriesDownloadGroup): number {
+  if (group.episodes.length === 1 && group.downloads.length > 1) {
+    return computeDownloadsTotalProgress([group.primary]).percent;
+  }
   return computeDownloadsTotalProgress(group.downloads).percent;
 }
 
 export function groupProgressWidth(group: SeriesDownloadGroup): number {
+  if (group.episodes.length === 1 && group.downloads.length > 1) {
+    return computeDownloadsTotalProgress([group.primary]).widthPercent;
+  }
   return computeDownloadsTotalProgress(group.downloads).widthPercent;
 }
 
@@ -856,7 +889,9 @@ export function groupMetaLine(
   getDisplayTitle: (d: DownloadJob) => string,
   subscriptionById: Map<number, Subscription>
 ): string {
-  const primary = group.primary;
+  const isSettled = !isGroupActiveOrTransferring(group);
+  const completedOnly = group.downloads.filter((d) => d.status === "complete");
+  const primary = (isSettled && completedOnly[0]) || group.primary;
   const parts = [group.episodes.length === 1 ? currentEpisodeLabel(group) : `${group.episodes.length} 集`];
   if (group.downloads.length > group.episodes.length) {
     parts.push(`${group.downloads.length} 个版本`);
@@ -866,11 +901,16 @@ export function groupMetaLine(
       parts.push(part);
     }
   }
-  const total = groupTotalLength(group);
+  const total =
+    isSettled && completedOnly.length > 0 && completedOnly.length < group.downloads.length
+      ? computeDownloadsTotalProgress(completedOnly).localTotalBytes
+      : groupTotalLength(group);
   if (total > 0) {
     parts.push(formatBytes(total));
   }
-  if (primary.saveTo === "cloud" && !primary.cloudArchive) {
+  if (isCloudStored(primary)) {
+    parts.push("已存云盘");
+  } else if (primary.saveTo === "cloud" && !primary.cloudArchive) {
     parts.push("完成后存到云盘");
   }
   return parts.join(" · ");
@@ -900,13 +940,30 @@ export function groupProgressLine(group: SeriesDownloadGroup): string {
       }
     }
   }
-  const progress = `总进度 ${summary.percent}%`;
+  const isMultiVersionSingleEpisode = group.episodes.length === 1 && group.downloads.length > 1;
+  const primarySummary = isMultiVersionSingleEpisode ? computeDownloadsTotalProgress([group.primary]) : summary;
+  const primaryLocalPct = progressPercent(group.primary);
+  const progress = isMultiVersionSingleEpisode
+    ? primaryLocalPct > 0 && primaryLocalPct !== summary.percent
+      ? `最快版本 ${primaryLocalPct}%（${group.downloads.length} 版本总 ${summary.percent}%）`
+      : `总进度 ${primarySummary.percent}%`
+    : `总进度 ${summary.percent}%`;
   if (status === "active") {
+    const activeConns = group.downloads.reduce(
+      (sum, d) => sum + (d.status === "active" ? Math.max(0, d.connectionCount || 0) : 0),
+      0
+    );
+    const speedOrPeerState =
+      summary.downloadSpeed > 0
+        ? `↓ ${formatSpeed(summary.downloadSpeed)}${activeConns > 0 ? ` (${activeConns} 节点)` : ""}`
+        : activeConns > 0
+          ? `已连 ${activeConns} 节点，等待数据`
+          : "寻源中 (0 活跃做种)";
     return [
       progress,
-      summary.downloadSpeed > 0 ? `↓ ${formatSpeed(summary.downloadSpeed)}` : "连接中",
+      speedOrPeerState,
       summary.cloudSpeed > 0 ? `☁↑ ${formatSpeed(summary.cloudSpeed)}` : null,
-      summary.etaSeconds ? `剩余 ${formatDuration(summary.etaSeconds)}` : null
+      primarySummary.etaSeconds ? `剩余 ${formatDuration(primarySummary.etaSeconds)}` : null
     ]
       .filter(Boolean)
       .join(" · ");
@@ -917,16 +974,18 @@ export function groupProgressLine(group: SeriesDownloadGroup): string {
 /** 封面墙卡片下面那行：单集写「第 04 集」，多集写「已缓存 12 集」，后面跟大小与云盘状态 */
 export function cachedMetaLine(group: SeriesDownloadGroup): string {
   const episodes = group.episodes.length === 1 ? currentEpisodeLabel(group) : `已缓存 ${group.episodes.length} 集`;
-  const total = groupTotalLength(group);
-  const storedCount = groupCloudStoredCount(group);
+  const completedDownloads = group.downloads.filter((d) => d.status === "complete");
+  const effectiveScope = completedDownloads.length > 0 ? completedDownloads : group.downloads;
+  const total = computeDownloadsTotalProgress(effectiveScope).localTotalBytes;
+  const storedCount = effectiveScope.filter(isCloudStored).length;
   const parts = [episodes];
   if (total > 0) {
     parts.push(formatBytes(total));
   }
-  if (storedCount > 0 && storedCount === group.downloads.length) {
+  if (storedCount > 0 && storedCount === effectiveScope.length) {
     parts.push("已存云盘");
   } else if (storedCount > 0) {
-    parts.push(`${storedCount}/${group.downloads.length} 存云盘`);
+    parts.push(`${storedCount}/${effectiveScope.length} 存云盘`);
   }
   return parts.join(" · ");
 }

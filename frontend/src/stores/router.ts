@@ -11,8 +11,7 @@ export type TabKey =
   | "downloads"
   | "files"
   | "logs"
-  | "settings"
-  | "integrations";
+  | "settings";
 
 export const TABS: Array<{ key: TabKey; label: string; hint: string; icon: string; subtitle: string }> = [
   { key: "home", label: "番剧发现", hint: "Bangumi", icon: "🌸", subtitle: "新番时间表与全库番剧索引" },
@@ -23,8 +22,7 @@ export const TABS: Array<{ key: TabKey; label: string; hint: string; icon: strin
   { key: "downloads", label: "下载管理", hint: "Downloads", icon: "📥", subtitle: "下载任务与边下边播" },
   { key: "files", label: "文件管理", hint: "Files", icon: "📁", subtitle: "本地下载目录与云盘浏览播放" },
   { key: "logs", label: "运行日志", hint: "Logs", icon: "📋", subtitle: "后端服务运行记录" },
-  { key: "integrations", label: "MCP", hint: "Agent", icon: "🔌", subtitle: "AI 客户端接入配置" },
-  { key: "settings", label: "设置", hint: "服务", icon: "⚙️", subtitle: "服务、下载与数据源设置" }
+  { key: "settings", label: "设置", hint: "服务", icon: "⚙️", subtitle: "服务、下载、数据源与 MCP 接入" }
 ];
 
 const TAB_PATH_BY_KEY: Record<TabKey, string> = {
@@ -36,8 +34,7 @@ const TAB_PATH_BY_KEY: Record<TabKey, string> = {
   downloads: "/downloads",
   files: "/files",
   logs: "/logs",
-  settings: "/service",
-  integrations: "/mcp"
+  settings: "/service"
 };
 
 // 旧版路径别名，保持既有书签/外链可用
@@ -46,6 +43,7 @@ const LEGACY_PATH_TABS: Array<[string, TabKey]> = [
   ["/aria2", "downloads"],
   ["/status", "settings"],
   ["/probe", "settings"],
+  ["/mcp", "settings"],
   ["/feed", "subscriptions"]
 ];
 
@@ -66,6 +64,13 @@ export function resolveTabFromPath(pathname: string): TabKey {
     requestedSettingsPage.value = "probe";
     try {
       window.localStorage.setItem("bgmcat.settings.page", "probe");
+    } catch {
+      // 忽略无痕或受限环境下的存储异常
+    }
+  } else if (normalizedPath === "/mcp" || normalizedPath.startsWith("/mcp/")) {
+    requestedSettingsPage.value = "mcp";
+    try {
+      window.localStorage.setItem("bgmcat.settings.page", "mcp");
     } catch {
       // 忽略无痕或受限环境下的存储异常
     }
@@ -135,6 +140,10 @@ export function readPlaybackGidFromLocation(): string {
   return new URLSearchParams(window.location.search).get("playback")?.trim() ?? "";
 }
 
+export function readAnimeIdFromLocation(): string {
+  return new URLSearchParams(window.location.search).get("anime")?.trim() ?? "";
+}
+
 function normalizePlaybackRouteLabel(value: string): string {
   return value
     .replace(/[\\/#?%]+/g, " ")
@@ -153,7 +162,7 @@ function buildTabPath(tab: TabKey): string {
 
 function buildLocationUrl(
   pathname: string,
-  options: { clearToken?: boolean; playbackGid?: string | null } = {}
+  options: { clearToken?: boolean; playbackGid?: string | null; animeId?: string | null } = {}
 ): string {
   const searchParams = new URLSearchParams(window.location.search);
   if (options.clearToken) {
@@ -169,6 +178,13 @@ function buildLocationUrl(
       searchParams.delete("playback");
     }
   }
+  if (options.animeId !== undefined) {
+    if (options.animeId) {
+      searchParams.set("anime", options.animeId);
+    } else {
+      searchParams.delete("anime");
+    }
+  }
   const search = searchParams.toString();
   const hashParams = new URLSearchParams(window.location.hash.replace(/^#/, ""));
   const preserveHash = !(options.clearToken && (hashParams.has("u") || hashParams.has("p")));
@@ -178,7 +194,7 @@ function buildLocationUrl(
 
 export function syncLocationWithTab(
   mode: "push" | "replace" = "replace",
-  options: { clearToken?: boolean; playbackGid?: string | null } = {}
+  options: { clearToken?: boolean; playbackGid?: string | null; animeId?: string | null } = {}
 ): void {
   const nextOptions = {
     ...options,

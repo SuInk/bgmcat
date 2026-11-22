@@ -447,6 +447,110 @@ func (m *Media) serveHLSByGID(w http.ResponseWriter, r *http.Request, gid, name,
 	return nil
 }
 
+func (m *Media) subtitleCacheDir() string {
+	dir := filepath.Join(m.a.cacheDir(), "subtitles")
+	_ = os.MkdirAll(dir, 0700)
+	return dir
+}
+
+func (m *Media) subtitleCachePath(gid, id, ext string) string {
+	key := gid
+	if _, file, err := m.source(gid); err == nil {
+		if rid := strings.TrimSpace(str(file["remoteId"])); rid != "" {
+			prov := firstNonEmpty(str(file["remoteProvider"]), "google")
+			key = "cloud:" + prov + ":" + rid
+		}
+	}
+	return filepath.Join(m.subtitleCacheDir(), hash(key)+"-"+id+ext)
+}
+
+type extractedSubtitle struct {
+	TrackID     string
+	Ext         string
+	ContentType string
+	FileName    string
+	Data        []byte
+}
+
+// EnsureLocalSubtitles extracts all embedded subtitle tracks from a local media file
+// into ~/.bgmcat/cache/subtitles and returns them so archiveJobWithContext can also
+// upload lightweight sidecar .ass/.vtt files alongside the video in cloud storage.
+func (m *Media) EnsureLocalSubtitles(ctx context.Context, gid, localPath string) []extractedSubtitle {
+	if gid == "" || localPath == "" {
+		return nil
+	}
+	if info, err := os.Stat(localPath); err != nil || !info.Mode().IsRegular() {
+		return nil
+	}
+	probeCtx, probeCancel := context.WithTimeout(ctx, 15*time.Second)
+	defer probeCancel()
+	pCmd := exec.CommandContext(probeCtx, m.ffprobe(), "-v", "error", "-show_streams", "-select_streams", "s", "-of", "json", localPath)
+	pOut, err := pCmd.Output()
+	if err != nil {
+		return nil
+	}
+	var parsed Obj
+	if json.Unmarshal(pOut, &parsed) != nil {
+		return nil
+	}
+	base := filepath.Base(localPath)
+	stem := strings.TrimSuffix(base, filepath.Ext(base))
+	var results []extractedSubtitle
+	usedNames := map[string]bool{}
+	for _, raw := range list(parsed["streams"]) {
+		s := object(raw)
+		idx := str(s["index"])
+		if idx == "" {
+			continue
+		}
+		codecName := strings.ToLower(str(s["codec_name"]))
+		ext, format, codec, contentType := ".vtt", "webvtt", "webvtt", "text/vtt"
+		if codecName == "ass" || codecName == "ssa" {
+			ext, format, codec, contentType = ".ass", "ass", "ass", "text/x-ssa"
+		}
+		tag := object(s["tags"])
+		label := sanitizeFolderName(firstNonEmpty(str(tag["title"]), str(tag["language"]), "track"+idx))
+		if label == "" {
+			label = "track" + idx
+		}
+		fileName := stem + "." + label + ext
+		if usedNames[fileName] {
+			fileName = stem + "." + label + "." + idx + ext
+		}
+		usedNames[fileName] = true
+
+		cachePath := m.subtitleCachePath(gid, idx, ext)
+		var data []byte
+		if cached, readErr := os.ReadFile(cachePath); readErr == nil && len(cached) > 0 {
+			data = cached
+		} else {
+			exCtx, exCancel := context.WithTimeout(ctx, 30*time.Second)
+			cmd := exec.CommandContext(exCtx, m.ffmpeg(), "-nostdin", "-v", "error", "-i", localPath, "-vn", "-an", "-dn", "-map", "0:"+idx, "-c:s", codec, "-f", format, "pipe:1")
+			var out bytes.Buffer
+			cmd.Stdout = &out
+			runErr := cmd.Run()
+			exCancel()
+			if runErr == nil && out.Len() > 0 {
+				data = out.Bytes()
+				tmpPath := cachePath + ".tmp"
+				if os.WriteFile(tmpPath, data, 0600) == nil {
+					_ = os.Rename(tmpPath, cachePath)
+				}
+			}
+		}
+		if len(data) > 0 {
+			results = append(results, extractedSubtitle{
+				TrackID:     idx,
+				Ext:         ext,
+				ContentType: contentType,
+				FileName:    fileName,
+				Data:        data,
+			})
+		}
+	}
+	return results
+}
+
 func (m *Media) serveSubtitleByGID(w http.ResponseWriter, r *http.Request, gid, track string) error {
 	ext := filepath.Ext(track)
 	id := strings.TrimSuffix(track, ext)
@@ -460,16 +564,59 @@ func (m *Media) serveSubtitleByGID(w http.ResponseWriter, r *http.Request, gid, 
 		codec = "ass"
 		content = "text/x-ssa"
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Minute)
+	cachePath := m.subtitleCachePath(gid, id, ext)
+	if cached, readErr := os.ReadFile(cachePath); readErr == nil && len(cached) > 0 {
+		w.Header().Set("Content-Type", content+"; charset=utf-8")
+		_, e = w.Write(cached)
+		return e
+	}
+	// If a sidecar subtitle was uploaded to cloud storage alongside the video, fetch that ~80KB file
+	// directly (~200ms) instead of downloading the entire 400MB MKV just to demux subtitles.
+	if job, _, srcErr := m.source(gid); srcErr == nil && job != nil {
+		if cloudSubs := object(job["cloudSubtitles"]); cloudSubs != nil {
+			if subMeta := object(cloudSubs[id+ext]); subMeta != nil {
+				rid := str(subMeta["remoteId"])
+				prov := firstNonEmpty(str(subMeta["provider"]), str(job["cloudProvider"]), "google")
+				if rid != "" {
+					fetchCtx, fetchCancel := context.WithTimeout(r.Context(), 20*time.Second)
+					res, fetchErr := m.a.openCloudRangeResponse(fetchCtx, prov, rid, "GET", "")
+					if fetchErr == nil && res != nil {
+						data, readErr := io.ReadAll(io.LimitReader(res.Body, 16<<20))
+						res.Body.Close()
+						fetchCancel()
+						if readErr == nil && res.StatusCode >= 200 && res.StatusCode < 300 && len(data) > 0 {
+							tmpPath := cachePath + ".tmp"
+							if os.WriteFile(tmpPath, data, 0600) == nil {
+								_ = os.Rename(tmpPath, cachePath)
+							}
+							w.Header().Set("Content-Type", content+"; charset=utf-8")
+							_, e = w.Write(data)
+							return e
+						}
+					} else {
+						fetchCancel()
+					}
+				}
+			}
+		}
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Minute)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, m.ffmpeg(), "-nostdin", "-v", "error", "-i", m.inputURL(gid), "-map", "0:"+id, "-c:s", codec, "-f", format, "pipe:1")
+	cmd := exec.CommandContext(ctx, m.ffmpeg(), "-nostdin", "-v", "error", "-i", m.inputURL(gid), "-vn", "-an", "-dn", "-map", "0:"+id, "-c:s", codec, "-f", format, "pipe:1")
 	var out bytes.Buffer
 	cmd.Stdout = &out
 	if e = cmd.Run(); e != nil {
 		return errors.New("字幕提取失败")
 	}
+	data := out.Bytes()
+	if len(data) > 0 {
+		tmpPath := cachePath + ".tmp"
+		if os.WriteFile(tmpPath, data, 0600) == nil {
+			_ = os.Rename(tmpPath, cachePath)
+		}
+	}
 	w.Header().Set("Content-Type", content+"; charset=utf-8")
-	_, e = w.Write(out.Bytes())
+	_, e = w.Write(data)
 	return e
 }
 

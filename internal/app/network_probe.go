@@ -367,7 +367,9 @@ func (a *App) networkTargetStatus(spec networkProbeTargetSpec) Obj {
 	}
 	state, _ := a.Store.Get("config", networkProbeStoreKey(spec.ID))
 	if state == nil {
-		state = Obj{"enabled": false, "results": []any{}}
+		state = Obj{"enabled": true, "results": []any{}}
+	} else if state["enabled"] == nil {
+		state["enabled"] = true
 	}
 	policy := drivePolicy(state)
 	state["id"] = spec.ID

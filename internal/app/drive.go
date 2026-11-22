@@ -831,6 +831,14 @@ func (a *App) dispatchArchiveJob(gid string) {
 		a.archiveMu.Unlock()
 		return
 	}
+	select {
+	case a.archiveSlots <- struct{}{}:
+	default:
+		// All upload slots are busy; let archiveCompleted pick waiting tasks in episode order.
+		a.archiveMu.Unlock()
+		a.triggerArchive()
+		return
+	}
 	ctx, cancel := context.WithCancel(a.ctx)
 	a.archiveJobs[gid] = cancel
 	a.wg.Add(1)
@@ -844,13 +852,11 @@ func (a *App) dispatchArchiveJob(gid string) {
 			delete(a.archiveJobs, gid)
 			a.archiveMu.Unlock()
 			a.clearLiveTransfer(gid)
+			<-a.archiveSlots
+			if a.ctx.Err() == nil {
+				a.triggerArchive()
+			}
 		}()
-		select {
-		case a.archiveSlots <- struct{}{}:
-			defer func() { <-a.archiveSlots }()
-		case <-ctx.Done():
-			return
-		}
 		j, err := a.Store.Get("downloads", gid)
 		if err != nil || j == nil || str(j["status"]) != "complete" || !a.archiveWanted(j) {
 			return
@@ -877,25 +883,49 @@ func (a *App) archiveCompleted() {
 	if e != nil {
 		return
 	}
-	var batchWG sync.WaitGroup
+	eligible := make([]Obj, 0, len(jobs))
+	nowUnix := time.Now().Unix()
 	for _, j := range jobs {
-		if a.ctx.Err() != nil {
-			break
-		}
 		if str(j["status"]) != "complete" || !a.archiveWanted(j) {
 			continue
 		}
-		gid := str(j["gid"])
 		archive := object(j["cloudArchive"])
-		if str(archive["status"]) == "archived" || num(archive["retryAt"]) > time.Now().Unix() {
+		if str(archive["status"]) == "archived" || num(archive["retryAt"]) > nowUnix {
 			continue
 		}
 		if str(archive["status"]) == "verified" && !a.deleteLocalAfterArchive(j) {
 			continue
 		}
+		eligible = append(eligible, j)
+	}
+	sortJobsByEpisodeOrder(eligible)
+
+	var batchWG sync.WaitGroup
+archiveLoop:
+	for _, j := range eligible {
+		if a.ctx.Err() != nil {
+			break
+		}
+		gid := str(j["gid"])
 		a.archiveMu.Lock()
 		if _, busy := a.archiveJobs[gid]; busy || a.ctx.Err() != nil {
 			a.archiveMu.Unlock()
+			continue
+		}
+		a.archiveMu.Unlock()
+
+		// Acquire an upload slot BEFORE spawning the goroutine so jobs always
+		// begin uploading in strict episode order (Ep 1 -> Ep 2 -> ...).
+		select {
+		case a.archiveSlots <- struct{}{}:
+		case <-a.ctx.Done():
+			break archiveLoop
+		}
+
+		a.archiveMu.Lock()
+		if _, busy := a.archiveJobs[gid]; busy || a.ctx.Err() != nil {
+			a.archiveMu.Unlock()
+			<-a.archiveSlots
 			continue
 		}
 		ctx, cancel := context.WithCancel(a.ctx)
@@ -914,13 +944,8 @@ func (a *App) archiveCompleted() {
 				delete(a.archiveJobs, gid)
 				a.archiveMu.Unlock()
 				a.clearLiveTransfer(gid)
+				<-a.archiveSlots
 			}()
-			select {
-			case a.archiveSlots <- struct{}{}:
-				defer func() { <-a.archiveSlots }()
-			case <-ctx.Done():
-				return
-			}
 			prevAttempts := num(object(job["cloudArchive"])["attempts"])
 			if err := a.archiveJobWithContext(ctx, job); err != nil && ctx.Err() == nil && a.ctx.Err() == nil {
 				attempts := prevAttempts + 1
@@ -940,6 +965,236 @@ func (a *App) archiveJob(j Obj) error {
 	return a.archiveJobWithContext(a.ctx, j)
 }
 
+func (a *App) ensureDriveChildFolder(ctx context.Context, parent, name string) (string, error) {
+	if parent == "" {
+		parent = "root"
+	}
+	if !driveFolderID.MatchString(parent) {
+		return "", errors.New("无效的 Google Drive 父文件夹 ID")
+	}
+	q := fmt.Sprintf("name = '%s' and '%s' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false", escapeDriveQueryLiteral(name), escapeDriveQueryLiteral(parent))
+	params := url.Values{}
+	params.Set("q", q)
+	params.Set("fields", "files(id,name)")
+	params.Set("pageSize", "1")
+	params.Set("supportsAllDrives", "true")
+	params.Set("includeItemsFromAllDrives", "true")
+	res, _, err := a.driveJSON(ctx, "GET", driveBase+"/files?"+params.Encode(), nil)
+	if err == nil {
+		for _, raw := range list(res["files"]) {
+			if id := str(object(raw)["id"]); id != "" {
+				return id, nil
+			}
+		}
+	}
+	created, _, err := a.driveJSON(
+		ctx,
+		"POST",
+		driveBase+"/files?fields=id,name&supportsAllDrives=true",
+		Obj{
+			"name":     name,
+			"mimeType": "application/vnd.google-apps.folder",
+			"parents":  []string{parent},
+		},
+	)
+	if err != nil {
+		return "", err
+	}
+	id := str(created["id"])
+	if id == "" {
+		return "", errors.New("创建 Google Drive 子文件夹失败")
+	}
+	return id, nil
+}
+
+func (a *App) ensureOneDriveChildFolder(ctx context.Context, parent, name string) (string, error) {
+	escaped := url.PathEscape(name)
+	var lookupURL string
+	if parent == "" || parent == "root" {
+		lookupURL = msGraphBase + "/me/drive/root:/" + escaped + "?$select=id,name,folder"
+	} else {
+		lookupURL = msGraphBase + "/me/drive/items/" + url.PathEscape(parent) + ":/" + escaped + "?$select=id,name,folder"
+	}
+	meta, code, err := a.onedriveJSON(ctx, "GET", lookupURL, nil)
+	if err == nil && code == 200 && meta["folder"] != nil {
+		if id := str(meta["id"]); id != "" {
+			return id, nil
+		}
+	}
+	created, err := a.onedriveCreateFolder(ctx, parent, name)
+	if err != nil {
+		return "", err
+	}
+	return str(created["id"]), nil
+}
+
+func (a *App) ensureCloudSubfolderPath(ctx context.Context, provider, baseFolderID string, segments []string) (string, error) {
+	if len(segments) == 0 {
+		return baseFolderID, nil
+	}
+	a.cloudFolderMu.Lock()
+	defer a.cloudFolderMu.Unlock()
+
+	switch provider {
+	case "webdav":
+		rel := cleanWebDAVRelPath(baseFolderID)
+		for _, seg := range segments {
+			if seg = sanitizeFolderName(seg); seg != "" {
+				if rel == "" {
+					rel = seg
+				} else {
+					rel = rel + "/" + seg
+				}
+			}
+		}
+		if err := a.webdavEnsureDir(ctx, a.Settings(), rel); err != nil {
+			return "", err
+		}
+		return rel, nil
+	case "onedrive":
+		cur := baseFolderID
+		if cur == "" {
+			cur = "root"
+		}
+		for _, seg := range segments {
+			if seg = sanitizeFolderName(seg); seg == "" {
+				continue
+			}
+			next, err := a.ensureOneDriveChildFolder(ctx, cur, seg)
+			if err != nil || next == "" {
+				return "", err
+			}
+			cur = next
+		}
+		return cur, nil
+	default: // google
+		cur := baseFolderID
+		if cur == "" {
+			cur = "root"
+		}
+		for _, seg := range segments {
+			if seg = sanitizeFolderName(seg); seg == "" {
+				continue
+			}
+			next, err := a.ensureDriveChildFolder(ctx, cur, seg)
+			if err != nil || next == "" {
+				return "", err
+			}
+			cur = next
+		}
+		return cur, nil
+	}
+}
+
+func (a *App) uploadSidecarSubtitle(ctx context.Context, provider, folderID, fileName, contentType string, data []byte) (string, error) {
+	if len(data) == 0 || fileName == "" {
+		return "", errors.New("空字幕文件")
+	}
+	switch provider {
+	case "webdav":
+		rel := cleanWebDAVRelPath(folderID)
+		target := fileName
+		if rel != "" {
+			target = rel + "/" + fileName
+		}
+		res, err := a.webdavRequest(ctx, a.Settings(), "PUT", target, false, bytes.NewReader(data), int64(len(data)), map[string]string{
+			"Content-Type": contentType + "; charset=utf-8",
+		})
+		if err != nil {
+			return "", err
+		}
+		_, _ = io.Copy(io.Discard, res.Body)
+		res.Body.Close()
+		if res.StatusCode < 200 || res.StatusCode >= 300 {
+			return "", fmt.Errorf("WebDAV 字幕上传失败 (%d)", res.StatusCode)
+		}
+		return target, nil
+	case "onedrive":
+		escaped := url.PathEscape(fileName)
+		var endpoint string
+		if folderID == "" || folderID == "root" {
+			endpoint = msGraphBase + "/me/drive/root:/" + escaped + ":/content"
+		} else {
+			endpoint = msGraphBase + "/me/drive/items/" + url.PathEscape(folderID) + ":/" + escaped + ":/content"
+		}
+		res, err := a.onedriveRequest(ctx, "PUT", endpoint, data, map[string]string{
+			"Content-Type": contentType + "; charset=utf-8",
+		}, true)
+		if err != nil {
+			return "", err
+		}
+		body, _ := io.ReadAll(io.LimitReader(res.Body, 1<<20))
+		res.Body.Close()
+		if res.StatusCode < 200 || res.StatusCode >= 300 {
+			return "", fmt.Errorf("OneDrive 字幕上传失败 (%d)", res.StatusCode)
+		}
+		var meta Obj
+		_ = json.Unmarshal(body, &meta)
+		return str(meta["id"]), nil
+	default: // google
+		parent := folderID
+		if parent == "" {
+			parent = "root"
+		}
+		boundary := "bgmcat_sub_" + hash(fileName + now())[:16]
+		metaBytes, _ := json.Marshal(Obj{"name": fileName, "parents": []string{parent}})
+		var body bytes.Buffer
+		body.WriteString("--" + boundary + "\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n")
+		body.Write(metaBytes)
+		body.WriteString("\r\n--" + boundary + "\r\nContent-Type: " + contentType + "; charset=utf-8\r\n\r\n")
+		body.Write(data)
+		body.WriteString("\r\n--" + boundary + "--\r\n")
+		res, err := a.driveRequest(ctx, "POST", "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name&supportsAllDrives=true", body.Bytes(), map[string]string{
+			"Content-Type": "multipart/related; boundary=" + boundary,
+		})
+		if err != nil {
+			return "", err
+		}
+		respBody, _ := io.ReadAll(io.LimitReader(res.Body, 1<<20))
+		res.Body.Close()
+		if res.StatusCode < 200 || res.StatusCode >= 300 {
+			return "", fmt.Errorf("Google Drive 字幕上传失败 (%d)", res.StatusCode)
+		}
+		var meta Obj
+		_ = json.Unmarshal(respBody, &meta)
+		return str(meta["id"]), nil
+	}
+}
+
+func (a *App) uploadJobSidecarSubtitles(ctx context.Context, j Obj, provider, folderID, localMediaPath string) {
+	gid := str(j["gid"])
+	subs := a.media.EnsureLocalSubtitles(ctx, gid, localMediaPath)
+	if len(subs) == 0 {
+		return
+	}
+	existing := object(j["cloudSubtitles"])
+	if existing == nil {
+		existing = Obj{}
+	}
+	updated := false
+	for _, sub := range subs {
+		key := sub.TrackID + sub.Ext
+		if prev := object(existing[key]); prev != nil && str(prev["remoteId"]) != "" {
+			continue
+		}
+		upCtx, cancel := context.WithTimeout(ctx, 25*time.Second)
+		rid, err := a.uploadSidecarSubtitle(upCtx, provider, folderID, sub.FileName, sub.ContentType, sub.Data)
+		cancel()
+		if err == nil && rid != "" {
+			existing[key] = Obj{
+				"remoteId": rid,
+				"provider": provider,
+				"fileName": sub.FileName,
+			}
+			updated = true
+		}
+	}
+	if updated {
+		j["cloudSubtitles"] = existing
+		_, _ = a.Store.Patch("downloads", gid, Obj{"cloudSubtitles": existing})
+	}
+}
+
 func (a *App) archiveJobWithContext(ctx context.Context, j Obj) error {
 	gid := str(j["gid"])
 	defer a.clearLiveTransfer(gid)
@@ -953,7 +1208,18 @@ func (a *App) archiveJobWithContext(ctx context.Context, j Obj) error {
 	}
 	j["cloudProvider"] = provider
 	if str(j["cloudFolderId"]) == "" {
-		j["cloudFolderId"] = a.cloudProviderFolderID(provider)
+		baseFolder := a.cloudProviderFolderID(provider)
+		folderMode := normalizeDownloadFolderMode(str(a.Settings()["downloadFolderMode"]))
+		subfolders := buildDownloadSubfolders(folderMode, str(j["animeTitle"]), firstNonEmpty(str(j["feedItemTitle"]), str(j["title"])))
+		if len(subfolders) > 0 {
+			if targetFolder, err := a.ensureCloudSubfolderPath(ctx, provider, baseFolder, subfolders); err == nil && targetFolder != "" {
+				j["cloudFolderId"] = targetFolder
+			} else {
+				j["cloudFolderId"] = baseFolder
+			}
+		} else {
+			j["cloudFolderId"] = baseFolder
+		}
 	}
 	save := func() error {
 		_, e := a.Store.Patch("downloads", gid, Obj{"files": files, "cloudFolderId": j["cloudFolderId"], "cloudProvider": provider})
@@ -998,6 +1264,10 @@ func (a *App) archiveJobWithContext(ctx context.Context, j Obj) error {
 			return uploadErr
 		}
 	}
+	if mediaBest, err := mediaFile(Obj{"files": files}); err == nil {
+		a.media.EnsureLocalThumbnail(ctx, gid, str(mediaBest["path"]))
+		a.uploadJobSidecarSubtitles(ctx, j, provider, str(j["cloudFolderId"]), str(mediaBest["path"]))
+	}
 	_, _ = a.Store.Patch("downloads", gid, Obj{"cloudArchive": Obj{"status": "verified", "error": nil, "retryAt": 0}})
 	a.notifyDownloads()
 	if !a.deleteLocalAfterArchive(j) {
@@ -1005,9 +1275,6 @@ func (a *App) archiveJobWithContext(ctx context.Context, j Obj) error {
 	}
 	if a.media.Busy(gid) {
 		return errors.New("正在播放，稍后清理")
-	}
-	if mediaBest, err := mediaFile(Obj{"files": files}); err == nil {
-		a.media.EnsureLocalThumbnail(ctx, gid, str(mediaBest["path"]))
 	}
 	for _, v := range files {
 		f := object(v)

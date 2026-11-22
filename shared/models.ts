@@ -19,6 +19,7 @@ export interface AppSettings {
   corsOrigins: string[];
   pollIntervalMinutes: number;
   downloadDir: string;
+  downloadFolderMode?: "anime" | "anime_subgroup" | "subgroup" | "subgroup_anime" | "flat";
   cloudProvider: CloudProviderType;
   cloudArchiveEnabled: boolean;
   googleClientId: string;

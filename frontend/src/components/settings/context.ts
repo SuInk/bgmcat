@@ -11,6 +11,7 @@ export type SettingsPageKey =
   | "sources"
   | "metadata"
   | "ai"
+  | "mcp"
   | "remote"
   | "tunnel"
   | "github";
@@ -26,12 +27,15 @@ export function normalizeSettingsPageKey(key: SettingsPageKey | string | null | 
       return "sources";
     case "github":
       return "remote";
+    case "integrations":
+      return "mcp";
     case "general":
     case "data":
     case "about":
     case "download":
     case "sources":
     case "ai":
+    case "mcp":
     case "remote":
     case "tunnel":
       return key;

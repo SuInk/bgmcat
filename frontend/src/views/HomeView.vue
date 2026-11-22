@@ -160,25 +160,8 @@ function weekdayDateOf(key: string): Date | null {
   return target;
 }
 
-function weekdayShortDate(key: string): string {
-  const d = weekdayDateOf(key);
-  if (!d) {
-    return "";
-  }
-  const mo = String(d.getMonth() + 1).padStart(2, "0");
-  const da = String(d.getDate()).padStart(2, "0");
-  return `${mo}/${da}`;
-}
-
 function weekdayButtonLabel(weekday: { key: string; label: string }): string {
-  if (weekday.key === "all") {
-    return weekday.label;
-  }
-  const md = weekdayShortDate(weekday.key);
-  if (weekday.key === todayWeekdayKey.value) {
-    return `${weekday.label} · 今天 ${md}`;
-  }
-  return `${weekday.label} ${md}`;
+  return weekday.label;
 }
 
 watch(todayWeekdayKey, (next, prev) => {
@@ -769,17 +752,6 @@ onUnmounted(() => {
               </div>
               <span class="subbar-sep" aria-hidden="true" />
               <span class="subbar-count">{{ displayedHomepageAnime.length }} 部</span>
-              <template v-if="hiddenAnimeList.length > 0">
-                <span class="subbar-sep" aria-hidden="true" />
-                <button
-                  type="button"
-                  class="hidden-entry-btn"
-                  @click="hiddenDialogOpen = true"
-                >
-                  <AppNavIcon name="eye-off" class="size-3.5" aria-hidden="true" />
-                  <span>已隐藏 {{ hiddenAnimeList.length }}</span>
-                </button>
-              </template>
             </div>
           </div>
 
@@ -1016,17 +988,6 @@ onUnmounted(() => {
               </div>
               <span class="subbar-sep" aria-hidden="true" />
               <span class="subbar-count">{{ catalogCountText }}</span>
-              <template v-if="hiddenAnimeList.length > 0">
-                <span class="subbar-sep" aria-hidden="true" />
-                <button
-                  type="button"
-                  class="hidden-entry-btn"
-                  @click="hiddenDialogOpen = true"
-                >
-                  <AppNavIcon name="eye-off" class="size-3.5" aria-hidden="true" />
-                  <span>已隐藏 {{ hiddenAnimeList.length }}</span>
-                </button>
-              </template>
             </div>
           </div>
         </div>
@@ -1136,6 +1097,17 @@ onUnmounted(() => {
           class="h-6"
           aria-hidden="true"
         />
+
+        <div v-if="hiddenAnimeList.length > 0" class="hidden-footer">
+          <button
+            type="button"
+            class="hidden-footer-btn"
+            @click="hiddenDialogOpen = true"
+          >
+            <AppNavIcon name="eye-off" class="size-3.5" aria-hidden="true" />
+            <span>已隐藏 {{ hiddenAnimeList.length }} 部番剧 · 管理</span>
+          </button>
+        </div>
       </div>
 
       <AppDialog
@@ -1452,7 +1424,7 @@ onUnmounted(() => {
   display: flex;
   min-width: 0;
   align-items: center;
-  gap: 4px;
+  gap: 2px;
   overflow-x: auto;
   scrollbar-width: none;
 }
@@ -1463,14 +1435,31 @@ onUnmounted(() => {
 
 .weekday-btn {
   flex: none;
-  height: 34px;
-  padding: 0 12px;
+  height: 32px;
+  padding: 0 9px;
   border-radius: 8px;
   color: var(--ink-secondary);
   font-size: 13px;
   font-weight: 500;
   white-space: nowrap;
   transition: background 0.15s ease, color 0.15s ease;
+}
+
+@media (max-width: 639px) {
+  .weekday-bar {
+    display: grid;
+    width: 100%;
+    grid-template-columns: repeat(8, minmax(0, 1fr));
+    gap: 2px;
+    overflow-x: visible;
+  }
+
+  .weekday-btn {
+    height: 30px;
+    padding: 0;
+    font-size: 12px;
+    text-align: center;
+  }
 }
 
 .weekday-btn:hover:not(.is-active) {
@@ -1800,5 +1789,26 @@ onUnmounted(() => {
   .shelf-item {
     width: 8.5rem;
   }
+}
+.hidden-footer {
+  display: flex;
+  justify-content: center;
+  padding: 18px 0 8px;
+}
+.hidden-footer-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 12px;
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 500;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.hidden-footer-btn:hover {
+  background: var(--panel);
+  color: var(--ink);
 }
 </style>

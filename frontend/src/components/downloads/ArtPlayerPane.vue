@@ -520,8 +520,14 @@ async function mountPlayer(): Promise<void> {
                 }
               }
             });
+            let mediaRecoverAttempts = 0;
             hlsInstance.on(Hls.Events.ERROR, (_event, data) => {
               if (!data.fatal) {
+                return;
+              }
+              if (data.type === Hls.ErrorTypes.MEDIA_ERROR && mediaRecoverAttempts < 2) {
+                mediaRecoverAttempts += 1;
+                hlsInstance?.recoverMediaError();
                 return;
               }
               // 原来 hls.js 出错是完全静默的，用户只看到永远转不出来的黑屏
@@ -543,13 +549,25 @@ async function mountPlayer(): Promise<void> {
 
   player.on("video:loadedmetadata", () => {
     waitingForStream.value = false;
+    streamError.value = null;
     if (player) {
       player.playbackRate = storedRate;
     }
     offerResume();
   });
+  player.on("video:canplay", () => {
+    waitingForStream.value = false;
+    streamError.value = null;
+  });
+  player.on("video:playing", () => {
+    waitingForStream.value = false;
+    streamError.value = null;
+  });
   player.on("video:timeupdate", () => {
     waitingForStream.value = false;
+    if (streamError.value && player && !player.video.paused && player.video.readyState >= 2) {
+      streamError.value = null;
+    }
     savePlaybackProgress();
   });
   player.on("video:pause", () => savePlaybackProgress(true));
@@ -569,6 +587,10 @@ async function mountPlayer(): Promise<void> {
     }
   });
   player.on("video:error", () => {
+    // 正在正常播放或只是切换流/轨道期间的瞬态事件，不应把报错条钉在画面上
+    if (player && (!player.video.error || (!player.video.paused && player.video.readyState >= 2))) {
+      return;
+    }
     waitingForStream.value = false;
     streamError.value = "播放失败：浏览器无法解码这个流，试试外部播放器。";
   });
@@ -724,9 +746,17 @@ onBeforeUnmount(() => {
 
       <div
         v-if="streamError"
-        class="absolute inset-x-3 bottom-14 z-20 rounded-lg border border-[var(--err-soft)] bg-[var(--card)] px-4 py-3 text-sm font-semibold text-[var(--err)]"
+        class="absolute inset-x-3 bottom-14 z-20 flex items-center justify-between gap-3 rounded-lg border border-[var(--err-soft)] bg-[var(--card)]/95 px-3.5 py-2.5 text-xs font-semibold text-[var(--err)] backdrop-blur-sm"
       >
-        {{ streamError }}
+        <span class="min-w-0 flex-1">{{ streamError }}</span>
+        <button
+          type="button"
+          class="grid size-6 shrink-0 place-items-center rounded-md text-[var(--muted)] transition hover:bg-[var(--panel)] hover:text-[var(--ink)]"
+          aria-label="关闭错误提示"
+          @click="streamError = null"
+        >
+          <AppNavIcon name="close" class="size-3.5" aria-hidden="true" />
+        </button>
       </div>
 
       <!--

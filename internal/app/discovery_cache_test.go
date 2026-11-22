@@ -515,7 +515,7 @@ func TestExtractBangumiStreamingLinks(t *testing.T) {
 	if str(links[1]["id"]) != "qq" || str(links[1]["label"]) != "腾讯视频" {
 		t.Fatalf("expected qq streaming link, got %+v", links[1])
 	}
-	if str(links[2]["id"]) != "bahamut" || str(links[2]["label"]) != "巴哈姆特动画疯" {
+	if str(links[2]["id"]) != "bahamut" || str(links[2]["label"]) != "动画疯" {
 		t.Fatalf("expected bahamut streaming link, got %+v", links[2])
 	}
 }
