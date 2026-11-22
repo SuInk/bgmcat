@@ -595,3 +595,71 @@ func TestNativeHTTPFilenamesAndUnindexedBTIntegrity(t *testing.T) {
 		t.Fatalf("expected cross-format same-infoHash enqueue to deduplicate, got gid1=%s gid2=%s", str(j1["gid"]), str(j2["gid"]))
 	}
 }
+
+func TestAutoCancelRedundantDuplicateEpisodes(t *testing.T) {
+	a := testApp(t)
+	dir := filepath.Join(a.cfg.DataDir, "downloads", "Makeine")
+	doneJob := Obj{
+		"gid":             "done-v1",
+		"animeId":         "464376",
+		"animeTitle":      "败犬女主太多了！",
+		"feedItemTitle":   "[北宇治字幕组] 败犬女主太多了！ [12][1080p][简日内嵌]",
+		"status":          "complete",
+		"completedLength": 389466910,
+		"totalLength":     389466910,
+		"directory":       dir,
+	}
+	deadSameEp := Obj{
+		"gid":             "dead-v2",
+		"animeId":         "464376",
+		"animeTitle":      "败犬女主太多了！",
+		"feedItemTitle":   "[Up to 21°C] 败北女角太多了！ - 12 (CR 1920x1080 AVC AAC MKV)",
+		"status":          "active",
+		"completedLength": 0,
+		"downloadSpeed":   0,
+		"totalLength":     1463077509,
+		"directory":       dir,
+	}
+	progressingSameEp := Obj{
+		"gid":             "prog-v3",
+		"animeId":         "464376",
+		"animeTitle":      "败犬女主太多了！",
+		"feedItemTitle":   "【喵萌奶茶屋】[败犬女主太多了！][12END][1080p]",
+		"status":          "active",
+		"completedLength": 4096,
+		"downloadSpeed":   0,
+		"totalLength":     414696088,
+		"directory":       dir,
+	}
+	otherEp := Obj{
+		"gid":             "other-ep11",
+		"animeId":         "464376",
+		"animeTitle":      "败犬女主太多了！",
+		"feedItemTitle":   "[北宇治字幕组] 败犬女主太多了！ [11][1080p]",
+		"status":          "active",
+		"completedLength": 0,
+		"downloadSpeed":   0,
+		"totalLength":     380000000,
+		"directory":       dir,
+	}
+	for _, j := range []Obj{doneJob, deadSameEp, progressingSameEp, otherEp} {
+		if err := a.Store.Put("downloads", str(j["gid"]), j); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	a.autoCancelRedundantDuplicateEpisodes("done-v1", doneJob)
+
+	gotDead, _ := a.Store.Get("downloads", "dead-v2")
+	if str(gotDead["status"]) != "paused" {
+		t.Fatalf("expected 0%% dead duplicate same-episode task to be auto-paused, got %s", str(gotDead["status"]))
+	}
+	gotProg, _ := a.Store.Get("downloads", "prog-v3")
+	if str(gotProg["status"]) != "active" {
+		t.Fatalf("expected partially downloaded duplicate task to remain active, got %s", str(gotProg["status"]))
+	}
+	gotOtherEp, _ := a.Store.Get("downloads", "other-ep11")
+	if str(gotOtherEp["status"]) != "active" {
+		t.Fatalf("expected different episode task to remain active, got %s", str(gotOtherEp["status"]))
+	}
+}

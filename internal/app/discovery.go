@@ -211,8 +211,10 @@ func animeFromBangumiAt(o Obj, day int64, refNow time.Time) Obj {
 	return out
 }
 func (a *App) homepage(ctx context.Context) ([]Obj, error) {
+	a.ensureBangumiDataLoaded(ctx)
+	a.ensureBilibiliTimelineLoaded(ctx)
 	// The key carries a version so a change to the cached item shape (e.g. cover URLs) takes effect immediately.
-	result, err := a.discoveryCached(ctx, "home:v3", time.Hour, 7*24*time.Hour, func(ctx context.Context) (Obj, error) {
+	result, err := a.discoveryCached(ctx, "home:v4", time.Hour, 7*24*time.Hour, func(ctx context.Context) (Obj, error) {
 		data, err := a.getAny(ctx, "https://api.bgm.tv/calendar")
 		if err != nil {
 			return nil, err
@@ -221,7 +223,9 @@ func (a *App) homepage(ctx context.Context) ([]Obj, error) {
 		for _, v := range list(data) {
 			day := object(v)
 			for _, item := range list(day["items"]) {
-				out = append(out, animeFromBangumi(object(item), num(object(day["weekday"])["id"])))
+				anime := animeFromBangumi(object(item), num(object(day["weekday"])["id"]))
+				a.enrichAnimeBroadcast(anime)
+				out = append(out, anime)
 			}
 		}
 		if len(out) == 0 {
@@ -231,7 +235,9 @@ func (a *App) homepage(ctx context.Context) ([]Obj, error) {
 	})
 	out := []Obj{}
 	for _, v := range list(result["items"]) {
-		out = append(out, object(v))
+		item := object(v)
+		a.enrichAnimeBroadcast(item)
+		out = append(out, item)
 	}
 	return out, err
 }
@@ -253,7 +259,9 @@ func (a *App) bangumiSearch(ctx context.Context, keyword string) (Obj, error) {
 	for _, item := range list(o["data"]) {
 		raw := object(item)
 		a.seedBangumiSubject(raw)
-		items = append(items, animeFromBangumi(raw, 0))
+		anime := animeFromBangumi(raw, 0)
+		a.enrichAnimeBroadcast(anime)
+		items = append(items, anime)
 	}
 	return Obj{"items": items, "platformFailures": []any{}}, nil
 }
@@ -660,7 +668,19 @@ func resolveStreamingPlatform(labelHint, raw string, searchTitle string) (string
 		if isDirectURL {
 			u = trimmed
 		}
-		return "bahamut", "巴哈姆特动画疯", u
+		return "bahamut", "动画疯", u
+	case strings.Contains(probe, "ani-one") || strings.Contains(probe, "anione"):
+		u := "https://www.youtube.com/results?search_query=" + q
+		if isDirectURL {
+			u = trimmed
+		}
+		return "ani_one", "Ani-One", u
+	case strings.Contains(probe, "木棉花") || strings.Contains(probe, "muse"):
+		u := "https://www.youtube.com/results?search_query=" + q
+		if isDirectURL {
+			u = trimmed
+		}
+		return "muse", "木棉花", u
 	case strings.Contains(probe, "youtube") || strings.Contains(probe, "youtu.be"):
 		u := "https://www.youtube.com/results?search_query=" + q
 		if isDirectURL {
@@ -673,22 +693,12 @@ func resolveStreamingPlatform(labelHint, raw string, searchTitle string) (string
 			u = trimmed
 		}
 		return "netflix", "Netflix", u
-	case strings.Contains(probe, "abema"):
-		u := "https://abema.tv/search?q=" + q
+	case strings.Contains(probe, "disney"):
+		u := "https://www.disneyplus.com/"
 		if isDirectURL {
 			u = trimmed
 		}
-		return "abema", "ABEMA", u
-	case isDirectURL:
-		lbl := strings.TrimSpace(labelHint)
-		if lbl == "" {
-			if parsed, err := url.Parse(trimmed); err == nil && parsed.Host != "" {
-				lbl = strings.TrimPrefix(parsed.Host, "www.")
-			} else {
-				lbl = "在线观看"
-			}
-		}
-		return "url:" + trimmed, lbl, trimmed
+		return "disneyplus", "Disney+", u
 	default:
 		return "", "", ""
 	}
@@ -887,6 +897,7 @@ func (a *App) animeDetailQuery(ctx context.Context, id string, basic bool, progr
 			return nil, e
 		}
 		anime := animeFromBangumi(o, 0)
+		a.enrichAnimeBroadcast(anime)
 		keyword := str(anime["title"])
 		aliases := extractBangumiChineseAliases(o, keyword)
 		titles := normalizeSearchKeywords([]string{str(o["name"]), str(o["name_cn"])})
@@ -939,6 +950,7 @@ func (a *App) animeDetailQuery(ctx context.Context, id string, basic bool, progr
 		return nil, e
 	}
 	anime := animeFromBangumi(o, 0)
+	a.enrichAnimeBroadcast(anime)
 	keyword := str(anime["title"])
 	useAliases := strings.TrimSpace(keywordHint) == "" || strings.EqualFold(strings.TrimSpace(keywordHint), keyword)
 	var aliases []string
@@ -979,6 +991,11 @@ func (a *App) animeDetailQuery(ctx context.Context, id string, basic bool, progr
 		tags = append(tags, object(v)["name"])
 	}
 	streamingLinks := a.fastStreamingLinks(id, o, keyword)
+	if str(anime["broadcastAt"]) == "" && len(downloads) > 0 {
+		if bcast := deriveBroadcastFromDownloads(downloads); bcast != "" {
+			anime["broadcastAt"] = bcast
+		}
+	}
 	return Obj{"detailPending": false, "anime": anime, "titles": titles, "summary": o["summary"], "intro": o["summary"], "episodes": eps, "mikanKeyword": keyword, "downloads": downloads, "providerStatuses": statuses, "tags": tags, "rank": object(o["rating"])["rank"], "totalEpisodes": o["total_episodes"], "platforms": []Obj{{"id": "bangumi", "displayName": "Bangumi", "url": "https://bgm.tv/subject/" + id, "score": object(o["rating"])["score"], "scoreMax": 10}}, "streamingLinks": streamingLinks, "platformFailures": []any{}}, nil
 }
 func (a *App) favorites() ([]Obj, error) {
@@ -998,6 +1015,7 @@ func (a *App) favorites() ([]Obj, error) {
 		if image := str(f["imageUrl"]); image != "" {
 			f["imageUrl"] = bangumiCover(image)
 		}
+		a.enrichAnimeBroadcast(f)
 		matchedSubs := subsByAnime[str(f["animeId"])]
 		related := make([]Obj, 0, len(matchedSubs))
 		f["subscriptionId"] = nil

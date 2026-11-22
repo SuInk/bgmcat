@@ -66,6 +66,7 @@ export const settingsForm = reactive<AppSettings>({
   corsOrigins: [],
   pollIntervalMinutes: 30,
   downloadDir: "",
+  downloadFolderMode: "anime_subgroup",
   cloudProvider: "google",
   cloudArchiveEnabled: false,
   googleClientId: "",

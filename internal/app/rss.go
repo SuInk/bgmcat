@@ -1033,7 +1033,31 @@ func (a *App) queuePreferred(s Obj) int {
 	for k := range groups {
 		groupKeys = append(groupKeys, k)
 	}
-	sort.Strings(groupKeys)
+	sort.SliceStable(groupKeys, func(i, j int) bool {
+		parseKey := func(k string) (scope string, hasEp bool, ep int) {
+			idx := strings.LastIndex(k, ":")
+			if idx < 0 {
+				return k, false, 0
+			}
+			n, err := strconv.Atoi(k[idx+1:])
+			if err != nil {
+				return k[:idx], false, 0
+			}
+			return k[:idx], true, n
+		}
+		sa, ha, ea := parseKey(groupKeys[i])
+		sb, hb, eb := parseKey(groupKeys[j])
+		if sa != sb {
+			return sa < sb
+		}
+		if ha != hb {
+			return ha
+		}
+		if ha && ea != eb {
+			return ea < eb
+		}
+		return groupKeys[i] < groupKeys[j]
+	})
 
 	for _, key := range groupKeys {
 		group := groups[key]

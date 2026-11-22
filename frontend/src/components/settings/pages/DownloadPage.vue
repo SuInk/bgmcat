@@ -9,6 +9,7 @@ import {
   disconnectCloud,
   listCloudFolders,
   listCloudProviders,
+  syncPublicTrackers,
   testDownloadEngine,
   type CloudFolder,
   type CloudProviderStatus,
@@ -585,6 +586,8 @@ const TRACKER_SCHEMES = ["udp:", "http:", "https:", "wss:"];
 
 const trackerDraft = ref("");
 const invalidTrackers = ref<string[]>([]);
+const syncingTrackers = ref(false);
+const trackerSyncHint = ref("");
 
 watch(
   () => settingsForm.btTrackers,
@@ -622,6 +625,26 @@ function fillRecommendedTrackers(): void {
   void saveSettingsFields(["btTrackers"]);
 }
 
+async function handleSyncPublicTrackers(): Promise<void> {
+  if (syncingTrackers.value) return;
+  syncingTrackers.value = true;
+  trackerSyncHint.value = "";
+  try {
+    const res = await syncPublicTrackers();
+    settingsForm.btTrackers = [...res.btTrackers];
+    invalidTrackers.value = [];
+    trackerSyncHint.value =
+      res.addedCount > 0
+        ? `已同步最新公共列表，新增 ${res.addedCount} 个（共 ${res.totalCount} 个）`
+        : `已是最新公共列表（共 ${res.totalCount} 个）`;
+    updateFeedback(trackerSyncHint.value);
+  } catch (error) {
+    toastError(error, "同步公共 Tracker 失败");
+  } finally {
+    syncingTrackers.value = false;
+  }
+}
+
 onMounted(() => {
   consumeCallbackQueryParams();
   void refreshCloud();
@@ -647,6 +670,27 @@ onUnmounted(() => {
     <div class="settings-group">
       <SettingsItem as="div" title="保存位置">
         <SegmentedControl v-model="storageMode" :options="STORAGE_MODE_OPTIONS" aria-label="保存位置" />
+      </SettingsItem>
+
+      <SettingsItem
+        as="div"
+        title="目录分组"
+        desc="本机下载与云盘转存共用此文件夹层级（新任务生效）"
+      >
+        <AppSelect
+          size="sm"
+          class="w-[15rem]"
+          :model-value="settingsForm.downloadFolderMode || 'anime_subgroup'"
+          aria-label="目录分组"
+          :options="[
+            { value: 'anime', label: '按番剧名称（番剧名/）' },
+            { value: 'anime_subgroup', label: '番剧 + 字幕组（番剧名/字幕组/）' },
+            { value: 'subgroup', label: '按字幕组（字幕组/）' },
+            { value: 'subgroup_anime', label: '字幕组 + 番剧（字幕组/番剧名/）' },
+            { value: 'flat', label: '不分组（直接平铺）' }
+          ]"
+          @update:model-value="settingsForm.downloadFolderMode = String($event) as any"
+        />
       </SettingsItem>
 
       <SettingsItem as="div" title="云盘服务">
@@ -1273,24 +1317,52 @@ onUnmounted(() => {
       <SettingsItem
         v-if="settingsForm.downloadClient === 'native' || settingsForm.downloadClient === 'aria2-rpc'"
         as="div"
+        title="下载完成后继续做种"
+        desc="为已完成且保留在本机的 BT 番剧持续上传做种，有助于提升个人分享率与冷门番存活率（若开启“仅云盘”删本地文件则自动跳过）"
+      >
+        <label class="inline-flex cursor-pointer items-center gap-2 text-xs font-semibold text-[var(--ink)]">
+          <input
+            v-model="settingsForm.aria2SeedEnabled"
+            type="checkbox"
+            class="size-4 accent-[var(--accent)]"
+          />
+          <span>{{ settingsForm.aria2SeedEnabled ? "已开启" : "已关闭" }}</span>
+        </label>
+      </SettingsItem>
+
+      <SettingsItem
+        v-if="settingsForm.downloadClient === 'native' || settingsForm.downloadClient === 'aria2-rpc'"
+        as="div"
         stacked
         title="额外 Tracker"
+        desc="启动时会自动拉取 XIU2 / ngosang 公共 Tracker 订阅源；也可点下方按钮立即同步最新列表或手动补充"
       >
         <div class="grid w-full min-w-0 gap-2">
           <textarea
             v-model="trackerDraft"
             aria-label="公共 Tracker 列表"
             class="settings-input settings-input-wide font-mono text-xs"
-            rows="3"
+            rows="4"
             spellcheck="false"
-            placeholder="已内置公共 Tracker，可按行补充自定义地址"
+            placeholder="已内置公共 Tracker 并自动同步在线订阅，可按行补充自定义地址"
             @blur="commitTrackers"
             @keydown.enter.stop
           />
           <div class="settings-actions">
-            <button type="button" class="settings-secondary-button" @click="fillRecommendedTrackers">填入推荐列表</button>
+            <button
+              type="button"
+              class="settings-secondary-button"
+              :disabled="syncingTrackers"
+              @click="handleSyncPublicTrackers"
+            >
+              {{ syncingTrackers ? "同步中…" : "一键同步最新公共 Tracker" }}
+            </button>
+            <button type="button" class="settings-secondary-button" @click="fillRecommendedTrackers">填入精选</button>
             <span v-if="settingsForm.btTrackers.length" class="settings-desc">已附加 {{ settingsForm.btTrackers.length }} 个</span>
           </div>
+          <p v-if="trackerSyncHint" class="settings-desc text-[var(--ok)]">
+            {{ trackerSyncHint }}
+          </p>
           <p v-if="invalidTrackers.length" class="settings-field-error">
             无效地址：{{ invalidTrackers.join("、") }}
           </p>

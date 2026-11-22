@@ -1,11 +1,11 @@
 <script setup lang="ts">
 /**
- * 运行日志。
- * 以前是一块写死黑底的「终端」，按钮挤在右上角，Aria2 每秒一行的进度读数整屏刷，
- * 真正的错误根本找不到。现在：和其他页同一套工具栏（级别筛选 + 搜索），跟随主题配色，
- * 多行长消息默认只露前几行，「跟随最新」开着才自动滚到底。
+ * 运行日志（参考 NapCat WebUI 终端控制台风格）。
+ * 统一终端窗口外壳：顶部集成级别筛选、关键词搜索（带高亮）、跟随最新、折行切换、字号与导出；
+ * 正文采用高对比度深色终端配色 + 行号槽 + 语义色级别标识 + 悬浮单行复制 + 滚动回到底部按钮；
+ * 底部状态栏展示日志来源路径与实时计数。
  */
-import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
 
 import type { LogEntry } from "@shared/index";
 
@@ -18,37 +18,53 @@ type LogLevelFilter = "all" | LogEntry["level"];
 
 const LOG_FONT_SIZE_KEY = "bgmcat.logs.font-size";
 const LEGACY_LOG_FONT_SIZE_KEY = "anime-rss.logs.font-size";
-const MIN_LOG_FONT_SIZE = 10;
-const MAX_LOG_FONT_SIZE = 18;
-/** 超过这么多行的消息先折起来：Aria2 的下载摘要一段就是十几行 */
-const COLLAPSE_LINES = 3;
+const LOG_WRAP_KEY = "bgmcat.logs.wrap";
+const MIN_LOG_FONT_SIZE = 11;
+const MAX_LOG_FONT_SIZE = 17;
+const COLLAPSE_LINES = 4;
 
 const levelFilter = ref<LogLevelFilter>("all");
 const query = ref("");
 const follow = ref(true);
+const wrapLines = ref(readWrapPref());
 const logFontSize = ref(readLogFontSize());
 const outputRef = ref<HTMLElement | null>(null);
 const expandedIds = reactive(new Set<number>());
+const copiedId = ref<number | null>(null);
+const copiedAll = ref(false);
+let copiedTimer: number | null = null;
 let autoRefreshTimer: number | null = null;
 
-const LEVELS: Array<{ key: LogLevelFilter; label: string }> = [
-  { key: "all", label: "全部" },
-  { key: "error", label: "错误" },
-  { key: "warn", label: "警告" },
-  { key: "info", label: "信息" }
+const LEVELS: Array<{ key: LogLevelFilter; label: string; short: string }> = [
+  { key: "all", label: "全部", short: "ALL" },
+  { key: "error", label: "错误", short: "ERR" },
+  { key: "warn", label: "警告", short: "WARN" },
+  { key: "info", label: "信息", short: "INFO" }
 ];
 
 function readLogFontSize(): number {
-  const parsed = Number.parseInt(window.localStorage.getItem(LOG_FONT_SIZE_KEY) ?? window.localStorage.getItem(LEGACY_LOG_FONT_SIZE_KEY) ?? "12", 10);
+  const parsed = Number.parseInt(
+    window.localStorage.getItem(LOG_FONT_SIZE_KEY) ?? window.localStorage.getItem(LEGACY_LOG_FONT_SIZE_KEY) ?? "12",
+    10
+  );
   if (!Number.isFinite(parsed)) {
     return 12;
   }
   return Math.min(MAX_LOG_FONT_SIZE, Math.max(MIN_LOG_FONT_SIZE, parsed));
 }
 
+function readWrapPref(): boolean {
+  return window.localStorage.getItem(LOG_WRAP_KEY) !== "false";
+}
+
 function setLogFontSize(value: number): void {
   logFontSize.value = Math.min(MAX_LOG_FONT_SIZE, Math.max(MIN_LOG_FONT_SIZE, value));
   window.localStorage.setItem(LOG_FONT_SIZE_KEY, String(logFontSize.value));
+}
+
+function toggleWrap(): void {
+  wrapLines.value = !wrapLines.value;
+  window.localStorage.setItem(LOG_WRAP_KEY, String(wrapLines.value));
 }
 
 const levelCounts = computed<Record<LogLevelFilter, number>>(() => {
@@ -59,7 +75,7 @@ const levelCounts = computed<Record<LogLevelFilter, number>>(() => {
   return counts;
 });
 
-/** 接口给的是新→旧，日志习惯旧→新往下读 */
+/** 接口给的是新→旧，终端习惯旧→新往下读 */
 const visibleLogs = computed(() => {
   const keyword = query.value.trim().toLowerCase();
   return [...logs.value]
@@ -84,7 +100,6 @@ function timeLabel(value: string): string {
   return [date.getHours(), date.getMinutes(), date.getSeconds()].map((part) => String(part).padStart(2, "0")).join(":");
 }
 
-/** 某条是不是当天第一条：换日时插一行日期分隔 */
 function startsNewDay(index: number): boolean {
   const entry = visibleLogs.value[index];
   const previous = visibleLogs.value[index - 1];
@@ -97,7 +112,34 @@ function messageLines(entry: LogEntry): string[] {
 
 function shownMessage(entry: LogEntry): string {
   const lines = messageLines(entry);
-  return expandedIds.has(entry.id) || lines.length <= COLLAPSE_LINES ? lines.join("\n") : lines.slice(0, COLLAPSE_LINES).join("\n");
+  return expandedIds.has(entry.id) || lines.length <= COLLAPSE_LINES
+    ? lines.join("\n")
+    : lines.slice(0, COLLAPSE_LINES).join("\n");
+}
+
+/** 将搜索关键词拆分高亮片段，避免 v-html XSS 风险 */
+function highlightParts(text: string): Array<{ text: string; hit: boolean }> {
+  const keyword = query.value.trim();
+  if (!keyword) {
+    return [{ text, hit: false }];
+  }
+  const lower = text.toLowerCase();
+  const needle = keyword.toLowerCase();
+  const parts: Array<{ text: string; hit: boolean }> = [];
+  let cursor = 0;
+  while (cursor < text.length) {
+    const idx = lower.indexOf(needle, cursor);
+    if (idx === -1) {
+      parts.push({ text: text.slice(cursor), hit: false });
+      break;
+    }
+    if (idx > cursor) {
+      parts.push({ text: text.slice(cursor, idx), hit: false });
+    }
+    parts.push({ text: text.slice(idx, idx + keyword.length), hit: true });
+    cursor = idx + keyword.length;
+  }
+  return parts;
 }
 
 function toggleExpanded(id: number): void {
@@ -108,11 +150,56 @@ function toggleExpanded(id: number): void {
   }
 }
 
-const LEVEL_PILL: Record<LogEntry["level"], string> = {
-  error: "status-pill-err",
-  warn: "status-pill-warn",
-  info: "status-pill-muted"
-};
+function formatEntryText(entry: LogEntry): string {
+  return `[${dayKey(entry.createdAt)} ${timeLabel(entry.createdAt)}] [${entry.level.toUpperCase()}] ${entry.message.trim()}`;
+}
+
+async function copyLine(entry: LogEntry): Promise<void> {
+  await copyText(formatEntryText(entry));
+  copiedId.value = entry.id;
+  copiedAll.value = false;
+  if (copiedTimer !== null) {
+    window.clearTimeout(copiedTimer);
+  }
+  copiedTimer = window.setTimeout(() => {
+    copiedId.value = null;
+    copiedTimer = null;
+  }, 1600);
+}
+
+async function copyVisibleLogs(): Promise<void> {
+  if (!visibleLogs.value.length) {
+    return;
+  }
+  const payload = visibleLogs.value.map(formatEntryText).join("\n");
+  await copyText(payload);
+  copiedAll.value = true;
+  copiedId.value = null;
+  if (copiedTimer !== null) {
+    window.clearTimeout(copiedTimer);
+  }
+  copiedTimer = window.setTimeout(() => {
+    copiedAll.value = false;
+    copiedTimer = null;
+  }, 1800);
+}
+
+function exportVisibleLogs(): void {
+  if (!visibleLogs.value.length) {
+    return;
+  }
+  const content = visibleLogs.value.map(formatEntryText).join("\n") + "\n";
+  const blob = new Blob([content], { type: "text/plain;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
+  link.href = url;
+  link.download = `bgmcat-logs-${stamp}.log`;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+}
 
 function scrollToBottom(): void {
   if (outputRef.value) {
@@ -120,20 +207,24 @@ function scrollToBottom(): void {
   }
 }
 
-/** 用户往上翻看旧日志时就别再把他拽回底部 */
+function jumpToBottom(): void {
+  follow.value = true;
+  void nextTick(scrollToBottom);
+}
+
 function handleScroll(): void {
   const element = outputRef.value;
   if (!element) {
     return;
   }
-  const atBottom = element.scrollHeight - element.scrollTop - element.clientHeight < 24;
+  const atBottom = element.scrollHeight - element.scrollTop - element.clientHeight < 28;
   if (!atBottom && follow.value) {
     follow.value = false;
   }
 }
 
 function restartAutoRefresh(): void {
-  if (autoRefreshTimer) {
+  if (autoRefreshTimer !== null) {
     window.clearInterval(autoRefreshTimer);
     autoRefreshTimer = null;
   }
@@ -166,172 +257,766 @@ onMounted(async () => {
   scrollToBottom();
 });
 
-onUnmounted(() => {
-  if (autoRefreshTimer) {
+onBeforeUnmount(() => {
+  if (autoRefreshTimer !== null) {
     window.clearInterval(autoRefreshTimer);
+  }
+  if (copiedTimer !== null) {
+    window.clearTimeout(copiedTimer);
   }
 });
 </script>
 
 <template>
-  <section class="page-shell">
-    <div class="page-toolbar">
-      <div class="toolbar-row">
-        <div class="toolbar-chips" role="group" aria-label="按级别筛选">
+  <section class="logs-page">
+    <div class="log-console">
+      <!-- 顶部控制台工具栏（NapCat 终端风格） -->
+      <header class="console-header">
+        <div class="console-header-left">
           <button
-            v-for="level in LEVELS"
-            :key="level.key"
             type="button"
-            class="chip"
-            :class="{ 'chip-active': levelFilter === level.key }"
-            :aria-pressed="levelFilter === level.key"
-            @click="levelFilter = level.key"
+            class="live-pill"
+            :class="{ active: follow }"
+            :title="follow ? '自动拉取并跟随最新日志（点击暂停）' : '已暂停跟随（点击恢复）'"
+            @click="follow = !follow"
           >
-            {{ level.label }}
-            <span class="chip-count tabular-nums">{{ levelCounts[level.key] }}</span>
+            <span class="live-dot" />
+            <span>{{ follow ? "实时跟随" : "已暂停" }}</span>
           </button>
+
+          <div class="level-tabs" role="group" aria-label="按级别筛选">
+            <button
+              v-for="level in LEVELS"
+              :key="level.key"
+              type="button"
+              class="level-tab"
+              :class="[`level-${level.key}`, { active: levelFilter === level.key }]"
+              :aria-pressed="levelFilter === level.key"
+              @click="levelFilter = level.key"
+            >
+              <span>{{ level.label }}</span>
+              <span class="level-count">{{ levelCounts[level.key] }}</span>
+            </button>
+          </div>
         </div>
+
+        <div class="console-header-right">
+          <label class="console-search">
+            <AppNavIcon name="search" class="console-search-icon" aria-hidden="true" />
+            <input
+              v-model="query"
+              type="search"
+              placeholder="过滤关键词…"
+              aria-label="搜索日志内容"
+            />
+          </label>
+
+          <div class="console-actions">
+            <button
+              type="button"
+              class="console-btn"
+              :class="{ active: wrapLines }"
+              title="切换自动折行"
+              @click="toggleWrap"
+            >
+              折行
+            </button>
+
+            <div class="font-stepper" role="group" aria-label="字号">
+              <button
+                type="button"
+                class="console-btn stepper-btn"
+                :disabled="logFontSize <= MIN_LOG_FONT_SIZE"
+                title="减小字号"
+                @click="setLogFontSize(logFontSize - 1)"
+              >
+                A-
+              </button>
+              <button
+                type="button"
+                class="console-btn stepper-btn"
+                :disabled="logFontSize >= MAX_LOG_FONT_SIZE"
+                title="增大字号"
+                @click="setLogFontSize(logFontSize + 1)"
+              >
+                A+
+              </button>
+            </div>
+
+            <button
+              type="button"
+              class="console-btn"
+              :disabled="!visibleLogs.length"
+              :title="copiedAll ? '已复制当前日志' : '复制当前显示的全部日志'"
+              @click="copyVisibleLogs"
+            >
+              <AppNavIcon :name="copiedAll ? 'check' : 'copy'" class="btn-icon" aria-hidden="true" />
+              <span class="hidden sm:inline">{{ copiedAll ? "已复制" : "复制" }}</span>
+            </button>
+
+            <button
+              type="button"
+              class="console-btn"
+              :disabled="!visibleLogs.length"
+              title="导出为 .log 文件"
+              @click="exportVisibleLogs"
+            >
+              <AppNavIcon name="download" class="btn-icon" aria-hidden="true" />
+              <span class="hidden sm:inline">导出</span>
+            </button>
+
+            <button
+              type="button"
+              class="console-btn icon-only"
+              :disabled="isBusy('logs')"
+              title="立即刷新"
+              aria-label="立即刷新"
+              @click="refreshLogs()"
+            >
+              <AppNavIcon name="refresh" class="btn-icon" :class="{ 'animate-spin': isBusy('logs') }" aria-hidden="true" />
+            </button>
+          </div>
+        </div>
+      </header>
+
+      <!-- 终端正文区 -->
+      <div class="console-body-wrap">
+        <div
+          ref="outputRef"
+          class="console-body"
+          :class="{ 'is-nowrap': !wrapLines }"
+          :style="{ fontSize: `${logFontSize}px` }"
+          @scroll.passive="handleScroll"
+        >
+          <div v-if="!visibleLogs.length" class="console-empty">
+            <AppNavIcon name="logs" class="size-7 opacity-40" aria-hidden="true" />
+            <p class="empty-title">{{ logs.length ? "没有匹配的日志记录" : "暂无运行日志" }}</p>
+            <p class="empty-sub">
+              {{ logs.length ? "可尝试清空搜索关键词或切换日志级别。" : "订阅刷新、BT 下载、云盘归档等后台事件会实时输出在这里。" }}
+            </p>
+          </div>
+
+          <template v-for="(entry, index) in visibleLogs" :key="entry.id">
+            <div v-if="startsNewDay(index)" class="day-divider">
+              <span>{{ dayKey(entry.createdAt) }}</span>
+            </div>
+
+            <div class="term-row" :class="`is-${entry.level}`">
+              <span class="term-lineno" aria-hidden="true">{{ index + 1 }}</span>
+              <time class="term-time">{{ timeLabel(entry.createdAt) }}</time>
+              <span class="term-level" :class="`lvl-${entry.level}`">{{ entry.level.toUpperCase() }}</span>
+              <div class="term-content">
+                <div class="term-msg">
+                  <template v-for="(part, pIdx) in highlightParts(shownMessage(entry))" :key="pIdx">
+                    <mark v-if="part.hit" class="log-mark">{{ part.text }}</mark>
+                    <template v-else>{{ part.text }}</template>
+                  </template>
+                </div>
+                <button
+                  v-if="messageLines(entry).length > COLLAPSE_LINES"
+                  type="button"
+                  class="term-expand"
+                  @click="toggleExpanded(entry.id)"
+                >
+                  {{ expandedIds.has(entry.id) ? "收起详情" : `展开其余 ${messageLines(entry).length - COLLAPSE_LINES} 行` }}
+                </button>
+              </div>
+              <button
+                type="button"
+                class="term-copy"
+                :class="{ copied: copiedId === entry.id }"
+                :title="copiedId === entry.id ? '已复制' : '复制此行'"
+                :aria-label="copiedId === entry.id ? '已复制' : '复制此行'"
+                @click="copyLine(entry)"
+              >
+                <AppNavIcon :name="copiedId === entry.id ? 'check' : 'copy'" class="size-3.5" aria-hidden="true" />
+              </button>
+            </div>
+          </template>
+        </div>
+
+        <!-- 向上翻阅旧日志时浮现「回到底部」按钮 -->
+        <Transition name="fade-up">
+          <button
+            v-if="!follow && visibleLogs.length > 0"
+            type="button"
+            class="jump-bottom-btn"
+            @click="jumpToBottom"
+          >
+            <AppNavIcon name="chevron-down" class="size-3.5" aria-hidden="true" />
+            <span>回到底部</span>
+          </button>
+        </Transition>
+      </div>
+
+      <!-- 底部终端状态栏 -->
+      <footer class="console-footer">
         <button
           type="button"
-          class="toolbar-meta hidden min-w-0 max-w-[45%] truncate hover:text-[var(--ink)] sm:block"
-          :title="logFilePath ? `${logFilePath}（点击复制）` : undefined"
+          class="footer-path"
+          :title="logFilePath ? `${logFilePath}（点击复制路径）` : undefined"
           :disabled="!logFilePath"
           @click="copyText(logFilePath)"
         >
-          {{ logFilePath || "运行时日志" }}
+          {{ logFilePath || "运行时内存日志" }}
         </button>
-      </div>
-
-      <div class="toolbar-row flex-wrap">
-        <label class="search-field min-w-[12rem]">
-          <AppNavIcon name="search" aria-hidden="true" />
-          <input v-model="query" type="search" placeholder="搜索日志内容" aria-label="搜索日志内容" />
-        </label>
-        <label class="chip shrink-0 cursor-pointer px-3 py-1.5 text-sm" :class="{ 'chip-active': follow }">
-          <input v-model="follow" type="checkbox" class="sr-only" />
-          <span class="size-1.5 rounded-full" :class="follow ? 'animate-pulse bg-current' : 'bg-[var(--muted)]'"></span>
-          跟随最新
-        </label>
-        <div class="flex shrink-0 items-center gap-1" role="group" aria-label="字号">
-          <button
-            type="button"
-            class="icon-btn text-xs font-bold"
-            :disabled="logFontSize <= MIN_LOG_FONT_SIZE"
-            title="减小字号"
-            @click="setLogFontSize(logFontSize - 1)"
-          >
-            A-
-          </button>
-          <span class="w-9 text-center text-xs font-semibold tabular-nums text-[var(--muted)]">{{ logFontSize }}px</span>
-          <button
-            type="button"
-            class="icon-btn text-xs font-bold"
-            :disabled="logFontSize >= MAX_LOG_FONT_SIZE"
-            title="增大字号"
-            @click="setLogFontSize(logFontSize + 1)"
-          >
-            A+
-          </button>
+        <div class="footer-meta">
+          <span>{{ visibleLogs.length }} / {{ logs.length }} 条</span>
+          <span class="footer-sep">·</span>
+          <span>{{ logFontSize }}px</span>
+          <span class="footer-sep hidden sm:inline">·</span>
+          <span class="hidden sm:inline">{{ follow ? "每 3 秒自动同步" : "手动刷新模式" }}</span>
         </div>
-        <button type="button" class="icon-btn shrink-0" :disabled="isBusy('logs')" title="立即刷新" aria-label="立即刷新" @click="refreshLogs()">
-          <AppNavIcon name="refresh" :class="{ 'animate-spin': isBusy('logs') }" />
-        </button>
-      </div>
-    </div>
-
-    <div class="min-h-0 pb-4">
-      <div
-        ref="outputRef"
-        class="log-output h-full overflow-auto rounded-[18px] border border-[var(--line)] bg-[var(--card)] font-mono"
-        :style="{ fontSize: `${logFontSize}px` }"
-        @scroll.passive="handleScroll"
-      >
-        <div v-if="!visibleLogs.length" class="empty-state h-full font-sans">
-          <div class="grid max-w-sm gap-2.5">
-            <span class="empty-icon"><AppNavIcon name="logs" class="size-6" aria-hidden="true" /></span>
-            <p class="text-sm font-semibold text-[var(--ink)]">{{ logs.length ? "没有符合条件的日志" : "还没有日志" }}</p>
-            <p v-if="!logs.length" class="text-xs text-[var(--muted)]">订阅刷新、下载、云盘归档等后台动作会记录在这里。</p>
-          </div>
-        </div>
-
-        <template v-for="(entry, index) in visibleLogs" :key="entry.id">
-          <div v-if="startsNewDay(index)" class="log-day">{{ dayKey(entry.createdAt) }}</div>
-          <div class="log-line" :class="{ 'log-line-error': entry.level === 'error' }">
-            <time class="log-time">{{ timeLabel(entry.createdAt) }}</time>
-            <span class="status-pill justify-self-start font-sans" :class="LEVEL_PILL[entry.level]">{{ entry.level }}</span>
-            <div class="min-w-0">
-              <div class="log-message">{{ shownMessage(entry) }}</div>
-              <button
-                v-if="messageLines(entry).length > COLLAPSE_LINES"
-                type="button"
-                class="mt-0.5 font-sans text-[11px] font-semibold text-[var(--accent-vivid)] hover:underline"
-                @click="toggleExpanded(entry.id)"
-              >
-                {{ expandedIds.has(entry.id) ? "收起" : `展开其余 ${messageLines(entry).length - COLLAPSE_LINES} 行` }}
-              </button>
-            </div>
-          </div>
-        </template>
-      </div>
+      </footer>
     </div>
   </section>
 </template>
 
 <style scoped>
-.log-day {
+.logs-page {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  padding: 12px 16px 16px;
+}
+
+.log-console {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+  border-radius: 14px;
+  border: 1px solid #262b36;
+  background: #12151c;
+  color: #dce3f0;
+  box-shadow: 0 8px 28px rgba(10, 14, 24, 0.14);
+}
+
+/* 顶部控制台头 */
+.console-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 12px;
+  padding: 9px 12px;
+  background: #181c26;
+  border-bottom: 1px solid #252a36;
+}
+
+.console-header-left,
+.console-header-right {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.live-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 10px;
+  border-radius: 999px;
+  border: 1px solid #2e3444;
+  background: #202532;
+  color: #9aa5bc;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: border-color 0.15s, background 0.15s, color 0.15s;
+}
+.live-pill.active {
+  border-color: rgba(52, 211, 153, 0.35);
+  background: rgba(16, 185, 129, 0.12);
+  color: #6ee7b7;
+}
+.live-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: #f59e0b;
+}
+.live-pill.active .live-dot {
+  background: #34d399;
+  box-shadow: 0 0 0 3px rgba(52, 211, 153, 0.22);
+  animation: pulse-dot 2s infinite;
+}
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
+}
+
+.level-tabs {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 8px;
+  background: #11141c;
+  border: 1px solid #252a36;
+}
+
+.level-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 24px;
+  padding: 0 8px;
+  border-radius: 6px;
+  border: 0;
+  background: transparent;
+  color: #8f9ab0;
+  font-size: 12px;
+  font-weight: 550;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.14s, color 0.14s;
+}
+.level-tab:hover {
+  color: #e5ebf5;
+  background: rgba(255, 255, 255, 0.04);
+}
+.level-tab.active {
+  background: #272e3f;
+  color: #f4f7fc;
+}
+.level-tab.level-error.active {
+  background: rgba(239, 68, 68, 0.2);
+  color: #fca5a5;
+}
+.level-tab.level-warn.active {
+  background: rgba(245, 158, 11, 0.2);
+  color: #fcd34d;
+}
+.level-tab.level-info.active {
+  background: rgba(56, 189, 248, 0.18);
+  color: #7dd3fc;
+}
+
+.level-count {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  opacity: 0.78;
+  font-variant-numeric: tabular-nums;
+}
+
+.console-search {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 9px;
+  border-radius: 7px;
+  border: 1px solid #2b3140;
+  background: #11141c;
+  color: #9aa5bc;
+  min-width: 11rem;
+  transition: border-color 0.15s;
+}
+.console-search:focus-within {
+  border-color: #60a5fa;
+  color: #dce3f0;
+}
+.console-search-icon {
+  width: 13px;
+  height: 13px;
+  flex-shrink: 0;
+}
+.console-search input {
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: #eef2f9;
+  font-size: 12px;
+  outline: none;
+}
+.console-search input::placeholder {
+  color: #647087;
+}
+
+.console-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.console-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  height: 28px;
+  padding: 0 9px;
+  border-radius: 7px;
+  border: 1px solid #2b3140;
+  background: #1d222e;
+  color: #c2ccde;
+  font-size: 12px;
+  font-weight: 550;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.14s, border-color 0.14s, color 0.14s;
+}
+.console-btn:hover:not(:disabled) {
+  background: #272e3f;
+  border-color: #3c465c;
+  color: #f4f7fc;
+}
+.console-btn.active {
+  border-color: rgba(96, 165, 250, 0.45);
+  background: rgba(59, 130, 246, 0.16);
+  color: #93c5fd;
+}
+.console-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.console-btn.icon-only {
+  width: 28px;
+  padding: 0;
+}
+.btn-icon {
+  width: 13.5px;
+  height: 13.5px;
+}
+
+.font-stepper {
+  display: inline-flex;
+}
+.stepper-btn {
+  padding: 0 7px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+}
+.stepper-btn:first-child {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+  border-right: 0;
+}
+.stepper-btn:last-child {
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+}
+
+/* 终端正文区 */
+.console-body-wrap {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.console-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: 6px 0 14px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  line-height: 1.58;
+  scrollbar-color: #303748 transparent;
+  scrollbar-width: thin;
+}
+.console-body::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+.console-body::-webkit-scrollbar-thumb {
+  background: #2f3646;
+  border-radius: 999px;
+}
+.console-body::-webkit-scrollbar-thumb:hover {
+  background: #434d63;
+}
+
+.console-empty {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 32px;
+  color: #7c879c;
+  font-family: inherit;
+  text-align: center;
+}
+.empty-title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: #c7d0e0;
+}
+.empty-sub {
+  margin: 0;
+  font-size: 12px;
+  color: #748096;
+}
+
+.day-divider {
   position: sticky;
   top: 0;
-  z-index: 1;
-  border-bottom: 1px solid var(--line);
-  background: var(--panel);
-  padding: 0.25rem 0.75rem;
-  color: var(--muted);
-  font-family: inherit;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 14px;
+  background: rgba(18, 21, 28, 0.92);
+  backdrop-filter: blur(6px);
+  color: #6b768c;
   font-size: 11px;
   font-weight: 600;
+  letter-spacing: 0.04em;
+}
+.day-divider::after {
+  content: "";
+  flex: 1 1 auto;
+  height: 1px;
+  background: #222734;
 }
 
-.log-line {
+.term-row {
   display: grid;
-  grid-template-columns: 4.75rem 3.25rem minmax(0, 1fr);
+  grid-template-columns: 2.8rem 4.9rem 3.3rem minmax(0, 1fr) 26px;
   align-items: start;
-  gap: 0.75rem;
-  border-bottom: 1px solid color-mix(in srgb, var(--line) 50%, transparent);
-  padding: 0.25rem 0.75rem;
-  line-height: 1.5;
+  gap: 0 10px;
+  padding: 3px 12px 3px 10px;
+  border-left: 2px solid transparent;
+  transition: background 0.1s;
+}
+.term-row:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+.term-row.is-warn {
+  border-left-color: #f59e0b;
+  background: rgba(245, 158, 11, 0.045);
+}
+.term-row.is-warn:hover {
+  background: rgba(245, 158, 11, 0.085);
+}
+.term-row.is-error {
+  border-left-color: #ef4444;
+  background: rgba(239, 68, 68, 0.08);
+}
+.term-row.is-error:hover {
+  background: rgba(239, 68, 68, 0.13);
 }
 
-.log-line:hover {
-  background: var(--tint-2);
+.term-lineno {
+  text-align: right;
+  color: #495266;
+  font-variant-numeric: tabular-nums;
+  user-select: none;
 }
 
-.log-line-error {
-  background: color-mix(in srgb, var(--err) 5%, transparent);
-}
-
-.log-time {
-  color: var(--muted);
+.term-time {
+  color: #7d89a0;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
   user-select: none;
 }
 
-.log-message {
-  color: var(--ink);
-  overflow-wrap: anywhere;
-  white-space: pre-wrap;
+.term-level {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 18px;
+  margin-top: 1px;
+  border-radius: 4px;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  user-select: none;
+}
+.lvl-info {
+  background: rgba(56, 189, 248, 0.14);
+  color: #7dd3fc;
+}
+.lvl-warn {
+  background: rgba(245, 158, 11, 0.18);
+  color: #fcd34d;
+}
+.lvl-error {
+  background: rgba(239, 68, 68, 0.22);
+  color: #fca5a5;
 }
 
-/* 手机：时间和级别一行，消息另起一行占满宽度；以前时间单占一列，消息被挤成一行十几个字 */
-@media (max-width: 640px) {
-  .log-line {
-    grid-template-columns: auto auto minmax(0, 1fr);
-    gap: 0.125rem 0.5rem;
-    padding: 0.375rem 0.75rem;
-  }
+.term-content {
+  min-width: 0;
+}
 
-  .log-line > .min-w-0 {
-    grid-column: 1 / -1;
+.term-msg {
+  color: #e4eaf5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.console-body.is-nowrap .term-msg {
+  white-space: pre;
+  overflow-wrap: normal;
+}
+.term-row.is-warn .term-msg {
+  color: #fde68a;
+}
+.term-row.is-error .term-msg {
+  color: #fecaca;
+}
+
+.log-mark {
+  background: rgba(250, 204, 21, 0.34);
+  color: #fef08a;
+  border-radius: 2px;
+  padding: 0 2px;
+}
+
+.term-expand {
+  margin-top: 2px;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  color: #60a5fa;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.term-expand:hover {
+  text-decoration: underline;
+}
+
+.term-copy {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 22px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: #6f7b92;
+  opacity: 0;
+  cursor: pointer;
+  transition: opacity 0.12s, background 0.12s, color 0.12s;
+}
+.term-row:hover .term-copy,
+.term-copy:focus-visible,
+.term-copy.copied {
+  opacity: 1;
+}
+.term-copy:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: #e5ebf5;
+}
+.term-copy.copied {
+  color: #34d399;
+}
+
+/* 回到底部悬浮按钮 */
+.jump-bottom-btn {
+  position: absolute;
+  right: 16px;
+  bottom: 14px;
+  z-index: 3;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 30px;
+  padding: 0 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(96, 165, 250, 0.45);
+  background: rgba(24, 30, 44, 0.94);
+  color: #93c5fd;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+  backdrop-filter: blur(8px);
+  transition: background 0.15s, color 0.15s, transform 0.15s;
+}
+.jump-bottom-btn:hover {
+  background: #2563eb;
+  border-color: #3b82f6;
+  color: #fff;
+  transform: translateY(-1px);
+}
+
+.fade-up-enter-active,
+.fade-up-leave-active {
+  transition: opacity 0.16s ease, transform 0.16s ease;
+}
+.fade-up-enter-from,
+.fade-up-leave-to {
+  opacity: 0;
+  transform: translateY(6px);
+}
+
+/* 底部终端状态栏 */
+.console-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  height: 30px;
+  padding: 0 12px;
+  background: #171b24;
+  border-top: 1px solid #252a36;
+  color: #77839a;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+}
+
+.footer-path {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+.footer-path:hover:not(:disabled) {
+  color: #cdd6e6;
+}
+.footer-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.footer-sep {
+  opacity: 0.45;
+}
+
+@media (max-width: 640px) {
+  .logs-page {
+    padding: 8px 10px 12px;
+  }
+  .console-search {
+    flex: 1 1 100%;
+    min-width: 0;
+  }
+  .term-row {
+    grid-template-columns: auto auto minmax(0, 1fr) 24px;
+    gap: 2px 8px;
+    padding: 5px 10px;
+  }
+  .term-lineno {
+    display: none;
+  }
+  .term-content {
+    grid-column: 1 / -2;
+  }
+  .term-copy {
+    opacity: 0.7;
   }
 }
 </style>

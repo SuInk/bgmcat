@@ -200,3 +200,31 @@ func TestMigrateLegacyDataLayoutAndSharedAnimeFolderCleanup(t *testing.T) {
 		t.Fatal("expected empty anime folder removed after last episode deleted")
 	}
 }
+
+func TestBuildDownloadSubfolders(t *testing.T) {
+	raw := "[LoliHouse] FX战士久留美 / FX Senshi Kurumi-chan - 06v2 [WebRip 1080p HEVC-10bit AAC].mkv"
+	cases := []struct {
+		mode       string
+		animeTitle string
+		rawTitle   string
+		want       []string
+	}{
+		{"anime", "FX战士久留美", raw, []string{"FX战士久留美"}},
+		{"anime_subgroup", "FX战士久留美", raw, []string{"FX战士久留美", "LoliHouse"}},
+		{"subgroup", "FX战士久留美", raw, []string{"LoliHouse"}},
+		{"subgroup_anime", "FX战士久留美", raw, []string{"LoliHouse", "FX战士久留美"}},
+		{"flat", "FX战士久留美", raw, nil},
+		{"anime_subgroup", "", "【北宇治字幕组】败犬女主太多了！ - 12 [1080p].mp4", []string{"败犬女主太多了！", "北宇治字幕组"}},
+	}
+	for _, tc := range cases {
+		got := buildDownloadSubfolders(tc.mode, tc.animeTitle, tc.rawTitle)
+		if len(got) != len(tc.want) {
+			t.Fatalf("mode=%q: got %v, want %v", tc.mode, got, tc.want)
+		}
+		for i := range got {
+			if got[i] != tc.want[i] {
+				t.Fatalf("mode=%q: got %v, want %v", tc.mode, got, tc.want)
+			}
+		}
+	}
+}

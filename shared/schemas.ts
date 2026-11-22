@@ -58,6 +58,7 @@ export const updateSettingsSchema = z.object({
   corsOrigins: z.array(z.string().trim()).optional(),
   pollIntervalMinutes: z.number().int().min(1).max(1440).optional(),
   downloadDir: z.string().trim().min(1).optional(),
+  downloadFolderMode: z.enum(["anime", "anime_subgroup", "subgroup", "subgroup_anime", "flat"]).optional(),
   cloudProvider: z.enum(["google", "onedrive", "webdav"]).optional(),
   cloudArchiveEnabled: z.boolean().optional(),
   dianaMcpConfigPath: z.string().trim().optional(),

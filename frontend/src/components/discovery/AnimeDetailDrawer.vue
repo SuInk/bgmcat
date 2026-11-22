@@ -58,9 +58,15 @@ import { streamMikanDownload } from "../../stores/streamPlay";
 import { subscriptions } from "../../stores/subscriptions";
 import AppNavIcon from "../layout/AppNavIcon.vue";
 
+import AsyncPagePlaceholder from "../common/AsyncPagePlaceholder.vue";
+
 // 番剧详情与资源筛选按需加载，缩小首页首屏体积；首屏空闲后立即后台预热组件包，点卡片 0ms 挂载
 const loadAnimeDetailPane = () => import("./AnimeDetailPane.vue");
-const AnimeDetailPane = defineAsyncComponent(loadAnimeDetailPane);
+const AnimeDetailPane = defineAsyncComponent({
+  loader: loadAnimeDetailPane,
+  loadingComponent: AsyncPagePlaceholder,
+  delay: 80
+});
 
 onMounted(() => {
   const nav = navigator as Navigator & {

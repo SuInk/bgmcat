@@ -113,6 +113,7 @@ func (a *App) platformSearch(ctx context.Context, id, q string) ([]Obj, error) {
 		}
 		ids[id] = key
 		anime := Obj{"animeId": id + ":" + key, "bangumiId": nil, "title": title, "searchKeyword": title, "imageUrl": image, "airDay": nil, "isOnAir": false, "isRestricted": false, "rating": nil, "source": "bangumi", "externalIds": ids, "matchedPlatforms": []string{id}, "mikanId": nil, "officialSite": nil}
+		a.enrichAnimeBroadcast(anime)
 		platform := Obj{"id": id, "displayName": platformNames[id], "url": link, "score": score, "scoreMax": max}
 		detail := Obj{"anime": anime, "titles": []string{title}, "summary": summary, "intro": summary, "episodes": []any{}, "mikanKeyword": title, "tags": []any{}, "totalEpisodes": episodes, "platforms": []Obj{platform}, "platformFailures": []any{}}
 		_ = a.Store.Put("cache", "detail:"+id+":"+key, detail)
@@ -217,6 +218,9 @@ func (a *App) externalDetailQuery(ctx context.Context, id string, basic bool, pr
 	if d == nil {
 		return nil, errors.New("请重新搜索此番剧以加载信息")
 	}
+	if anime := object(d["anime"]); anime != nil {
+		a.enrichAnimeBroadcast(anime)
+	}
 	d["streamingLinks"] = a.fastStreamingLinks(id, nil, str(d["mikanKeyword"]))
 	if basic {
 		d["downloads"] = []Obj{}
@@ -233,6 +237,11 @@ func (a *App) externalDetailQuery(ctx context.Context, id string, basic bool, pr
 	}
 	d["downloads"] = downloads
 	d["providerStatuses"] = statuses
+	if anime := object(d["anime"]); anime != nil && str(anime["broadcastAt"]) == "" && len(downloads) > 0 {
+		if bcast := deriveBroadcastFromDownloads(downloads); bcast != "" {
+			anime["broadcastAt"] = bcast
+		}
+	}
 	return d, nil
 }
 

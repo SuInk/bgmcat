@@ -133,11 +133,14 @@ func (a *App) enqueue(o Obj) (Obj, error) {
 		dir = custom
 	}
 	animeTitle := firstNonEmpty(str(o["animeTitle"]), favTitle, subTitle)
-	folderName := extractSeriesFolderName(animeTitle, title)
-	if folderName == "" {
-		folderName = gid
+	folderMode := normalizeDownloadFolderMode(str(a.Settings()["downloadFolderMode"]))
+	if folderMode != "flat" {
+		subfolders := buildDownloadSubfolders(folderMode, animeTitle, title)
+		if len(subfolders) == 0 {
+			subfolders = []string{gid}
+		}
+		dir = filepath.Join(append([]string{dir}, subfolders...)...)
 	}
-	dir = filepath.Join(dir, folderName)
 	if e = os.MkdirAll(dir, 0700); e != nil {
 		return nil, e
 	}
@@ -199,7 +202,153 @@ func (a *App) resolveSaveTo(requested string) (string, error) {
 	return "", errors.New("保存位置只能是本机或云盘")
 }
 
+func downloadJobEpisodeSortKey(j Obj) (hasEp bool, ep int, createdAt int64, gid string) {
+	title := firstNonEmpty(str(j["feedItemTitle"]), str(j["title"]))
+	if title == "" {
+		if files := list(j["files"]); len(files) > 0 {
+			title = filepath.Base(str(object(files[0])["path"]))
+		}
+	}
+	if title == "" {
+		title = str(j["sourceUrl"])
+	}
+	if raw := episode(title); raw != nil {
+		if n := int(num(raw)); n >= 0 {
+			hasEp = true
+			ep = n
+		}
+	}
+	return hasEp, ep, num(j["createdAt"]), str(j["gid"])
+}
+
+func sortJobsByEpisodeOrder(jobs []Obj) {
+	sort.SliceStable(jobs, func(i, j int) bool {
+		ha, ea, ca, ga := downloadJobEpisodeSortKey(jobs[i])
+		hb, eb, cb, gb := downloadJobEpisodeSortKey(jobs[j])
+		if ha != hb {
+			return ha
+		}
+		if ha && ea != eb {
+			return ea < eb
+		}
+		if ca != cb {
+			return ca < cb
+		}
+		return ga < gb
+	})
+}
+
 func (a *App) startJob(gid string) {
+	a.scheduleDownloads()
+}
+
+// scheduleDownloads fills available downloadSlots with queued/waiting tasks in
+// ascending episode order (Ep 1 -> Ep 2 -> ...), so multi-episode batches and
+// restarts always download earlier episodes first.
+func (a *App) scheduleDownloads() {
+	if a.ctx.Err() != nil {
+		return
+	}
+	jobs, err := a.Store.List("downloads")
+	if err != nil {
+		return
+	}
+	candidates := make([]Obj, 0, len(jobs))
+	for _, j := range jobs {
+		switch str(j["status"]) {
+		case "active", "queued", "waiting":
+			candidates = append(candidates, j)
+		}
+	}
+	if len(candidates) == 0 {
+		return
+	}
+	sortJobsByEpisodeOrder(candidates)
+	for _, j := range candidates {
+		if a.ctx.Err() != nil {
+			return
+		}
+		gid := str(j["gid"])
+		if gid == "" {
+			continue
+		}
+		a.jobsMu.Lock()
+		if _, exists := a.jobs[gid]; exists || a.ctx.Err() != nil {
+			a.jobsMu.Unlock()
+			continue
+		}
+		select {
+		case a.downloadSlots <- struct{}{}:
+		default:
+			a.jobsMu.Unlock()
+			return
+		}
+		ctx, cancel := context.WithCancel(a.ctx)
+		a.jobs[gid] = cancel
+		a.wg.Add(1)
+		a.jobsMu.Unlock()
+		go a.runScheduledDownload(gid, ctx, cancel, true)
+	}
+}
+
+func (a *App) runScheduledDownload(gid string, ctx context.Context, cancel context.CancelFunc, holdsSlot bool) {
+	defer a.wg.Done()
+	defer cancel()
+	defer func() {
+		a.jobsMu.Lock()
+		delete(a.jobs, gid)
+		delete(a.slotBypass, gid)
+		a.jobsMu.Unlock()
+		if holdsSlot {
+			<-a.downloadSlots
+		}
+		if a.ctx.Err() == nil {
+			a.scheduleDownloads()
+		}
+	}()
+	job, e := a.Store.Get("downloads", gid)
+	if e != nil || job == nil {
+		return
+	}
+	_, _ = a.Store.Patch("downloads", gid, Obj{"status": "active", "errorMessage": nil, "updatedAt": now()})
+	a.notifyDownloads()
+	e = a.executeDownloadJob(ctx, job)
+	status := "complete"
+	var message any
+	if a.ctx.Err() != nil {
+		// The app is shutting down, not the user pausing: leave the task queued
+		// so resumeJobs picks it up on the next start.
+		status = "queued"
+	} else if ctx.Err() != nil {
+		status = "paused"
+	} else if e != nil {
+		status = "error"
+		message = e.Error()
+		a.Log("warn", "下载失败："+e.Error())
+	}
+	_, _ = a.Store.Patch("downloads", gid, Obj{"status": status, "errorMessage": message, "downloadSpeed": 0, "uploadSpeed": 0, "updatedAt": now()})
+	if fid := str(job["feedItemId"]); fid != "" {
+		fs := "queued"
+		if status == "complete" || status == "error" {
+			fs = status
+		}
+		_, _ = a.Store.Patch("feed", fid, Obj{"downloadStatus": fs})
+	}
+	a.notifyDownloads()
+	if status == "complete" {
+		a.Log("info", "下载完成："+str(job["feedItemTitle"]))
+		a.autoCancelRedundantDuplicateEpisodes(gid, job)
+		if latest, getErr := a.Store.Get("downloads", gid); getErr == nil && latest != nil && a.archiveWanted(latest) {
+			a.dispatchArchiveJob(gid)
+		} else {
+			a.triggerArchive()
+		}
+	}
+}
+
+// startJobNow starts (or resumes) a job for 边下边播 and lets it skip the
+// concurrent-download queue, so playback does not wait for other tasks.
+func (a *App) startJobNow(gid string) {
 	a.jobsMu.Lock()
 	if _, exists := a.jobs[gid]; exists || a.ctx.Err() != nil {
 		a.jobsMu.Unlock()
@@ -207,86 +356,9 @@ func (a *App) startJob(gid string) {
 	}
 	ctx, cancel := context.WithCancel(a.ctx)
 	a.jobs[gid] = cancel
-	bypass := a.slotBypass[gid]
-	if bypass == nil {
-		bypass = make(chan struct{})
-		a.slotBypass[gid] = bypass
-	}
 	a.wg.Add(1)
 	a.jobsMu.Unlock()
-	go func() {
-		defer a.wg.Done()
-		defer cancel()
-		defer func() {
-			a.jobsMu.Lock()
-			delete(a.jobs, gid)
-			delete(a.slotBypass, gid)
-			a.jobsMu.Unlock()
-		}()
-		select {
-		case a.downloadSlots <- struct{}{}:
-			defer func() { <-a.downloadSlots }()
-		case <-bypass:
-			// 边下边播：用户正在等着看这一集，不再排队等并发名额。
-		case <-ctx.Done():
-			return
-		}
-		job, e := a.Store.Get("downloads", gid)
-		if e != nil || job == nil {
-			return
-		}
-		_, _ = a.Store.Patch("downloads", gid, Obj{"status": "active", "errorMessage": nil, "updatedAt": now()})
-		a.notifyDownloads()
-		e = a.executeDownloadJob(ctx, job)
-		status := "complete"
-		var message any
-		if a.ctx.Err() != nil {
-			// The app is shutting down, not the user pausing: leave the task queued
-			// so resumeJobs picks it up on the next start.
-			status = "queued"
-		} else if ctx.Err() != nil {
-			status = "paused"
-		} else if e != nil {
-			status = "error"
-			message = e.Error()
-			a.Log("warn", "下载失败："+e.Error())
-		}
-		_, _ = a.Store.Patch("downloads", gid, Obj{"status": status, "errorMessage": message, "downloadSpeed": 0, "uploadSpeed": 0, "updatedAt": now()})
-		if fid := str(job["feedItemId"]); fid != "" {
-			fs := "queued"
-			if status == "complete" || status == "error" {
-				fs = status
-			}
-			_, _ = a.Store.Patch("feed", fid, Obj{"downloadStatus": fs})
-		}
-		a.notifyDownloads()
-		if status == "complete" {
-			a.Log("info", "下载完成："+str(job["feedItemTitle"]))
-			if latest, getErr := a.Store.Get("downloads", gid); getErr == nil && latest != nil && a.archiveWanted(latest) {
-				a.dispatchArchiveJob(gid)
-			} else {
-				a.triggerArchive()
-			}
-		}
-	}()
-}
-
-// startJobNow starts (or resumes) a job for 边下边播 and lets it skip the
-// concurrent-download queue, so playback does not wait for other tasks.
-func (a *App) startJobNow(gid string) {
-	a.jobsMu.Lock()
-	bypass := a.slotBypass[gid]
-	if bypass == nil {
-		bypass = make(chan struct{})
-		a.slotBypass[gid] = bypass
-	}
-	select {
-	case <-bypass:
-	default:
-		close(bypass)
-	}
-	a.jobsMu.Unlock()
-	a.startJob(gid)
+	go a.runScheduledDownload(gid, ctx, cancel, false)
 }
 
 // streamableSource reports whether the native engine can stream this job while
@@ -321,10 +393,68 @@ func (a *App) stopJob(gid string) error {
 func (a *App) resumeJobs() {
 	jobs, _ := a.Store.List("downloads")
 	for _, j := range jobs {
-		switch str(j["status"]) {
-		case "active", "queued", "waiting":
-			a.startJob(str(j["gid"]))
+		if str(j["status"]) == "complete" {
+			a.autoCancelRedundantDuplicateEpisodes(str(j["gid"]), j)
 		}
+	}
+	a.scheduleDownloads()
+}
+
+func (a *App) autoCancelRedundantDuplicateEpisodes(completedGid string, completedJob Obj) {
+	if completedJob == nil {
+		return
+	}
+	epRaw := episode(firstNonEmpty(str(completedJob["feedItemTitle"]), str(completedJob["title"])))
+	epNum := int(num(epRaw))
+	if epNum <= 0 {
+		return
+	}
+	animeID := strings.TrimSpace(str(completedJob["animeId"]))
+	animeTitle := strings.TrimSpace(str(completedJob["animeTitle"]))
+	dir := filepath.Clean(strings.TrimSpace(str(completedJob["directory"])))
+	if animeID == "" && animeTitle == "" && (dir == "" || dir == ".") {
+		return
+	}
+
+	jobs, err := a.Store.List("downloads")
+	if err != nil {
+		return
+	}
+	changed := false
+	for _, j := range jobs {
+		gid := str(j["gid"])
+		if gid == "" || gid == completedGid {
+			continue
+		}
+		st := str(j["status"])
+		if st != "active" && st != "queued" && st != "waiting" {
+			continue
+		}
+		if num(j["completedLength"]) > 0 || num(j["downloadSpeed"]) > 0 {
+			continue
+		}
+		sameSeries := (animeID != "" && strings.TrimSpace(str(j["animeId"])) == animeID) ||
+			(animeTitle != "" && strings.EqualFold(strings.TrimSpace(str(j["animeTitle"])), animeTitle)) ||
+			(dir != "" && dir != "." && filepath.Clean(strings.TrimSpace(str(j["directory"]))) == dir)
+		if !sameSeries {
+			continue
+		}
+		otherEp := int(num(episode(firstNonEmpty(str(j["feedItemTitle"]), str(j["title"])))))
+		if otherEp != epNum {
+			continue
+		}
+		_ = a.stopJob(gid)
+		_, _ = a.Store.Patch("downloads", gid, Obj{
+			"status":        "paused",
+			"downloadSpeed": 0,
+			"uploadSpeed":   0,
+			"updatedAt":     now(),
+		})
+		a.Log("info", fmt.Sprintf("同集另一版本已完成，自动暂停 0%% 死种任务：%s", str(j["feedItemTitle"])))
+		changed = true
+	}
+	if changed {
+		a.notifyDownloads()
 	}
 }
 func safeName(name string) string {
@@ -529,6 +659,9 @@ func (a *App) hasOtherActiveOrPendingJobInDir(selfGid, dir string) bool {
 }
 
 func (a *App) cleanupArchivedLocalStaging(gid, taskDir string, removedPaths []string) {
+	if gid != "" && a.engine != nil {
+		a.engine.StopSeeding(gid)
+	}
 	if gid != "" {
 		_ = os.RemoveAll(a.btTaskStateDir(gid))
 	}
@@ -553,26 +686,26 @@ func (a *App) cleanupArchivedLocalStaging(gid, taskDir string, removedPaths []st
 	}
 
 	candSet := map[string]bool{}
-	if allowedDir(cleanTaskDir) {
-		candSet[cleanTaskDir] = true
-	}
-	for _, p := range removedPaths {
-		p = filepath.Clean(strings.TrimSpace(p))
-		if p == "" || p == "." {
-			continue
-		}
-		cur := filepath.Clean(filepath.Dir(p))
+	addAncestors := func(start string) {
+		cur := filepath.Clean(strings.TrimSpace(start))
 		for allowedDir(cur) {
 			candSet[cur] = true
-			if cur == cleanTaskDir {
-				break
-			}
 			parent := filepath.Dir(cur)
 			if parent == cur {
 				break
 			}
 			cur = parent
 		}
+	}
+	if allowedDir(cleanTaskDir) {
+		addAncestors(cleanTaskDir)
+	}
+	for _, p := range removedPaths {
+		p = filepath.Clean(strings.TrimSpace(p))
+		if p == "" || p == "." {
+			continue
+		}
+		addAncestors(filepath.Dir(p))
 	}
 
 	dirs := make([]string, 0, len(candSet))
@@ -754,12 +887,33 @@ func (a *App) downloadRoutes() {
 		for _, row := range existingRows {
 			prevSaveTo[str(row["gid"])] = str(row["saveTo"])
 		}
-		items := make([]Obj, 0, len(rawItems))
+		type batchEntry struct {
+			idx  int
+			item Obj
+		}
+		ordered := make([]batchEntry, 0, len(rawItems))
+		for idx, raw := range rawItems {
+			ordered = append(ordered, batchEntry{idx: idx, item: clone(object(raw))})
+		}
+		sort.SliceStable(ordered, func(i, j int) bool {
+			ha, ea, _, _ := downloadJobEpisodeSortKey(ordered[i].item)
+			hb, eb, _, _ := downloadJobEpisodeSortKey(ordered[j].item)
+			if ha != hb {
+				return ha
+			}
+			if ha && ea != eb {
+				return ea < eb
+			}
+			return ordered[i].idx < ordered[j].idx
+		})
+
+		items := make([]Obj, 0, len(ordered))
 		skippedCount := 0
 		itemErrors := []Obj{}
 		var firstErr error
-		for idx, raw := range rawItems {
-			item := clone(object(raw))
+		for _, entry := range ordered {
+			idx := entry.idx
+			item := entry.item
 			if str(item["saveTo"]) == "" && defaultSaveTo != "" {
 				item["saveTo"] = defaultSaveTo
 			}
@@ -843,6 +997,9 @@ func (a *App) downloadRoutes() {
 		}
 		if e = a.stopJob(gid); e != nil {
 			return e
+		}
+		if a.engine != nil {
+			a.engine.StopSeeding(gid)
 		}
 		j, _ = a.Store.Patch("downloads", gid, Obj{"status": "queued", "errorMessage": nil, "updatedAt": now()})
 		a.notifyDownloads()
@@ -952,6 +1109,9 @@ func (a *App) downloadRoutes() {
 		}
 		if e = a.stopJob(gid); e != nil {
 			return e
+		}
+		if a.engine != nil {
+			a.engine.StopSeeding(gid)
 		}
 		j, _ = a.Store.Get("downloads", gid)
 		if j == nil {

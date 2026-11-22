@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"path"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -17,6 +18,170 @@ import (
 	"github.com/anacrolix/torrent/tracker"
 	"github.com/anacrolix/torrent/tracker/udp"
 )
+
+// Public tracker subscription feeds (XIU2 TrackersListCollection + ngosang trackerslist),
+// ordered with Cloudflare/Fastly CDN mirrors first for fast domestic access.
+var publicTrackerFeedSources = [][]string{
+	{
+		"https://cf.trackerslist.com/best.txt",
+		"https://fastly.jsdelivr.net/gh/XIU2/TrackersListCollection@master/best.txt",
+		"https://trackerslist.com/best.txt",
+	},
+	{
+		"https://cdn.jsdelivr.net/gh/ngosang/trackerslist@master/trackers_best.txt",
+		"https://raw.githubusercontent.com/ngosang/trackerslist/master/trackers_best.txt",
+	},
+}
+
+const (
+	trackerSyncCacheKey = "bt:public-trackers:v1"
+	trackerSyncTTL      = 24 * time.Hour
+	maxPublicTrackers   = 120
+)
+
+func parseTrackerListText(raw string) []string {
+	seen := map[string]bool{}
+	out := make([]string, 0, 64)
+	for _, line := range strings.FieldsFunc(raw, func(r rune) bool {
+		return r == '\n' || r == '\r' || r == ',' || r == ' ' || r == '\t'
+	}) {
+		tr := strings.TrimSpace(line)
+		if tr == "" || strings.HasPrefix(tr, "#") || seen[tr] || !validTracker(tr) {
+			continue
+		}
+		seen[tr] = true
+		out = append(out, tr)
+	}
+	return out
+}
+
+func (a *App) fetchTrackerFeedText(ctx context.Context, feedURL string) ([]string, error) {
+	reqCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, feedURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("User-Agent", "bgmcat/"+Version)
+	res, err := a.http.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		return nil, http.ErrNotSupported
+	}
+	data, err := io.ReadAll(io.LimitReader(res.Body, 512<<10))
+	if err != nil {
+		return nil, err
+	}
+	return parseTrackerListText(string(data)), nil
+}
+
+// syncPublicTrackers fetches fresh public trackers from XIU2 / ngosang feeds,
+// deduplicates them against builtinBTTrackers, and caches them in the local store.
+func (a *App) syncPublicTrackers(ctx context.Context, force bool) ([]string, error) {
+	if !force {
+		if cached, ok := a.peekDiscoveryCache(trackerSyncCacheKey, trackerSyncTTL); ok {
+			items := make([]string, 0, len(list(cached["trackers"])))
+			for _, v := range list(cached["trackers"]) {
+				if tr := strings.TrimSpace(str(v)); tr != "" && validTracker(tr) {
+					items = append(items, tr)
+				}
+			}
+			if len(items) > 0 {
+				a.setDynamicTrackers(items)
+				return items, nil
+			}
+		}
+	}
+
+	seen := map[string]bool{}
+	merged := make([]string, 0, maxPublicTrackers)
+	addTrackers := func(items []string) {
+		for _, tr := range items {
+			if seen[tr] || len(merged) >= maxPublicTrackers {
+				continue
+			}
+			seen[tr] = true
+			merged = append(merged, tr)
+		}
+	}
+
+	var lastErr error
+	fetchedSources := 0
+	for _, mirrors := range publicTrackerFeedSources {
+		for _, feedURL := range mirrors {
+			items, err := a.fetchTrackerFeedText(ctx, feedURL)
+			if err == nil && len(items) > 0 {
+				addTrackers(items)
+				fetchedSources++
+				break
+			}
+			lastErr = err
+		}
+	}
+	if len(merged) == 0 {
+		if lastErr != nil {
+			return nil, lastErr
+		}
+		return nil, http.ErrNotSupported
+	}
+
+	rawAny := make([]any, len(merged))
+	for i, tr := range merged {
+		rawAny[i] = tr
+	}
+	_ = a.Store.Put("cache", trackerSyncCacheKey, Obj{
+		"trackers":  rawAny,
+		"updatedAt": now(),
+		"expires":   time.Now().Add(trackerSyncTTL).Unix(),
+		"staleAt":   time.Now().Add(14 * 24 * time.Hour).Unix(),
+	})
+	a.setDynamicTrackers(merged)
+	a.Log("info", "已同步最新公共 Tracker 列表（共 "+strings.TrimSpace(time.Now().Format("15:04"))+" 更新，获取 "+strconv.Itoa(len(merged))+" 个）")
+	return merged, nil
+}
+
+func (a *App) setDynamicTrackers(items []string) {
+	copied := make([]string, len(items))
+	copy(copied, items)
+	a.trackerMu.Lock()
+	a.dynamicTrackers = copied
+	a.trackerMu.Unlock()
+}
+
+func (a *App) getDynamicTrackers() []string {
+	a.trackerMu.RLock()
+	items := a.dynamicTrackers
+	a.trackerMu.RUnlock()
+	if len(items) > 0 {
+		out := make([]string, len(items))
+		copy(out, items)
+		return out
+	}
+	if cached, ok := a.peekDiscoveryCache(trackerSyncCacheKey, 14*24*time.Hour); ok {
+		out := make([]string, 0, len(list(cached["trackers"])))
+		for _, v := range list(cached["trackers"]) {
+			if tr := strings.TrimSpace(str(v)); tr != "" && validTracker(tr) {
+				out = append(out, tr)
+			}
+		}
+		if len(out) > 0 {
+			a.setDynamicTrackers(out)
+			return out
+		}
+	}
+	return nil
+}
+
+func (a *App) warmPublicTrackers() {
+	ctx := a.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	_, _ = a.syncPublicTrackers(ctx, false)
+}
 
 // aria2 announces to one tracker at a time, in announce-list order, and treats
 // any well-formed reply as success — including "0 peers, come back in 30
@@ -50,15 +215,32 @@ var builtinBTTrackers = []string{
 	"udp://exodus.desync.com:6969/announce",
 	"udp://tracker.torrent.eu.org:451/announce",
 	"udp://open.demonii.com:1337/announce",
+	"udp://explodie.org:6969/announce",
+	"udp://uploads.gamecoast.net:6969/announce",
+	"udp://tracker.skyts.net:6969/announce",
+	"udp://p4p.arenabg.com:1337/announce",
+	"udp://tracker.tiny-vps.com:6969/announce",
+	"udp://tracker.dler.org:6969/announce",
+	"http://tracker.dler.org:6969/announce",
 	"http://t.nyaatracker.com:80/announce",
 	"https://tr.bangumi.moe:9696/announce",
 	"http://tr.bangumi.moe:6969/announce",
+	"udp://tr.bangumi.moe:6969/announce",
 	"http://open.acgtracker.com:1096/announce",
 	"http://t.acg.rip:6699/announce",
+	"http://opentracker.acgnx.se/announce",
+	"http://tracker.acgnx.se/announce",
+	"http://share.camoe.cn:8080/announce",
 	"https://tracker.tamersunion.org:443/announce",
 	"https://tracker.gbitt.info:443/announce",
 	"http://tracker.gbitt.info:80/announce",
 	"https://tracker.renfei.net:443/announce",
+	"https://tracker.nanoha.org:443/announce",
+	"https://tr.abi.directory:443/announce",
+	"https://tr.burnabyhighstar.com:443/announce",
+	"udp://tracker.moeking.me:6969/announce",
+	"udp://open.tracker.cl:1337/announce",
+	"udp://tracker.openbittorrent.com:6969/announce",
 }
 
 // torrentTrackers returns the info hash and flattened announce list of a

@@ -2,6 +2,7 @@
 import { computed, defineAsyncComponent, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 
 import AppToastStack from "./components/common/AppToastStack.vue";
+import AsyncPagePlaceholder from "./components/common/AsyncPagePlaceholder.vue";
 import BrandLogo from "./components/common/BrandLogo.vue";
 import CuteLoader from "./components/common/CuteLoader.vue";
 import AppSidebar from "./components/layout/AppSidebar.vue";
@@ -31,16 +32,12 @@ import {
   closePlayback,
   onlineDownloadCount,
   sseConnected,
-  totalCloudUploadSpeed,
-  totalDownloadSpeed,
-  totalUploadSpeed,
   unreadCompletedDownloadCount
 } from "./stores/downloads";
 import { activeFilePlayback, closeFilePlayback } from "./stores/files";
 import { animeDetail, animeDetailError, closeAnimeDetail } from "./stores/discovery";
 import { refreshUpdateStatus, updateAvailable } from "./stores/update";
 import { openExternalLink } from "./lib/actions";
-import { formatSpeed } from "./lib/format";
 import { activeTab, TABS, type TabKey } from "./stores/router";
 import {
   authChecked,
@@ -56,7 +53,9 @@ import {
   handleWindowResize,
   isMobileViewport,
   mobileSidebarOpen,
-  sidebarCollapsed
+  sidebarCollapsed,
+  sidebarResizing,
+  sidebarWidth
 } from "./stores/ui";
 
 // 首页以外的视图按需加载,缩小首包(下载页拖着播放器相关依赖尤其值得拆)
@@ -72,15 +71,17 @@ const publicShareCode = ref(
   /^\/s\/([A-Za-z0-9_-]{6,32})\/?$/u.exec(window.location.pathname)?.[1] ?? ""
 );
 
-const DownloadsView = defineAsyncComponent(() => import("./views/DownloadsView.vue"));
-const FavoritesView = defineAsyncComponent(() => import("./views/FavoritesView.vue"));
-const FilesView = defineAsyncComponent(() => import("./views/FilesView.vue"));
-const HistoryView = defineAsyncComponent(() => import("./views/HistoryView.vue"));
-const IntegrationsView = defineAsyncComponent(() => import("./views/IntegrationsView.vue"));
-const LogsView = defineAsyncComponent(() => import("./views/LogsView.vue"));
-const MangaView = defineAsyncComponent(() => import("./views/MangaView.vue"));
-const SettingsView = defineAsyncComponent(() => import("./views/SettingsView.vue"));
-const SubscriptionsView = defineAsyncComponent(() => import("./views/SubscriptionsView.vue"));
+const lazyPage = (loader: () => Promise<any>) =>
+  defineAsyncComponent({ loader, loadingComponent: AsyncPagePlaceholder, delay: 80 });
+
+const DownloadsView = lazyPage(() => import("./views/DownloadsView.vue"));
+const FavoritesView = lazyPage(() => import("./views/FavoritesView.vue"));
+const FilesView = lazyPage(() => import("./views/FilesView.vue"));
+const HistoryView = lazyPage(() => import("./views/HistoryView.vue"));
+const LogsView = lazyPage(() => import("./views/LogsView.vue"));
+const MangaView = lazyPage(() => import("./views/MangaView.vue"));
+const SettingsView = lazyPage(() => import("./views/SettingsView.vue"));
+const SubscriptionsView = lazyPage(() => import("./views/SubscriptionsView.vue"));
 
 const activeTabMeta = computed(() => TABS.find((tab) => tab.key === activeTab.value) ?? TABS[0]);
 const isDemoMode = import.meta.env.VITE_DEMO_MODE === "true";
@@ -113,21 +114,33 @@ const downloadClientLabel = computed(() => {
   }
 });
 
-const combinedUploadSpeed = computed(() => totalUploadSpeed.value + totalCloudUploadSpeed.value);
-const isTransferSpeedActive = computed(() => totalDownloadSpeed.value > 0 || combinedUploadSpeed.value > 0);
-const transferSpeedTitle = computed(() => {
-  const parts = [
-    `实时速率：下载 ${formatSpeed(totalDownloadSpeed.value)} · 上传 ${formatSpeed(combinedUploadSpeed.value)}`
-  ];
-  if (totalCloudUploadSpeed.value > 0 && totalUploadSpeed.value > 0) {
-    parts.push(`（做种 ${formatSpeed(totalUploadSpeed.value)} + 云盘 ${formatSpeed(totalCloudUploadSpeed.value)}）`);
-  } else if (totalCloudUploadSpeed.value > 0) {
-    parts.push("（云盘转存上传）");
+const systemOnlineState = computed<"ok" | "warn" | "err">(() => {
+  if (downloadClientOnline.value === false) {
+    return "err";
   }
-  if (activeTab.value !== "downloads") {
-    parts.push(" · 点击前往下载管理");
+  if (!isDemoMode && !sseConnected.value) {
+    return "warn";
   }
-  return parts.join("");
+  return "ok";
+});
+
+const systemOnlineLabel = computed(() => {
+  if (downloadClientOnline.value === false) {
+    return `${downloadClientLabel.value}离线`;
+  }
+  if (!isDemoMode && !sseConnected.value) {
+    return "重连中";
+  }
+  return "在线";
+});
+
+const systemOnlineTitle = computed(() => {
+  const clientPart = `${downloadClientLabel.value}${downloadClientOnline.value === false ? "离线，请检查设置" : "在线"}`;
+  if (isDemoMode) {
+    return clientPart;
+  }
+  const ssePart = sseConnected.value ? "实时推送正常" : "实时连接重连中";
+  return `${clientPart} · ${ssePart}`;
 });
 
 const menuButton = ref<HTMLButtonElement | null>(null);
@@ -251,7 +264,8 @@ onUnmounted(() => {
   <main
     v-else
     class="app-shell grid h-[100dvh] min-h-screen overflow-hidden bg-[var(--shell-bg)]"
-    :style="{ gridTemplateColumns: isMobileViewport ? 'minmax(0,1fr)' : sidebarCollapsed ? '0px minmax(0,1fr)' : '236px minmax(0,1fr)' }"
+    :class="{ 'is-resizing': sidebarResizing }"
+    :style="{ gridTemplateColumns: isMobileViewport ? 'minmax(0,1fr)' : sidebarCollapsed ? '0px minmax(0,1fr)' : `${sidebarWidth}px minmax(0,1fr)` }"
   >
     <AppSidebar
       v-if="!isMobileViewport"
@@ -330,41 +344,12 @@ onUnmounted(() => {
             需重启生效
           </span>
           <span
-            v-if="downloadClientOnline !== null"
             class="topbar-badge topbar-client"
-            :class="downloadClientOnline ? 'ok' : 'err'"
-            :title="`${downloadClientLabel} ${downloadClientOnline ? '在线' : '离线，请检查设置'}`"
+            :class="systemOnlineState"
+            :title="systemOnlineTitle"
           >
-            <span class="status-dot" :class="{ pulse: downloadClientOnline }" aria-hidden="true" />
-            <span class="download-client-label">{{ downloadClientLabel }}</span>{{ downloadClientOnline ? "在线" : "离线" }}
-          </span>
-
-          <button
-            type="button"
-            class="topbar-speeds"
-            :class="{ 'is-active': isTransferSpeedActive, 'is-idle': !isTransferSpeedActive }"
-            :title="transferSpeedTitle"
-            :aria-label="transferSpeedTitle"
-            @click="handleTabSelection('downloads')"
-          >
-            <span class="topbar-speed-item" :class="{ 'is-down': totalDownloadSpeed > 0 }">
-              <span class="topbar-speed-arrow" aria-hidden="true">↓</span>
-              <span class="topbar-speed-val">{{ formatSpeed(totalDownloadSpeed) }}</span>
-            </span>
-            <span class="topbar-speed-sep" aria-hidden="true" />
-            <span class="topbar-speed-item" :class="{ 'is-up': combinedUploadSpeed > 0 }">
-              <span class="topbar-speed-arrow" aria-hidden="true">↑</span>
-              <span class="topbar-speed-val">{{ formatSpeed(combinedUploadSpeed) }}</span>
-            </span>
-          </button>
-
-          <span
-            v-if="!isDemoMode"
-            class="topbar-stream"
-            :title="sseConnected ? '事件实时推送中' : '实时通道已断开，页面数据可能不是最新'"
-          >
-            <span class="status-dot" :class="sseConnected ? 'is-ok' : 'is-err'" aria-hidden="true" />
-            <span>{{ sseConnected ? "实时连接正常" : "实时连接已断开" }}</span>
+            <span class="status-dot" :class="{ pulse: systemOnlineState === 'ok' }" aria-hidden="true" />
+            <span>{{ systemOnlineLabel }}</span>
           </span>
 
           <!-- GitHub / 刷新 / 退出登录收成一组，间距比顶栏本身更紧，和左边的状态信息拉开 -->
@@ -403,7 +388,6 @@ onUnmounted(() => {
           <DownloadsView v-else-if="activeTab === 'downloads'" />
           <FilesView v-else-if="activeTab === 'files'" />
           <LogsView v-else-if="activeTab === 'logs'" />
-          <IntegrationsView v-else-if="activeTab === 'integrations'" />
           <SettingsView v-else-if="activeTab === 'settings'" />
         </div>
       </section>
@@ -426,22 +410,12 @@ onUnmounted(() => {
 <style scoped>
 .startup-loading { min-height:100dvh; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:14px; background:var(--shell-bg); padding:24px; }
 .app-shell { transition:grid-template-columns .2s ease; }
+.app-shell.is-resizing { transition:none; }
 /* 顶栏尺寸、字号对齐 Diana 控制台（.app-topbar / .badge / .btn.ghost.small.icon-only） */
 .app-topbar { position:relative; z-index:30; display:flex; min-width:0; align-items:center; gap:12px; height:56px; padding:0 24px; border-bottom:1px solid var(--line); background:color-mix(in srgb,var(--shell-bg) 82%,transparent); backdrop-filter:blur(10px); }
 .topbar-title { min-width:0; overflow:hidden; color:var(--ink); font-size:16px; font-weight:650; text-overflow:ellipsis; white-space:nowrap; }
-.topbar-badge { display:inline-flex; flex:none; align-items:center; gap:5px; padding:3px 10px; border-radius:999px; background:var(--panel); color:var(--ink-secondary); font-size:11.5px; font-weight:600; white-space:nowrap; }
+.topbar-badge { display:inline-flex; flex:none; align-items:center; gap:6px; padding:3px 10px; border-radius:999px; background:var(--panel); color:var(--ink-secondary); font-size:11.5px; font-weight:600; white-space:nowrap; }
 .topbar-badge.ok { background:var(--ok-soft); color:var(--ok); }.topbar-badge.warn { background:var(--warn-soft); color:var(--warn); }.topbar-badge.err { background:var(--err-soft); color:var(--err); }
-.topbar-speeds { display:inline-flex; flex:none; align-items:center; gap:8px; min-height:32px; padding:4px 12px; border:1px solid var(--line); border-radius:999px; background:var(--panel); color:var(--muted); font-size:11.5px; font-weight:600; font-variant-numeric:tabular-nums; white-space:nowrap; transition:background .15s, border-color .15s, color .15s; }
-.topbar-speeds:hover { border-color:var(--accent-line); background:var(--tint-2); color:var(--ink); }
-.topbar-speeds.is-active { border-color:color-mix(in srgb, var(--accent) 24%, var(--line)); }
-.topbar-speed-item { display:inline-flex; align-items:center; gap:3px; }
-.topbar-speed-sep { width:1px; height:10px; background:var(--line); flex-shrink:0; }
-.topbar-speed-item.is-down .topbar-speed-arrow { color:var(--ok); }
-.topbar-speed-item.is-up .topbar-speed-arrow { color:var(--accent); }
-.topbar-speed-item.is-down .topbar-speed-val, .topbar-speed-item.is-up .topbar-speed-val { min-width:4.6em; text-align:right; color:var(--ink); }
-.topbar-stream { display:inline-flex; align-items:center; gap:6px; flex:none; color:var(--muted); font-size:12px; font-weight:500; white-space:nowrap; }
-.status-dot.is-ok { background:var(--ok); }
-.status-dot.is-err { background:var(--err); }
 .status-dot { width:8px; height:8px; flex-shrink:0; border-radius:50%; background:currentColor; }
 .status-dot.pulse { animation:status-pulse 2.2s ease-in-out infinite; }
 @keyframes status-pulse { 0%, 100% { box-shadow:0 0 0 0 color-mix(in srgb, var(--ok) 38%, transparent); } 50% { box-shadow:0 0 0 5px transparent; } }
@@ -455,11 +429,9 @@ onUnmounted(() => {
 .topbar-menu { width:38px; min-width:38px; height:38px; padding:6px; border-radius:10px; }.topbar-menu :deep(svg) { width:18px; height:18px; }
 .app-content { width:100%; max-width:1240px; margin:0 auto; padding:10px clamp(16px, 2.5vw, 28px) 16px; }
 @media(max-width:960px) { .app-topbar { padding:0 14px; } }
-@media(max-width:768px) { .topbar-stream { display:none; } }
 @media(max-width:700px) { .topbar-logout-text { display:none; } .topbar-logout { width:34px; height:34px; padding:8px; } }
-/* 手机宽度：顶栏只留菜单、标题、网速和操作键，状态徽标收成圆点，别把整页撑出横向滚动 */
-@media(max-width:480px) { .topbar-demo { display:none; }.topbar-client { padding:3px 6px; font-size:0; gap:0; } }
-@media(max-width:640px) { .app-topbar { height:48px; padding:0 12px; gap:8px; }.app-content { padding:8px 10px 12px; }.topbar-repo, .download-client-label, .topbar-speeds.is-idle { display:none; }.topbar-speeds { padding:2px 8px; gap:6px; font-size:11px; } }
+@media(max-width:480px) { .topbar-client { padding:3px 6px; font-size:0; gap:0; } }
+@media(max-width:640px) { .app-topbar { height:48px; padding:0 12px; gap:8px; }.app-content { padding:8px 10px 12px; }.topbar-repo { display:none; } }
 
 .sync-overlay-enter-active,
 .sync-overlay-leave-active {

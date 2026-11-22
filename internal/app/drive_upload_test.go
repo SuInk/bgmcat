@@ -168,6 +168,22 @@ func (d *fakeDrive) RoundTrip(r *http.Request) (*http.Response, error) {
 		delete(d.sessions, key)
 		return d.reply(r, 200, d.metaJSON(s.id), nil), nil
 
+	case r.Method == "GET" && path == "/drive/v3/files":
+		defer d.mu.Unlock()
+		return d.reply(r, 200, `{"files":[]}`, nil), nil
+
+	case r.Method == "POST" && path == "/drive/v3/files":
+		defer d.mu.Unlock()
+		var meta struct {
+			Name    string   `json:"name"`
+			Parents []string `json:"parents"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&meta)
+		d.nextID++
+		id := fmt.Sprintf("folder-%d", d.nextID)
+		b, _ := json.Marshal(Obj{"id": id, "name": meta.Name})
+		return d.reply(r, 200, string(b), nil), nil
+
 	case r.Method == "GET" && strings.HasPrefix(path, "/drive/v3/files/"):
 		defer d.mu.Unlock()
 		id := strings.TrimPrefix(path, "/drive/v3/files/")

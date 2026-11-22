@@ -1,8 +1,15 @@
 <script setup lang="ts">
-import { computed, nextTick, ref, watch } from "vue";
+import { computed, nextTick, onUnmounted, ref, watch } from "vue";
 import { status } from "../../stores/session";
 import AppNavIcon from "./AppNavIcon.vue";
 import { setThemeMode, themeMode } from "../../stores/theme";
+import {
+ SIDEBAR_DEFAULT_WIDTH,
+ SIDEBAR_MAX_WIDTH,
+ SIDEBAR_MIN_WIDTH,
+ sidebarResizing,
+ sidebarWidth
+} from "../../stores/ui";
 
 const props = defineProps<{
  tabs: Array<{ key: string; label: string; hint: string; icon: string }>;
@@ -16,7 +23,7 @@ const hidden = computed(() => props.mobile ? !props.mobileOpen : props.collapsed
 const groups = computed(() => [
  { label: "追番", items: props.tabs.filter(t => ["home", "manga", "favorites", "history"].includes(t.key)) },
  { label: "资源管理", items: props.tabs.filter(t => ["subscriptions", "downloads", "files"].includes(t.key)) },
- { label: "工具", items: props.tabs.filter(t => ["logs", "integrations", "settings"].includes(t.key)) }
+ { label: "工具", items: props.tabs.filter(t => ["logs", "settings"].includes(t.key)) }
 ]);
 const themeLabel = computed(() => themeMode.value === "system" ? "跟随系统" : themeMode.value === "light" ? "浅色" : "深色");
 const versionLabel = computed(() => status.value?.appVersion ? `v${status.value.appVersion.replace(/^v/, "")}` : "版本与更新");
@@ -30,6 +37,50 @@ function trapFocus(event: KeyboardEvent) {
  if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
  else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
 }
+
+let resizeStartX = 0;
+let resizeStartWidth = SIDEBAR_DEFAULT_WIDTH;
+function onResizeMove(event: PointerEvent) {
+ const next = Math.min(SIDEBAR_MAX_WIDTH, Math.max(SIDEBAR_MIN_WIDTH, Math.round(resizeStartWidth + (event.clientX - resizeStartX))));
+ sidebarWidth.value = next;
+}
+function stopResize() {
+ if (!sidebarResizing.value) return;
+ sidebarResizing.value = false;
+ document.body.style.userSelect = "";
+ document.body.style.cursor = "";
+ window.removeEventListener("pointermove", onResizeMove);
+ window.removeEventListener("pointerup", stopResize);
+ window.removeEventListener("pointercancel", stopResize);
+}
+function startResize(event: PointerEvent) {
+ if (props.mobile || hidden.value || event.button !== 0) return;
+ event.preventDefault();
+ resizeStartX = event.clientX;
+ resizeStartWidth = sidebarWidth.value;
+ sidebarResizing.value = true;
+ document.body.style.userSelect = "none";
+ document.body.style.cursor = "col-resize";
+ window.addEventListener("pointermove", onResizeMove);
+ window.addEventListener("pointerup", stopResize);
+ window.addEventListener("pointercancel", stopResize);
+}
+function resetSidebarWidth() {
+ sidebarWidth.value = SIDEBAR_DEFAULT_WIDTH;
+}
+function handleResizeKeydown(event: KeyboardEvent) {
+ if (event.key === "ArrowLeft") {
+  event.preventDefault();
+  sidebarWidth.value = Math.max(SIDEBAR_MIN_WIDTH, sidebarWidth.value - 12);
+ } else if (event.key === "ArrowRight") {
+  event.preventDefault();
+  sidebarWidth.value = Math.min(SIDEBAR_MAX_WIDTH, sidebarWidth.value + 12);
+ } else if (event.key === "Home" || event.key === "0") {
+  event.preventDefault();
+  resetSidebarWidth();
+ }
+}
+onUnmounted(() => { stopResize(); });
 </script>
 
 <template>
@@ -52,12 +103,32 @@ function trapFocus(event: KeyboardEvent) {
    <button type="button" class="nav-action" :title="`外观：${themeLabel}（点击切换）`" @click="cycleTheme"><AppNavIcon :name="themeMode === 'dark' ? 'moon' : themeMode === 'light' ? 'sun' : 'theme'" /><span class="nav-label">{{ themeLabel }}</span></button>
    <button type="button" class="nav-action version-action" title="查看版本与更新" :disabled="!hasConsoleAccess" @click="emit('open-version')"><AppNavIcon name="tag" /><span class="version-label-text">{{ versionLabel }}</span><span v-if="updateAvailable" class="update-dot" aria-label="有新版本" /></button>
   </div>
+  <div
+   v-if="!mobile && !hidden"
+   class="sidebar-resizer"
+   :class="{ 'is-dragging': sidebarResizing }"
+   role="separator"
+   aria-orientation="vertical"
+   aria-label="调整左侧栏宽度"
+   :aria-valuenow="sidebarWidth"
+   :aria-valuemin="SIDEBAR_MIN_WIDTH"
+   :aria-valuemax="SIDEBAR_MAX_WIDTH"
+   title="拖动调整左侧栏宽度，双击重置"
+   tabindex="0"
+   @pointerdown="startResize"
+   @dblclick="resetSidebarWidth"
+   @keydown="handleResizeKeydown"
+  />
  </aside>
 </template>
 
 <style scoped>
 /* 尺寸、字号对齐 Diana 控制台（frontend/src/styles/main.css 的 .app-sidebar / .nav-*） */
-.app-sidebar { display:flex; flex-direction:column; gap:4px; height:100dvh; width:236px; min-height:0; padding:20px 14px max(20px, env(safe-area-inset-bottom)); background:var(--sidebar-bg); border-right:1px solid var(--line); z-index:40; transition:transform .2s, opacity .2s; }
+.app-sidebar { position:relative; display:flex; flex-direction:column; gap:4px; height:100dvh; width:100%; min-width:0; min-height:0; padding:20px 14px max(20px, env(safe-area-inset-bottom)); background:var(--sidebar-bg); border-right:1px solid var(--line); z-index:40; transition:transform .2s, opacity .2s; }
+.sidebar-resizer { position:absolute; top:0; right:-4px; bottom:0; width:9px; cursor:col-resize; touch-action:none; z-index:45; }
+.sidebar-resizer::after { content:""; position:absolute; top:0; bottom:0; left:4px; width:2px; background:transparent; transition:background .15s ease; }
+.sidebar-resizer:hover::after, .sidebar-resizer.is-dragging::after, .sidebar-resizer:focus-visible::after { background:var(--accent); }
+.sidebar-resizer:focus-visible { outline:none; }
 .sidebar-hidden { transform:translateX(-100%); opacity:0; visibility:hidden; pointer-events:none; }.sidebar-drawer { position:fixed; inset:0 auto 0 0; width:min(82vw,280px); box-shadow:var(--strong-shadow); z-index:50; }
 /* 头部跟顶栏等高、抵掉侧栏上内边距，logo 和收起按钮就跟顶栏标题同一条中线 */
 .sidebar-head { display:flex; flex:none; align-items:center; justify-content:space-between; gap:8px; height:56px; margin:-20px 0 12px; padding:0 4px 0 8px; }.brand { display:flex; align-items:center; gap:10px; min-width:0; }.brand img { border-radius:11px; }.brand strong { display:block; font-size:14px; font-weight:650; line-height:1.3; }.brand span { display:block; font-size:11px; color:var(--muted); line-height:1.3; }

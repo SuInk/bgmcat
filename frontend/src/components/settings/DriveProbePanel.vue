@@ -522,7 +522,7 @@ onUnmounted(() => {
         <input
           type="checkbox"
           class="settings-switch"
-          :checked="activeStatus?.enabled ?? false"
+          :checked="activeStatus?.enabled ?? true"
           :disabled="!activeStatus || saving"
           @change="toggleEnabled"
         />

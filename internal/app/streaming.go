@@ -12,12 +12,18 @@ import (
 )
 
 type bangumiDataStore struct {
-	mu        sync.RWMutex
-	loaded    bool
-	loadedAt  time.Time
-	byBangumi map[string][]Obj
-	byAniList map[string][]Obj
-	byMAL     map[string][]Obj
+	mu                 sync.RWMutex
+	loaded             bool
+	loadedAt           time.Time
+	byBangumi          map[string][]Obj
+	byAniList          map[string][]Obj
+	byMAL              map[string][]Obj
+	broadcastByBangumi map[string]string
+	broadcastByAniList map[string]string
+	broadcastByMAL     map[string]string
+	mikanByBangumi     map[string]string
+	biliTimelineAt     time.Time
+	biliTimelineByKey  map[string]string
 }
 
 var htmlTagPattern = regexp.MustCompile(`<[^>]+>`)
@@ -25,7 +31,6 @@ var htmlTagPattern = regexp.MustCompile(`<[^>]+>`)
 var streamingPlatformPriority = map[string]int{
 	"bilibili":          10,
 	"bilibili_hk_mo_tw": 12,
-	"bilibili_tv":       14,
 	"bahamut":           20,
 	"iqiyi":             30,
 	"qq":                35,
@@ -39,17 +44,6 @@ var streamingPlatformPriority = map[string]int{
 	"youtube":           65,
 	"netflix":           70,
 	"disneyplus":        75,
-	"crunchyroll":       80,
-	"prime":             85,
-	"hidive":            88,
-	"hulu":              90,
-	"abema":             95,
-	"danime":            100,
-	"unext":             105,
-	"nicovideo":         110,
-	"viu":               115,
-	"mytv":              120,
-	"letv":              125,
 }
 
 func bangumiDataSiteToLink(siteKey, siteID, explicitURL string) (string, string, string) {
@@ -71,9 +65,9 @@ func bangumiDataSiteToLink(siteKey, siteID, explicitURL string) (string, string,
 	case "bilibili":
 		return "bilibili", "哔哩哔哩", pick("https://www.bilibili.com/bangumi/media/md{{id}}/")
 	case "bilibili_hk_mo_tw", "bilibili_hk_mo", "bilibili_tw":
-		return "bilibili_hk_mo_tw", "哔哩哔哩（港澳台）", pick("https://www.bilibili.com/bangumi/media/md{{id}}/")
+		return "bilibili_hk_mo_tw", "B站港澳台", pick("https://www.bilibili.com/bangumi/media/md{{id}}/")
 	case "gamer", "gamer_hk":
-		return "bahamut", "巴哈姆特动画疯", pick("https://ani.gamer.com.tw/animeRef.php?sn={{id}}")
+		return "bahamut", "动画疯", pick("https://ani.gamer.com.tw/animeRef.php?sn={{id}}")
 	case "iqiyi":
 		return "iqiyi", "爱奇艺", pick("https://www.iqiyi.com/{{id}}.html")
 	case "qq":
@@ -85,50 +79,100 @@ func bangumiDataSiteToLink(siteKey, siteID, explicitURL string) (string, string,
 	case "acfun":
 		return "acfun", "AcFun", pick("https://www.acfun.cn/bangumi/aa{{id}}")
 	case "muse_hk", "muse_tw":
-		return "muse", "木棉花 YouTube", pick("https://www.youtube.com/playlist?list={{id}}")
+		return "muse", "木棉花", pick("https://www.youtube.com/playlist?list={{id}}")
 	case "ani_one", "ani_one_asia":
-		return "ani_one", "Ani-One YouTube", pick("https://www.youtube.com/playlist?list={{id}}")
+		return "ani_one", "Ani-One", pick("https://www.youtube.com/playlist?list={{id}}")
 	case "tropics":
-		return "tropics", "回归线 YouTube", pick("https://www.youtube.com/playlist?list={{id}}")
+		return "tropics", "回归线", pick("https://www.youtube.com/playlist?list={{id}}")
 	case "mighty":
-		return "mighty", "曼迪 YouTube", pick("https://www.youtube.com/playlist?list={{id}}")
+		return "mighty", "曼迪", pick("https://www.youtube.com/playlist?list={{id}}")
 	case "youtube":
 		return "youtube", "YouTube", pick("https://www.youtube.com/playlist?list={{id}}")
 	case "netflix":
 		return "netflix", "Netflix", pick("https://www.netflix.com/title/{{id}}")
 	case "disneyplus":
 		return "disneyplus", "Disney+", pick("https://www.disneyplus.com/series/view/{{id}}")
-	case "crunchyroll":
-		return "crunchyroll", "Crunchyroll", pick("https://www.crunchyroll.com/series/{{id}}/")
-	case "prime":
-		return "prime", "Prime Video", pick("https://www.amazon.co.jp/gp/video/detail/{{id}}")
-	case "abema":
-		return "abema", "ABEMA", pick("https://abema.tv/video/title/{{id}}")
-	case "danime":
-		return "danime", "dアニメ", pick("https://animestore.docomo.ne.jp/animestore/ci_pc?workId={{id}}")
-	case "unext":
-		return "unext", "U-NEXT", pick("https://video.unext.jp/title/{{id}}")
-	case "nicovideo":
-		return "nicovideo", "Niconico", pick("https://ch.nicovideo.jp/{{id}}")
-	case "viu":
-		return "viu", "Viu", pick("https://www.viu.com/ott/hk/zh-hk/vod/{{id}}/")
-	case "mytv":
-		return "mytv", "myTV SUPER", pick("https://www.mytvsuper.com/tc/programme/{{id}}/")
-	case "letv":
-		return "letv", "乐视", pick("https://www.le.com/comic/{{id}}.html")
 	default:
 		return "", "", ""
 	}
 }
 
-func parseBangumiDataPayload(raw Obj) (map[string][]Obj, map[string][]Obj, map[string][]Obj) {
+func extractISOInstantFromBroadcast(raw string) (string, bool) {
+	s := strings.TrimSpace(raw)
+	if s == "" {
+		return "", false
+	}
+	if strings.HasPrefix(s, "R/") {
+		parts := strings.Split(s, "/")
+		if len(parts) >= 2 {
+			s = strings.TrimSpace(parts[1])
+		}
+	}
+	t, err := time.Parse(time.RFC3339, s)
+	if err != nil {
+		return "", false
+	}
+	utc := t.UTC()
+	isPlaceholder := utc.Hour() == 16 && utc.Minute() == 0 && utc.Second() == 0
+	return utc.Format(time.RFC3339), !isPlaceholder
+}
+
+func resolveBangumiDataItemBroadcast(item Obj) string {
+	if iso, exact := extractISOInstantFromBroadcast(str(item["broadcast"])); iso != "" && exact {
+		return iso
+	}
+	var cnSiteISO, anySiteISO string
+	for _, rawSite := range list(item["sites"]) {
+		s := object(rawSite)
+		iso, exact := extractISOInstantFromBroadcast(str(s["broadcast"]))
+		if iso == "" || !exact {
+			continue
+		}
+		if anySiteISO == "" {
+			anySiteISO = iso
+		}
+		switch strings.TrimSpace(str(s["site"])) {
+		case "bilibili", "bilibili_hk_mo_tw", "bilibili_hk_mo", "bilibili_tw", "gamer", "gamer_hk", "ani_one", "ani_one_asia", "muse_hk", "muse_tw", "iqiyi", "qq", "youku", "mgtv", "acfun":
+			if cnSiteISO == "" {
+				cnSiteISO = iso
+			}
+		}
+	}
+	if cnSiteISO != "" {
+		return cnSiteISO
+	}
+	if anySiteISO != "" {
+		return anySiteISO
+	}
+	if iso, exact := extractISOInstantFromBroadcast(str(item["begin"])); iso != "" && exact {
+		return iso
+	}
+	if iso, _ := extractISOInstantFromBroadcast(str(item["broadcast"])); iso != "" {
+		return iso
+	}
+	return ""
+}
+
+func parseBangumiDataPayload(raw Obj) (
+	map[string][]Obj,
+	map[string][]Obj,
+	map[string][]Obj,
+	map[string]string,
+	map[string]string,
+	map[string]string,
+	map[string]string,
+) {
 	byBangumi := map[string][]Obj{}
 	byAniList := map[string][]Obj{}
 	byMAL := map[string][]Obj{}
+	broadcastByBangumi := map[string]string{}
+	broadcastByAniList := map[string]string{}
+	broadcastByMAL := map[string]string{}
+	mikanByBangumi := map[string]string{}
 
 	for _, rawItem := range list(raw["items"]) {
 		item := object(rawItem)
-		var bgmID, aniID, malID string
+		var bgmID, aniID, malID, mikanID string
 		links := []Obj{}
 		for _, rawSite := range list(item["sites"]) {
 			s := object(rawSite)
@@ -141,12 +185,29 @@ func parseBangumiDataPayload(raw Obj) (map[string][]Obj, map[string][]Obj, map[s
 				aniID = siteID
 			case "mal":
 				malID = siteID
+			case "mikan":
+				mikanID = siteID
 			default:
 				pid, label, linkURL := bangumiDataSiteToLink(siteName, siteID, str(s["url"]))
 				if pid != "" && linkURL != "" {
 					links = append(links, Obj{"id": pid, "label": label, "url": linkURL, "direct": true})
 				}
 			}
+		}
+		bcast := resolveBangumiDataItemBroadcast(item)
+		if bgmID != "" {
+			if bcast != "" {
+				broadcastByBangumi[bgmID] = bcast
+			}
+			if mikanID != "" {
+				mikanByBangumi[bgmID] = mikanID
+			}
+		}
+		if aniID != "" && bcast != "" {
+			broadcastByAniList[aniID] = bcast
+		}
+		if malID != "" && bcast != "" {
+			broadcastByMAL[malID] = bcast
 		}
 		if len(links) == 0 {
 			continue
@@ -162,7 +223,7 @@ func parseBangumiDataPayload(raw Obj) (map[string][]Obj, map[string][]Obj, map[s
 			byMAL[malID] = mergeStreamingLinks(append(byMAL[malID], merged...))
 		}
 	}
-	return byBangumi, byAniList, byMAL
+	return byBangumi, byAniList, byMAL, broadcastByBangumi, broadcastByAniList, broadcastByMAL, mikanByBangumi
 }
 
 func toIndexedLinksMap(raw Obj) map[string][]Obj {
@@ -185,8 +246,26 @@ func toIndexedLinksMap(raw Obj) map[string][]Obj {
 	return out
 }
 
+func toStringMap(raw Obj) map[string]string {
+	out := make(map[string]string, len(raw))
+	for k, v := range raw {
+		if s := strings.TrimSpace(str(v)); s != "" {
+			out[k] = s
+		}
+	}
+	return out
+}
+
+func fromStringMap(in map[string]string) Obj {
+	out := make(Obj, len(in))
+	for k, v := range in {
+		out[k] = v
+	}
+	return out
+}
+
 func (a *App) loadBangumiDataFromDisk() bool {
-	cached, ok := a.peekDiscoveryCache("bangumi-data:index:v1", 24*time.Hour)
+	cached, ok := a.peekDiscoveryCache("bangumi-data:index:v3", 24*time.Hour)
 	if !ok {
 		return false
 	}
@@ -196,11 +275,19 @@ func (a *App) loadBangumiDataFromDisk() bool {
 	}
 	byAni := toIndexedLinksMap(object(cached["anilist"]))
 	byMal := toIndexedLinksMap(object(cached["mal"]))
+	bcastBgm := toStringMap(object(cached["broadcastBangumi"]))
+	bcastAni := toStringMap(object(cached["broadcastAniList"]))
+	bcastMal := toStringMap(object(cached["broadcastMAL"]))
+	mikanBgm := toStringMap(object(cached["mikanBangumi"]))
 
 	a.bgmData.mu.Lock()
 	a.bgmData.byBangumi = byBgm
 	a.bgmData.byAniList = byAni
 	a.bgmData.byMAL = byMal
+	a.bgmData.broadcastByBangumi = bcastBgm
+	a.bgmData.broadcastByAniList = bcastAni
+	a.bgmData.broadcastByMAL = bcastMal
+	a.bgmData.mikanByBangumi = mikanBgm
 	a.bgmData.loaded = true
 	a.bgmData.loadedAt = time.Now()
 	a.bgmData.mu.Unlock()
@@ -218,7 +305,7 @@ func (a *App) ensureBangumiDataLoaded(ctx context.Context) {
 		return
 	}
 
-	_, err := a.discoveryCached(ctx, "bangumi-data:index:v1", 24*time.Hour, 30*24*time.Hour, func(fetchCtx context.Context) (Obj, error) {
+	_, err := a.discoveryCached(ctx, "bangumi-data:index:v3", 24*time.Hour, 30*24*time.Hour, func(fetchCtx context.Context) (Obj, error) {
 		endpoints := []string{
 			"https://unpkg.com/bangumi-data@latest/dist/data.json",
 			"https://fastly.jsdelivr.net/npm/bangumi-data@latest/dist/data.json",
@@ -232,7 +319,7 @@ func (a *App) ensureBangumiDataLoaded(ctx context.Context) {
 				lastErr = e
 				continue
 			}
-			byBgm, byAni, byMal := parseBangumiDataPayload(raw)
+			byBgm, byAni, byMal, bcastBgm, bcastAni, bcastMal, mikanBgm := parseBangumiDataPayload(raw)
 			if len(byBgm) == 0 {
 				lastErr = fmt.Errorf("bangumi-data empty from %s", ep)
 				continue
@@ -241,6 +328,10 @@ func (a *App) ensureBangumiDataLoaded(ctx context.Context) {
 			a.bgmData.byBangumi = byBgm
 			a.bgmData.byAniList = byAni
 			a.bgmData.byMAL = byMal
+			a.bgmData.broadcastByBangumi = bcastBgm
+			a.bgmData.broadcastByAniList = bcastAni
+			a.bgmData.broadcastByMAL = bcastMal
+			a.bgmData.mikanByBangumi = mikanBgm
 			a.bgmData.loaded = true
 			a.bgmData.loadedAt = time.Now()
 			a.bgmData.mu.Unlock()
@@ -257,7 +348,15 @@ func (a *App) ensureBangumiDataLoaded(ctx context.Context) {
 			for k, v := range byMal {
 				malObj[k] = v
 			}
-			return Obj{"bangumi": bgmObj, "anilist": aniObj, "mal": malObj}, nil
+			return Obj{
+				"bangumi":          bgmObj,
+				"anilist":          aniObj,
+				"mal":              malObj,
+				"broadcastBangumi": fromStringMap(bcastBgm),
+				"broadcastAniList": fromStringMap(bcastAni),
+				"broadcastMAL":     fromStringMap(bcastMal),
+				"mikanBangumi":     fromStringMap(mikanBgm),
+			}, nil
 		}
 		if lastErr == nil {
 			lastErr = fmt.Errorf("bangumi-data unavailable")
@@ -274,12 +373,148 @@ func (a *App) ensureBangumiDataLoaded(ctx context.Context) {
 	}
 }
 
+func (a *App) ensureBilibiliTimelineLoaded(ctx context.Context) {
+	a.bgmData.mu.RLock()
+	fresh := len(a.bgmData.biliTimelineByKey) > 0 && time.Since(a.bgmData.biliTimelineAt) < 2*time.Hour
+	a.bgmData.mu.RUnlock()
+	if fresh {
+		return
+	}
+	if cached, ok := a.peekDiscoveryCache("bili:timeline:v1", 2*time.Hour); ok {
+		byKey := toStringMap(object(cached["byKey"]))
+		if len(byKey) > 0 {
+			a.bgmData.mu.Lock()
+			a.bgmData.biliTimelineByKey = byKey
+			a.bgmData.biliTimelineAt = time.Now()
+			a.bgmData.mu.Unlock()
+			return
+		}
+	}
+	_, _ = a.discoveryCached(ctx, "bili:timeline:v1", 2*time.Hour, 24*time.Hour, func(fetchCtx context.Context) (Obj, error) {
+		headers := map[string]string{
+			"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+			"Referer":    "https://www.bilibili.com/",
+		}
+		byKey := map[string]string{}
+		for _, t := range []string{"1", "4"} {
+			reqCtx, cancel := context.WithTimeout(fetchCtx, 3500*time.Millisecond)
+			endpoint := "https://api.bilibili.com/pgc/web/timeline?types=" + t + "&before=7&after=7"
+			raw, err := a.requestJSON(reqCtx, "GET", endpoint, nil, headers)
+			cancel()
+			if err != nil {
+				continue
+			}
+			for _, dayRaw := range list(raw["result"]) {
+				dayObj := object(dayRaw)
+				for _, epRaw := range list(dayObj["episodes"]) {
+					ep := object(epRaw)
+					title := strings.TrimSpace(str(ep["title"]))
+					ts := num(ep["pub_ts"])
+					if title == "" || ts <= 0 {
+						continue
+					}
+					iso := time.Unix(ts, 0).UTC().Format(time.RFC3339)
+					if k := titleKey(title); k != "" {
+						byKey[k] = iso
+					}
+				}
+			}
+		}
+		if len(byKey) == 0 {
+			return nil, fmt.Errorf("bilibili timeline empty")
+		}
+		a.bgmData.mu.Lock()
+		a.bgmData.biliTimelineByKey = byKey
+		a.bgmData.biliTimelineAt = time.Now()
+		a.bgmData.mu.Unlock()
+		return Obj{"byKey": fromStringMap(byKey)}, nil
+	})
+}
+
 func (a *App) warmBangumiDataIndex() {
 	ctx := a.ctx
 	if ctx == nil {
 		ctx = context.Background()
 	}
 	a.ensureBangumiDataLoaded(ctx)
+	a.ensureBilibiliTimelineLoaded(ctx)
+}
+
+func (a *App) enrichAnimeBroadcast(anime Obj) {
+	if anime == nil {
+		return
+	}
+	rawID := strings.TrimSpace(str(anime["animeId"]))
+	bgmID := strings.TrimSpace(str(anime["bangumiId"]))
+	if bgmID == "" && !strings.Contains(rawID, ":") {
+		bgmID = rawID
+	}
+
+	a.bgmData.mu.RLock()
+	loaded := a.bgmData.loaded
+	a.bgmData.mu.RUnlock()
+	if !loaded {
+		a.loadBangumiDataFromDisk()
+	}
+
+	a.bgmData.mu.RLock()
+	var bcast, mikanID string
+	switch {
+	case strings.HasPrefix(rawID, "anilist:"):
+		bcast = a.bgmData.broadcastByAniList[strings.TrimPrefix(rawID, "anilist:")]
+	case strings.HasPrefix(rawID, "mal:"):
+		bcast = a.bgmData.broadcastByMAL[strings.TrimPrefix(rawID, "mal:")]
+	case bgmID != "":
+		bcast = a.bgmData.broadcastByBangumi[bgmID]
+		mikanID = a.bgmData.mikanByBangumi[bgmID]
+	}
+	if bcast == "" && len(a.bgmData.biliTimelineByKey) > 0 {
+		for _, candidate := range []string{str(anime["title"]), str(anime["searchKeyword"])} {
+			ck := titleKey(candidate)
+			if ck == "" {
+				continue
+			}
+			if hit := a.bgmData.biliTimelineByKey[ck]; hit != "" {
+				bcast = hit
+				break
+			}
+			if len([]rune(ck)) >= 4 {
+				for bk, iso := range a.bgmData.biliTimelineByKey {
+					if len([]rune(bk)) >= 4 && (strings.HasPrefix(ck, bk) || strings.HasPrefix(bk, ck)) {
+						bcast = iso
+						break
+					}
+				}
+			}
+			if bcast != "" {
+				break
+			}
+		}
+	}
+	a.bgmData.mu.RUnlock()
+
+	if bcast != "" && str(anime["broadcastAt"]) == "" {
+		anime["broadcastAt"] = bcast
+	}
+	if mikanID != "" && str(anime["mikanId"]) == "" {
+		anime["mikanId"] = mikanID
+	}
+}
+
+func deriveBroadcastFromDownloads(downloads []Obj) string {
+	for _, dl := range downloads {
+		pub := strings.TrimSpace(str(dl["publishedAt"]))
+		if pub == "" {
+			continue
+		}
+		if t, err := time.Parse(time.RFC3339, pub); err == nil {
+			utc := t.UTC()
+			if !(utc.Hour() == 0 && utc.Minute() == 0 && utc.Second() == 0) {
+				return utc.Format(time.RFC3339)
+			}
+		}
+	}
+	return ""
 }
 
 func (a *App) lookupBangumiDataMemory(animeID string) []Obj {
@@ -343,6 +578,33 @@ func mergeStreamingLinks(lists ...[]Obj) []Obj {
 		}
 	}
 
+	hasSpecificYouTube := false
+	hasMainlandBilibili := false
+	for _, entry := range merged {
+		switch str(entry["id"]) {
+		case "muse", "ani_one", "tropics", "mighty":
+			hasSpecificYouTube = true
+		case "bilibili":
+			if flag(entry["direct"]) {
+				hasMainlandBilibili = true
+			}
+		}
+	}
+	if hasSpecificYouTube || hasMainlandBilibili {
+		filtered := make([]Obj, 0, len(merged))
+		for _, entry := range merged {
+			id := str(entry["id"])
+			if hasSpecificYouTube && id == "youtube" {
+				continue
+			}
+			if hasMainlandBilibili && id == "bilibili_hk_mo_tw" {
+				continue
+			}
+			filtered = append(filtered, entry)
+		}
+		merged = filtered
+	}
+
 	sort.SliceStable(merged, func(i, j int) bool {
 		pi, oki := streamingPlatformPriority[str(merged[i]["id"])]
 		if !oki {
@@ -362,7 +624,7 @@ func (a *App) fastStreamingLinks(animeID string, bgmSubject Obj, primaryTitle st
 	if !strings.Contains(normID, ":") {
 		normID = "bangumi:" + normID
 	}
-	if cached, ok := a.peekDiscoveryCache("streaming:v2:"+normID, 24*time.Hour); ok {
+	if cached, ok := a.peekDiscoveryCache("streaming:v3:"+normID, 24*time.Hour); ok {
 		out := []Obj{}
 		for _, v := range list(cached["links"]) {
 			if m := object(v); m != nil {
@@ -477,10 +739,8 @@ func aniListExternalSiteToLink(site, rawURL string) (string, string, string) {
 	switch {
 	case s == "bilibili":
 		return "bilibili", "哔哩哔哩", u
-	case strings.Contains(s, "bilibili tv") || strings.Contains(u, "bilibili.tv"):
-		return "bilibili_tv", "Bilibili Intl", u
 	case strings.Contains(s, "bahamut") || strings.Contains(u, "gamer.com.tw"):
-		return "bahamut", "巴哈姆特动画疯", u
+		return "bahamut", "动画疯", u
 	case strings.Contains(s, "iqiyi"):
 		return "iqiyi", "爱奇艺", u
 	case strings.Contains(s, "tencent") || strings.Contains(s, "wetv") || strings.Contains(u, "v.qq.com"):
@@ -492,29 +752,20 @@ func aniListExternalSiteToLink(site, rawURL string) (string, string, string) {
 	case strings.Contains(s, "acfun"):
 		return "acfun", "AcFun", u
 	case strings.Contains(s, "muse"):
-		return "muse", "木棉花 YouTube", u
+		return "muse", "木棉花", u
 	case strings.Contains(s, "ani-one"):
-		return "ani_one", "Ani-One YouTube", u
+		return "ani_one", "Ani-One", u
+	case strings.Contains(s, "tropics"):
+		return "tropics", "回归线", u
+	case strings.Contains(s, "mighty"):
+		return "mighty", "曼迪", u
 	case strings.Contains(s, "youtube"):
 		return "youtube", "YouTube", u
 	case strings.Contains(s, "netflix"):
 		return "netflix", "Netflix", u
 	case strings.Contains(s, "disney"):
 		return "disneyplus", "Disney+", u
-	case strings.Contains(s, "crunchyroll"):
-		return "crunchyroll", "Crunchyroll", u
-	case strings.Contains(s, "amazon") || strings.Contains(s, "prime"):
-		return "prime", "Prime Video", u
-	case strings.Contains(s, "hidive"):
-		return "hidive", "HIDIVE", u
-	case strings.Contains(s, "hulu"):
-		return "hulu", "Hulu", u
-	case strings.Contains(s, "abema"):
-		return "abema", "ABEMA", u
 	default:
-		if strings.TrimSpace(site) != "" {
-			return "ext:" + s, strings.TrimSpace(site), u
-		}
 		return "", "", ""
 	}
 }
@@ -598,7 +849,7 @@ func (a *App) resolveAnimeStreamingLinks(ctx context.Context, rawID string) ([]O
 		normID = "bangumi:" + normID
 	}
 
-	cached, err := a.discoveryCached(ctx, "streaming:v2:"+normID, 24*time.Hour, 14*24*time.Hour, func(workCtx context.Context) (Obj, error) {
+	cached, err := a.discoveryCached(ctx, "streaming:v3:"+normID, 24*time.Hour, 14*24*time.Hour, func(workCtx context.Context) (Obj, error) {
 		var primaryTitle, nativeTitle string
 		var candidates []string
 		var infoboxLinks []Obj
