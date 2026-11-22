@@ -475,9 +475,9 @@ public class MainActivity extends Activity {
     private String readVersionName() {
         try {
             PackageInfo info = getPackageManager().getPackageInfo(getPackageName(), 0);
-            return info.versionName != null ? info.versionName : "0.2.1";
+            return info.versionName != null ? info.versionName : "0.2.2";
         } catch (Exception e) {
-            return "0.2.1";
+            return "0.2.2";
         }
     }
 

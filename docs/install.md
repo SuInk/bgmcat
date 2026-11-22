@@ -37,11 +37,11 @@ irm https://raw.githubusercontent.com/SuInk/bgmcat/main/scripts/install.ps1 | ie
 - 指定版本与自定义安装目录：
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/SuInk/bgmcat/main/scripts/install.sh | sh -s -- --version v0.2.1 --dir "$HOME/.local/bin"
+curl -fsSL https://raw.githubusercontent.com/SuInk/bgmcat/main/scripts/install.sh | sh -s -- --version v0.2.2 --dir "$HOME/.local/bin"
 ```
 
 ```powershell
-.\scripts\install.ps1 -Version v0.2.1 -InstallDir "$env:LOCALAPPDATA\AnimeRSS\bin"
+.\scripts\install.ps1 -Version v0.2.2 -InstallDir "$env:LOCALAPPDATA\AnimeRSS\bin"
 ```
 
 ## 手动解压完整包

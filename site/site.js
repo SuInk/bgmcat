@@ -1,6 +1,6 @@
 (function () {
   var REPO = "SuInk/bgmcat";
-  var DEFAULT_VER = "0.2.1";
+  var DEFAULT_VER = "0.2.2";
   var RELEASES = "https://github.com/" + REPO + "/releases";
 
   // 一键安装命令只在这里写一份，页面里用 data-install-cmd="sh|ps|docker" 引用。
