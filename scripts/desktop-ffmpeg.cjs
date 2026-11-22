@@ -32,11 +32,13 @@ const BUILDS = {
       { url: 'https://github.com/GyanD/codexffmpeg/releases/download/9.1/ffmpeg-9.1-essentials_build.zip', sha256: 'b9bbbb3acece000cbeec994f856649354e52c773807841e78908374b24d658fd' }
     ]
   },
-  // johnvansickle 只在这个地址放当前版本；作者升级后校验会失败，届时按新版本更新这里。
+  // 和 macOS 同一来源、同一版本：地址带构建号，文件不会被替换（johnvansickle 的地址会原地更新，曾导致校验失败）。
+  // 这份构建动态链接系统的 glibc（需 2.35 及以上，即 Ubuntu 22.04 / Debian 12 起）和 libstdc++。
   'linux-x64': {
-    version: '7.0.2',
+    version: '9.1',
     archives: [
-      { url: 'https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz', sha256: 'abda8d77ce8309141f83ab8edf0596834087c52467f6badf376a6a2a4c87cf67' }
+      { url: 'https://ffmpeg.martin-riedl.de/download/linux/amd64/1795205506_9.1/ffmpeg.zip', sha256: '707d4fa675932cc310e39e1506ac9224049786119689e345fed1c453a8a0896e' },
+      { url: 'https://ffmpeg.martin-riedl.de/download/linux/amd64/1795205506_9.1/ffprobe.zip', sha256: '5e4c53c9c86d6371027efa83d62c2cea00e02ded0234d8cc952d06c9259e4b33' }
     ]
   }
 };
@@ -88,10 +90,14 @@ async function bundleFFmpeg({ root, resources, platform = process.platform, arch
   try {
     for (const archive of build.archives) {
       const file = await fetchVerified(archive, cacheDir);
-      // macOS / Windows 自带的 bsdtar 能解 zip，Linux 的 GNU tar 解 .tar.xz。
+      // macOS / Windows 自带的 bsdtar 能解 zip；Linux 的 GNU tar 解不了 zip，改用 unzip。
       // Windows 上显式用系统的 bsdtar，Git 自带的 GNU tar 解不了 zip。
-      const tar = platform === 'win32' ? join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'tar.exe') : 'tar';
-      execFileSync(tar, ['-xf', file, '-C', work], { stdio: 'inherit' });
+      if (platform === 'linux' && file.endsWith('.zip')) {
+        execFileSync('unzip', ['-q', '-o', file, '-d', work], { stdio: 'inherit' });
+      } else {
+        const tar = platform === 'win32' ? join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'tar.exe') : 'tar';
+        execFileSync(tar, ['-xf', file, '-C', work], { stdio: 'inherit' });
+      }
     }
     for (const name of ['ffmpeg', 'ffprobe']) {
       const source = findFile(work, name + suffix);

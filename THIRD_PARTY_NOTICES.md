@@ -31,15 +31,14 @@ The third-party libraries and external tools below remain under their respective
 
 ## 随桌面安装包分发的程序 / Programs Bundled with the Desktop App
 
-桌面安装包内附带 FFmpeg / FFprobe 的预编译静态程序，用于 MKV / HEVC 等非原生编码的实时转码、内封字幕提取和缩略图生成。它们是独立的可执行文件，猫追番只通过子进程调用，未与本项目代码静态或动态链接。这些构建启用了 libx264 等 GPL 组件，整体按 **GNU General Public License v3** 分发，许可全文随安装包附在 `ffmpeg-COPYING.GPLv3.txt`。设置里「ffmpeg 路径」留空时优先使用内置程序，找不到再使用系统安装的 FFmpeg。
+桌面安装包内附带 FFmpeg / FFprobe 的预编译程序，用于 MKV / HEVC 等非原生编码的实时转码、内封字幕提取和缩略图生成。它们是独立的可执行文件，猫追番只通过子进程调用，未与本项目代码静态或动态链接。这些构建启用了 libx264 等 GPL 组件，整体按 **GNU General Public License v3** 分发，许可全文随安装包附在 `ffmpeg-COPYING.GPLv3.txt`。设置里「ffmpeg 路径」留空时优先使用内置程序，找不到再使用系统安装的 FFmpeg。
 
-The desktop app ships prebuilt static FFmpeg / FFprobe executables, invoked only as separate processes. These builds are distributed under the GNU GPL v3; the full license text is included as `ffmpeg-COPYING.GPLv3.txt`.
+The desktop app ships prebuilt FFmpeg / FFprobe executables, invoked only as separate processes. These builds are distributed under the GNU GPL v3; the full license text is included as `ffmpeg-COPYING.GPLv3.txt`.
 
 | 平台 | 版本 | 预编译来源 | 对应源码 |
 | --- | --- | --- | --- |
-| macOS arm64 / x64 | 9.1 | [martin-riedl.de](https://ffmpeg.martin-riedl.de/)（构建配置见下载目录中的 `versions.txt`） | [ffmpeg-9.1.tar.xz](https://ffmpeg.org/releases/ffmpeg-9.1.tar.xz)、[构建脚本](https://git.martin-riedl.de/ffmpeg/build-script) |
+| macOS arm64 / x64、Linux x64 | 9.1 | [martin-riedl.de](https://ffmpeg.martin-riedl.de/)（构建配置见下载目录中的 `versions.txt`；Linux 版需 glibc 2.35 及以上） | [ffmpeg-9.1.tar.xz](https://ffmpeg.org/releases/ffmpeg-9.1.tar.xz)、[构建脚本](https://git.martin-riedl.de/ffmpeg/build-script) |
 | Windows x64 | 9.1 | [gyan.dev](https://www.gyan.dev/ffmpeg/builds/) release essentials（[GyanD/codexffmpeg 9.1](https://github.com/GyanD/codexffmpeg/releases/tag/9.1)） | [FFmpeg 74e4393595](https://github.com/FFmpeg/FFmpeg/commit/74e4393595)、包内 `README.txt` 列出的组件版本 |
-| Linux x64 | 7.0.2 | [johnvansickle.com](https://johnvansickle.com/ffmpeg/) amd64 static | [release-source](https://johnvansickle.com/ffmpeg/release-source/) |
 
 各构建的下载地址与 SHA-256 固定在 `scripts/desktop-ffmpeg.cjs`。如需上表源码而无法从上述地址取得，可在本项目 GitHub Issues 中索取，我们会提供对应版本的源码副本。
 
