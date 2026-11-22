@@ -1779,14 +1779,14 @@ onUnmounted(() => {
   display: none;
 }
 
-.shelf-item {
+.shelf-row > :deep(.shelf-item) {
   width: 7rem;
   flex: none;
   scroll-snap-align: start;
 }
 
 @media (min-width: 640px) {
-  .shelf-item {
+  .shelf-row > :deep(.shelf-item) {
     width: 8.5rem;
   }
 }

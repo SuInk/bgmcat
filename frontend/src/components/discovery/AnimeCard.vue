@@ -365,12 +365,12 @@ const openLabel = computed(() => {
       @focus="schedulePrefetch"
       @blur="cancelPrefetch"
     >
-      <span class="anime-poster relative grid aspect-[3/4] place-items-center overflow-hidden rounded-[16px] bg-[var(--panel)] text-2xl font-semibold text-[var(--muted)]">
+      <span class="anime-poster relative grid w-full aspect-[3/4] place-items-center overflow-hidden rounded-[16px] bg-[var(--panel)] text-2xl font-semibold text-[var(--muted)]">
         <img
           v-if="anime.imageUrl && !imageFailed"
           :src="anime.imageUrl"
           alt=""
-          class="size-full object-cover"
+          class="absolute inset-0 size-full object-cover"
           loading="lazy"
           decoding="async"
           @error="handleCoverError"

@@ -908,9 +908,9 @@ function formatDateTime(value: string): string {
                 @click="toggleEpisodeMenu(episode, $event)"
               >
                 <svg viewBox="0 0 16 16" class="size-4" fill="currentColor" aria-hidden="true">
-                  <circle cx="3.2" cy="8" r="1.25" />
+                  <circle cx="8" cy="3.2" r="1.25" />
                   <circle cx="8" cy="8" r="1.25" />
-                  <circle cx="12.8" cy="8" r="1.25" />
+                  <circle cx="8" cy="12.8" r="1.25" />
                 </svg>
               </button>
             </span>

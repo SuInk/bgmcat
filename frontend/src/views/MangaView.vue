@@ -234,12 +234,12 @@ onMounted(() => {
         </div>
         <template v-else-if="selectedDetail">
           <header class="mb-4 grid grid-cols-[96px_minmax(0,1fr)] gap-4 sm:grid-cols-[120px_minmax(0,1fr)]">
-            <div class="aspect-[3/4] overflow-hidden rounded-xl border border-[var(--line)] bg-[var(--panel)]">
+            <div class="relative w-full aspect-[3/4] overflow-hidden rounded-xl border border-[var(--line)] bg-[var(--panel)]">
               <img
                 v-if="selectedDetail.manga.coverUrl"
                 :src="resolveMangaImageUrl(selectedDetail.manga.coverUrl)"
                 :alt="selectedDetail.manga.title"
-                class="size-full object-cover"
+                class="absolute inset-0 size-full object-cover"
               />
             </div>
             <div class="grid content-start gap-2 min-w-0">
@@ -401,12 +401,12 @@ onMounted(() => {
               class="manga-card grid content-start gap-1.5 text-left"
               @click="openManga(item.id)"
             >
-              <span class="relative aspect-[3/4] w-full overflow-hidden rounded-2xl bg-[var(--panel)] shadow-sm">
+              <span class="relative block aspect-[3/4] w-full overflow-hidden rounded-2xl bg-[var(--panel)] shadow-sm">
                 <img
                   v-if="item.coverUrl"
                   :src="resolveMangaImageUrl(item.coverUrl)"
                   :alt="item.title"
-                  class="size-full object-cover transition duration-200"
+                  class="absolute inset-0 size-full object-cover transition duration-200"
                   loading="lazy"
                 />
                 <span v-else class="grid size-full place-items-center text-xl font-bold text-[var(--muted)]">
