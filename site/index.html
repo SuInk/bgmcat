@@ -20,7 +20,7 @@
       猫追番（Bangumi Cat）内置纯 Go BT / HTTP 下载引擎与 Google Drive 分块归档，无需安装 aria2。电脑端自动追更并释放本地空间，手机客户端与浏览器按需流式播放。
     </p>
     <div class="hero-cta">
-      <a class="btn btn-primary" href="./download.html">下载客户端</a>
+      <a class="btn btn-primary" href="./download.html">下载桌面版</a>
       <a class="btn btn-ghost" href="./demo/">在线交互演示</a>
       <a class="btn btn-ghost" href="./guide.html">使用文档</a>
       <a class="btn btn-ghost" href="https://github.com/SuInk/bgmcat" target="_blank" rel="noopener">GitHub</a>
@@ -76,8 +76,8 @@
         <p>内置 OAuth 配置向导、自动重试上传、MD5 完整性保护，并提供 Google Drive 优选 IP 扫描与独立 TLS SNI 控制以提升云端读取速度。</p>
       </div>
       <div class="feat-card">
-        <h3>Android 原生壳 &amp; PWA</h3>
-        <p>700 KB 级轻量 Android 客户端支持局域网/公网穿透双地址自动择优、全屏自动横屏、屏幕常亮与 30 天免重复登录；iOS 支持 PWA 主屏运行。</p>
+        <h3>Android App &amp; PWA</h3>
+        <p>Android App 内置服务，装好就能用；也可以连接家里电脑，局域网 / 公网穿透双地址自动切换，全屏横屏与屏幕常亮。iOS 用 PWA 添加到主屏幕。</p>
       </div>
       <div class="feat-card">
         <h3>一键局域网与内网穿透</h3>
@@ -95,31 +95,52 @@
   <div class="wrap">
     <div class="sec-head">
       <h2>三分钟上手</h2>
-      <p>普通电脑用户直接下载桌面安装包双击打开即可；服务器或 NAS 用户可用一条命令完成校验安装。</p>
+      <p>在自己电脑上用，装桌面版就够了：双击安装，打开就能用，不需要命令行。</p>
     </div>
 
-    <div class="code-card" data-code-tabs>
-      <div class="code-head">
-        <div class="code-tabs" role="tablist">
-          <button class="code-tab" type="button" role="tab" aria-selected="true" data-tab="desktop">电脑桌面版（推荐）</button>
-          <button class="code-tab" type="button" role="tab" aria-selected="false" data-tab="docker">Docker 服务端</button>
-          <button class="code-tab" type="button" role="tab" aria-selected="false" data-tab="source">从源码运行</button>
+    <ol class="start-steps">
+      <li class="start-step">
+        <span class="start-num">1</span>
+        <div>
+          <h3>下载桌面安装包</h3>
+          <p>按你的电脑自动推荐，macOS 是 .dmg，Windows 是 .exe，Linux 是 AppImage。</p>
+          <div data-recommend data-recommend-compact>
+            <div class="dl-hero-actions"><a class="btn btn-primary" href="./download.html">前往下载页</a></div>
+          </div>
         </div>
-        <button class="copy-btn" type="button" data-copy-btn>复制</button>
+      </li>
+      <li class="start-step">
+        <span class="start-num">2</span>
+        <div>
+          <h3>订阅番剧，连接网盘</h3>
+          <p>在「番剧发现」里订阅想看的番，在「设置 → 云盘归档」连接 Google Drive，下完自动上传、释放本地空间。</p>
+        </div>
+      </li>
+      <li class="start-step">
+        <span class="start-num">3</span>
+        <div>
+          <h3>手机上看</h3>
+          <p>在「设置 → 远程与安全」开启局域网访问，Android 装 App、iPhone 用 Safari 打开地址即可。</p>
+        </div>
+      </li>
+    </ol>
+
+    <div class="start-server">
+      <h3>服务器 / NAS：一条命令安装</h3>
+      <p>没有显示器的迷你主机、NAS 或云服务器，用下面的命令安装，装完用浏览器访问。<a href="./deploy.html#installer">更多参数</a></p>
+      <div class="code-card" data-code-tabs>
+        <div class="code-head">
+          <div class="code-tabs" role="tablist">
+            <button class="code-tab" type="button" role="tab" aria-selected="true" data-tab="sh">Linux / macOS</button>
+            <button class="code-tab" type="button" role="tab" aria-selected="false" data-tab="ps">Windows PowerShell</button>
+            <button class="code-tab" type="button" role="tab" aria-selected="false" data-tab="docker">Docker</button>
+          </div>
+          <button class="copy-btn" type="button" data-copy-btn>复制</button>
+        </div>
+        <pre data-panel="sh" data-install-cmd="sh"></pre>
+        <pre data-panel="ps" data-install-cmd="ps" hidden></pre>
+        <pre data-panel="docker" data-install-cmd="docker" hidden></pre>
       </div>
-      <pre data-panel="desktop"># 1. 前往「下载客户端」获取对应系统的桌面安装包并打开：
-#    - macOS:  bgmcat-desktop-0.2.0-mac-arm64.dmg (Apple Silicon) / mac-x64.dmg
-#    - Windows: bgmcat-desktop-0.2.0-win-x64.exe
-#    - Linux:   bgmcat-desktop-0.2.0-linux-x64.AppImage / .deb
-#
-# 2. 在桌面端「设置 → 云盘归档」连接 Google Drive，在「设置 → 远程与安全」开启局域网或穿透；
-# 3. 手机安装 bgmcat-android-0.2.0-universal.apk（或用浏览器打开地址）即可随时点播！</pre>
-      <pre data-panel="docker" hidden>git clone https://github.com/SuInk/bgmcat.git
-cd bgmcat
-docker compose up -d --build
-docker compose logs bgmcat</pre>
-      <pre data-panel="source" hidden>sh scripts/build.sh
-./bin/bgmcat --listen 0.0.0.0:3001</pre>
     </div>
   </div>
 </section>
