@@ -4,136 +4,128 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <link rel="icon" href="./favicon.png" type="image/png" />
-<title>下载客户端 — 猫追番 · Bangumi Cat</title>
-<meta name="description" content="下载猫追番（Bangumi Cat）macOS、Windows、Linux 桌面端，Android 手机客户端 APK，以及服务端与 Docker 部署包。" />
+<title>下载 — 猫追番 · Bangumi Cat</title>
+<meta name="description" content="下载猫追番（Bangumi Cat）：macOS、Windows、Linux 桌面版，Android 安装包，以及服务器 / NAS 一键安装。" />
 <script src="./theme.js"></script>
 <link rel="stylesheet" href="./site.css" />
 </head>
-<body>
+<body data-download-page>
 
 <div data-site-nav></div>
 
-<main class="wrap" style="padding: 36px 0 64px;">
-  <div class="dl-banner">
-    <div>
-      <span class="status-chip warn" data-release-state>正在检测最新版本状态…</span>
-      <h2>已为你匹配：<span data-recommended-title>多平台客户端</span></h2>
-      <p>电脑端安装桌面版自动追番并归档至 Google Drive；手机端安装 Android APK 或使用网页 PWA 随时直连播放。</p>
+<main class="wrap dl-page">
+  <!-- 1. 按访问设备推荐一个 -->
+  <section class="dl-hero">
+    <span class="status-chip warn" data-release-state>正在读取最新版本…</span>
+    <div data-recommend>
+      <h1>下载猫追番</h1>
+      <div class="dl-hero-actions">
+        <a class="btn btn-primary btn-lg" href="#all">查看所有平台</a>
+      </div>
     </div>
-    <div style="display:flex; gap:10px; flex-wrap:wrap;">
-      <a class="btn btn-primary" href="https://github.com/SuInk/bgmcat/releases" target="_blank" rel="noopener">前往 GitHub Releases</a>
-      <a class="btn btn-ghost" href="./demo/">先试在线演示</a>
-    </div>
-  </div>
+    <p class="dl-hero-sub">电脑上装桌面版：自动追番、下载、传到网盘。手机装 Android 版或直接用浏览器看。<a href="./demo/">先试试在线演示 →</a></p>
+  </section>
 
-  <div class="dl-grid">
-    <!-- 1. 电脑桌面端 -->
-    <section id="dl-desktop" class="dl-card">
-      <div class="dl-card-head">
-        <div>
-          <h3>电脑桌面端（自动追番 + 网盘归档）</h3>
-          <p>内置 Go 后端与纯 Go 自研 BT/HTTP 引擎，双击即用，无需配置命令行或安装 aria2。</p>
-        </div>
-      </div>
-
-      <div class="asset-list">
-        <div class="asset-row">
-          <div class="asset-meta">
-            <strong>macOS（Apple Silicon M1–M4）</strong>
-            <span>bgmcat-desktop-*-mac-arm64.dmg</span>
-          </div>
-          <a class="asset-btn" data-asset-suffix="mac-arm64.dmg" href="https://github.com/SuInk/bgmcat/releases" target="_blank" rel="noopener">查看发行包</a>
-        </div>
-
-        <div class="asset-row">
-          <div class="asset-meta">
-            <strong>macOS（Intel x64）</strong>
-            <span>bgmcat-desktop-*-mac-x64.dmg</span>
-          </div>
-          <a class="asset-btn" data-asset-suffix="mac-x64.dmg" href="https://github.com/SuInk/bgmcat/releases" target="_blank" rel="noopener">查看发行包</a>
-        </div>
-
-        <div class="asset-row">
-          <div class="asset-meta">
-            <strong>Windows 10 / 11（64 位安装程序）</strong>
-            <span>bgmcat-desktop-*-win-x64.exe</span>
-          </div>
-          <a class="asset-btn" data-asset-suffix="win-x64.exe" href="https://github.com/SuInk/bgmcat/releases" target="_blank" rel="noopener">查看发行包</a>
-        </div>
-
-        <div class="asset-row">
-          <div class="asset-meta">
-            <strong>Linux（AppImage 便携包 / Debian &amp; Ubuntu .deb）</strong>
-            <span>bgmcat-desktop-*-linux-x64.AppImage / .deb</span>
-          </div>
-          <a class="asset-btn" data-asset-suffix="linux-x64.AppImage" href="https://github.com/SuInk/bgmcat/releases" target="_blank" rel="noopener">查看发行包</a>
-        </div>
-      </div>
-    </section>
-
-    <!-- 2. 手机客户端与网页端 -->
-    <section id="dl-mobile" class="dl-card">
-      <div class="dl-card-head">
-        <div>
-          <h3>手机客户端 &amp; 网页直接播放</h3>
-          <p>连接家里的电脑桌面端、NAS 或 Cloudflare Tunnel 穿透地址，本地与 Google Drive 归档视频即点即播。</p>
-        </div>
-      </div>
-
-      <div class="asset-list">
-        <div class="asset-row">
-          <div class="asset-meta">
-            <strong>Android 手机客户端（Android 8.0+ 通用安装包）</strong>
-            <span>bgmcat-android-*-universal.apk</span>
-          </div>
-          <a class="asset-btn" data-asset-suffix="universal.apk" href="https://github.com/SuInk/bgmcat/releases" target="_blank" rel="noopener">查看 APK</a>
-        </div>
-
-        <div class="asset-row">
-          <div class="asset-meta">
-            <strong>iOS / iPadOS（Safari 网页直连 &amp; PWA 主屏应用）</strong>
-            <span>打开电脑端局域网或穿透地址 → 分享 → 添加到主屏幕</span>
-          </div>
-          <a class="asset-btn" href="./mobile.html#pwa">查看配置说明</a>
-        </div>
-
-        <div class="asset-row">
-          <div class="asset-meta">
-            <strong>任意设备现代浏览器（Chrome / Edge / Firefox / Safari）</strong>
-            <span>零安装直接访问电脑端或服务端 URL 流式播放</span>
-          </div>
-          <a class="asset-btn" href="./mobile.html#lan">连接指南</a>
-        </div>
-      </div>
-    </section>
-  </div>
-
-  <!-- 3. 服务端 / NAS / 私有仓库下载指引 -->
-  <section class="sec" style="margin-top: 32px;">
+  <!-- 2. 所有平台：每个平台只列需要的安装包 -->
+  <section id="all" class="sec">
     <div class="sec-head">
-      <h2>服务端部署与命令行下载（NAS / Linux / 私有阶段验证）</h2>
-      <p>如果你在 24 小时开机的迷你主机、NAS 或云服务器上运行猫追番，可使用无界面单二进制服务版一键安装脚本（自动匹配架构并校验 SHA-256）或 Docker Compose 部署。</p>
+      <h2>所有平台</h2>
+      <p>大多数人只需要电脑上的桌面版。数据都存在自己的电脑里。</p>
+    </div>
+
+    <div class="platform-grid">
+      <article class="platform-card" data-platform="mac">
+        <div class="platform-head"><span class="platform-icon" data-icon="laptop"></span><div><h3>macOS</h3><p>macOS 11 及以上</p></div></div>
+        <div class="platform-actions">
+          <a class="dl-btn" data-asset="mac-arm64" href="https://github.com/SuInk/bgmcat/releases/latest" target="_blank" rel="noopener"><span data-icon="download"></span><span>Apple 芯片（M1–M4）</span><small data-asset-size></small></a>
+          <a class="dl-btn" data-asset="mac-x64" href="https://github.com/SuInk/bgmcat/releases/latest" target="_blank" rel="noopener"><span data-icon="download"></span><span>Intel 芯片</span><small data-asset-size></small></a>
+        </div>
+        <p class="platform-hint">不知道是哪种芯片？点左上角苹果菜单 → 关于本机，看「芯片」一栏。</p>
+      </article>
+
+      <article class="platform-card" data-platform="win">
+        <div class="platform-head"><span class="platform-icon" data-icon="windows"></span><div><h3>Windows</h3><p>Windows 10 / 11，64 位</p></div></div>
+        <div class="platform-actions">
+          <a class="dl-btn" data-asset="win-x64" href="https://github.com/SuInk/bgmcat/releases/latest" target="_blank" rel="noopener"><span data-icon="download"></span><span>安装程序 .exe</span><small data-asset-size></small></a>
+        </div>
+        <p class="platform-hint">首次运行如果弹出「Windows 已保护你的电脑」，点「更多信息」→「仍要运行」。</p>
+      </article>
+
+      <article class="platform-card" data-platform="linux">
+        <div class="platform-head"><span class="platform-icon" data-icon="terminal"></span><div><h3>Linux</h3><p>x86-64 桌面</p></div></div>
+        <div class="platform-actions">
+          <a class="dl-btn" data-asset="linux-appimage" href="https://github.com/SuInk/bgmcat/releases/latest" target="_blank" rel="noopener"><span data-icon="download"></span><span>AppImage（通用）</span><small data-asset-size></small></a>
+          <a class="dl-btn" data-asset="linux-deb" href="https://github.com/SuInk/bgmcat/releases/latest" target="_blank" rel="noopener"><span data-icon="download"></span><span>.deb（Ubuntu / Debian）</span><small data-asset-size></small></a>
+        </div>
+        <p class="platform-hint">AppImage 下载后加上可执行权限就能运行；Ubuntu / Debian 也可以装 .deb。</p>
+      </article>
+
+      <article class="platform-card" data-platform="android">
+        <div class="platform-head"><span class="platform-icon" data-icon="android"></span><div><h3>Android</h3><p>Android 8.0 及以上</p></div></div>
+        <div class="platform-actions">
+          <a class="dl-btn" data-asset="android" href="https://github.com/SuInk/bgmcat/releases/latest" target="_blank" rel="noopener"><span data-icon="download"></span><span>安装包 .apk</span><small data-asset-size></small></a>
+        </div>
+        <p class="platform-hint">可以连接家里电脑上的猫追番，在手机上看已下载的番剧。<a href="./mobile.html#android">使用说明</a></p>
+      </article>
+
+      <article class="platform-card" data-platform="ios">
+        <div class="platform-head"><span class="platform-icon" data-icon="phone"></span><div><h3>iPhone / iPad</h3><p>不用安装</p></div></div>
+        <div class="platform-actions">
+          <a class="dl-btn" href="./mobile.html#pwa"><span data-icon="help"></span><span>添加到主屏幕</span></a>
+        </div>
+        <p class="platform-hint">用 Safari 打开电脑端的访问地址，点「分享」→「添加到主屏幕」。</p>
+      </article>
+
+      <article class="platform-card" data-platform="server">
+        <div class="platform-head"><span class="platform-icon" data-icon="server"></span><div><h3>服务器 / NAS</h3><p>没有窗口，用浏览器访问</p></div></div>
+        <div class="platform-actions">
+          <a class="dl-btn" href="#server"><span data-icon="terminal"></span><span>一条命令安装</span></a>
+        </div>
+        <p class="platform-hint">适合 24 小时开机的迷你主机、NAS 或云服务器。</p>
+      </article>
+    </div>
+  </section>
+
+  <!-- 3. 服务器一键安装：命令只在 site.js 里写一份 -->
+  <section id="server" class="sec">
+    <div class="sec-head">
+      <h2>服务器 / NAS 一键安装</h2>
+      <p>自动识别系统和架构、校验 SHA-256，装完直接启动。以后升级重跑同一条命令即可，数据不受影响。</p>
     </div>
 
     <div class="code-card" data-code-tabs>
       <div class="code-head">
         <div class="code-tabs" role="tablist">
-          <button class="code-tab" type="button" role="tab" aria-selected="true" data-tab="unix-srv">Linux / macOS 一键安装</button>
-          <button class="code-tab" type="button" role="tab" aria-selected="false" data-tab="win-srv">Windows PowerShell</button>
-          <button class="code-tab" type="button" role="tab" aria-selected="false" data-tab="docker">Docker Compose</button>
+          <button class="code-tab" type="button" role="tab" aria-selected="true" data-tab="sh">Linux / macOS</button>
+          <button class="code-tab" type="button" role="tab" aria-selected="false" data-tab="ps">Windows PowerShell</button>
+          <button class="code-tab" type="button" role="tab" aria-selected="false" data-tab="docker">Docker</button>
         </div>
         <button class="copy-btn" type="button" data-copy-btn>复制</button>
       </div>
-
-      <pre data-panel="unix-srv">curl -fsSL https://raw.githubusercontent.com/SuInk/bgmcat/main/scripts/install.sh | sh -s -- --start</pre>
-
-      <pre data-panel="win-srv">irm https://raw.githubusercontent.com/SuInk/bgmcat/main/scripts/install.ps1 | iex</pre>
-
-      <pre data-panel="docker">git clone https://github.com/SuInk/bgmcat.git
-cd bgmcat
-docker compose up -d --build
-docker compose logs -f bgmcat</pre>
+      <pre data-panel="sh" data-install-cmd="sh"></pre>
+      <pre data-panel="ps" data-install-cmd="ps" hidden></pre>
+      <pre data-panel="docker" data-install-cmd="docker" hidden></pre>
     </div>
+    <p class="dl-footnote">启动后浏览器打开终端里显示的地址，首次启动会打印管理员账号和密码（只显示一次）。更多参数见 <a href="./deploy.html#installer">服务端文档</a>。</p>
+  </section>
+
+  <!-- 4. GitHub 发布页上那些文件是什么 -->
+  <section class="sec">
+    <details class="dl-faq">
+      <summary><span data-icon="help"></span>GitHub 发布页上文件很多，分别是什么？</summary>
+      <table class="dl-table">
+        <thead><tr><th>文件名包含</th><th>是什么</th><th>谁需要</th></tr></thead>
+        <tbody>
+          <tr><td><code>desktop-…-mac-arm64.dmg</code> / <code>mac-x64.dmg</code></td><td>Mac 桌面版安装包</td><td>Mac 用户（同名 .zip 是同一个程序的压缩包，下 .dmg 就行）</td></tr>
+          <tr><td><code>desktop-…-win-x64.exe</code></td><td>Windows 桌面版安装程序</td><td>Windows 用户</td></tr>
+          <tr><td><code>desktop-…-linux-x86_64.AppImage</code> / <code>.deb</code></td><td>Linux 桌面版</td><td>Linux 桌面用户</td></tr>
+          <tr><td><code>android-…-universal.apk</code></td><td>Android 安装包</td><td>Android 手机</td></tr>
+          <tr><td><code>bgmcat-linux-amd64.tar.gz</code> 等</td><td>服务器版程序（无窗口）</td><td>一键安装脚本会自动下载，一般不用手动下</td></tr>
+          <tr><td><code>SHA256SUMS</code> / <code>latest.json</code></td><td>校验值和版本清单</td><td>脚本和自动更新使用</td></tr>
+        </tbody>
+      </table>
+      <p>文件名带 <code>-canary.</code> 的是每次代码合并自动构建的测试版，可能不稳定，日常使用请装正式版。</p>
+    </details>
   </section>
 </main>
 

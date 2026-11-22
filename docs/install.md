@@ -1,6 +1,7 @@
 # 服务版安装、升级与卸载
 
-个人电脑日常使用默认推荐 [Electron 桌面版](desktop.md)（双击启动并支持一键开启手机局域网直连）。本文说明无窗口的独立 Go 服务版与 Docker 容器部署，适合 Linux 服务器、家庭 NAS 或常驻后台运行。
+> **先确认要装哪个**：在自己电脑上用，请到 [下载页](https://suink.github.io/bgmcat/download.html) 装桌面版（双击安装，带窗口，支持一键开启手机直连），不需要看本文。
+> 本文说明没有窗口的服务版与 Docker 部署，适合 Linux 服务器、家庭 NAS 或需要常驻后台的机器。
 
 ## 选择安装方式
 
@@ -27,9 +28,11 @@ Windows PowerShell：
 irm https://raw.githubusercontent.com/SuInk/bgmcat/main/scripts/install.ps1 | iex
 ```
 
+两条命令效果相同：下载、校验、安装，然后在当前终端启动（按 `Ctrl+C` 停止）。只想安装不启动时，Linux / macOS 去掉 `--start`；Windows 先下载脚本再执行 `.\install.ps1`（不加 `-Start`）。
+
 ### 常用安装参数与默认目录
 
-- `--start` / `-Start`：安装完成后立即在当前终端前台启动，按 `Ctrl+C` 停止；若省略该参数则仅安装二进制文件。
+- `--start` / `-Start`：安装完成后立即在当前终端前台启动，按 `Ctrl+C` 停止；省略时只安装。Windows 通过 `irm … | iex` 一键运行时默认启动。
 - 默认安装路径：macOS / Linux 为 `$HOME/.local/bin/bgmcat`，Windows 为 `$env:LOCALAPPDATA\AnimeRSS\bin\bgmcat.exe`（无需管理员提权，不擅自修改系统全局 `PATH`）。
 - 指定版本与自定义安装目录：
 

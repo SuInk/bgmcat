@@ -26,10 +26,19 @@
 
 ## 三分钟跑起来
 
-**① 一键安装服务版（Linux / macOS / Windows）或运行桌面版：**
+**① 安装**
+
+| 你的设备 | 装什么 |
+| --- | --- |
+| Mac / Windows / Linux 电脑（推荐） | 到 **[下载页](https://suink.github.io/bgmcat/download.html)** 下载桌面版，页面会按你的电脑推荐对应安装包，双击安装即可 |
+| Android 手机 | 同一个下载页下载 `.apk` |
+| iPhone / iPad | 不用安装：Safari 打开电脑端地址 →「添加到主屏幕」 |
+| 服务器 / NAS（没有界面） | 下面的一键命令 |
+
+服务器一键安装（自动识别系统架构、校验 SHA-256，装完直接启动；升级重跑同一条命令）：
 
 ```sh
-# Linux / macOS 一键安装并启动
+# Linux / macOS
 curl -fsSL https://raw.githubusercontent.com/SuInk/bgmcat/main/scripts/install.sh | sh -s -- --start
 ```
 
@@ -38,12 +47,7 @@ curl -fsSL https://raw.githubusercontent.com/SuInk/bgmcat/main/scripts/install.s
 irm https://raw.githubusercontent.com/SuInk/bgmcat/main/scripts/install.ps1 | iex
 ```
 
-```sh
-# 或者使用 Docker Compose（镜像已内置 ffmpeg）
-docker compose up -d --build
-```
-
-原生一键安装不需要管理员权限，**升级也是重跑同一条命令**（自动校验 SHA-256 并保留上一版 `.previous` 备份），详见 [安装文档](docs/install.md)。电脑日常使用可直接安装打包好的 `bgmcat-desktop`（`.dmg` / `.exe` / `.deb` / `.AppImage`），详见 [桌面版说明](docs/desktop.md)。
+Docker 和更多参数见 [安装文档](docs/install.md)，桌面版说明见 [桌面版文档](docs/desktop.md)。
 
 **② 登录控制台：**
 

@@ -35,12 +35,12 @@
           </div>
           <button class="copy-btn" type="button" data-copy-btn>复制命令</button>
         </div>
-        <pre data-panel="pub-sh"><code>curl -fsSL https://raw.githubusercontent.com/SuInk/bgmcat/main/scripts/install.sh | sh -s -- --start</code></pre>
-        <pre data-panel="pub-ps" hidden><code>irm https://raw.githubusercontent.com/SuInk/bgmcat/main/scripts/install.ps1 | iex</code></pre>
+        <pre data-panel="pub-sh" data-install-cmd="sh"></pre>
+        <pre data-panel="pub-ps" data-install-cmd="ps" hidden></pre>
       </div>
 
       <ul>
-        <li><strong>默认安装位置</strong>：macOS / Linux 安装至 <code>~/.local/bin/bgmcat</code>，默认数据目录为 <code>~/.anime-rss-go</code>；Windows 安装至 <code>%LOCALAPPDATA%\AnimeRSS\bin\bgmcat.exe</code>。</li>
+        <li><strong>默认安装位置</strong>：macOS / Linux 安装至 <code>~/.local/bin/bgmcat</code>，默认数据目录为 <code>~/.bgmcat</code>；Windows 安装至 <code>%LOCALAPPDATA%\AnimeRSS\bin\bgmcat.exe</code>。</li>
         <li><strong>自定义监听与目录</strong>：例如在家庭 NAS 上监听局域网接口并指定数据盘路径：
           <code>bgmcat --data /mnt/media/bgmcat-data --listen 0.0.0.0:3001</code></li>
         <li><strong>平滑升级与回退备份</strong>：重新执行安装脚本会自动保留上一版二进制为 <code>.previous</code> 副本（Windows 升级前请先停止正在运行的进程）。</li>
@@ -82,8 +82,8 @@ docker compose logs -f bgmcat</code></pre>
           <span>命令行重置管理员密码</span>
           <button class="copy-btn" type="button" data-copy-btn>复制命令</button>
         </div>
-        <pre><code># 重置为指定新密码（省略密码值则自动生成高强度随机密码并输出到终端）
-bgmcat --data ~/.anime-rss-go --reset-password "YourNewStrongPassword"</code></pre>
+        <pre><code># 生成新的随机密码并打印到终端，同时让所有已登录设备下线
+bgmcat --data ~/.bgmcat --reset-password</code></pre>
       </div>
     </section>
 

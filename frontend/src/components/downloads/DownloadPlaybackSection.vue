@@ -306,7 +306,7 @@ const unifiedEpisodes = computed<UnifiedPlaybackEpisode[]>(() => {
 
   // 兜底：若刚从地址栏恢复播放且 downloads 尚未匹配出分组，至少展示当前这一集
   if (!result.length) {
-    const fallbackNum = extractEpisodeNumber(props.playback.fileName);
+    const fallbackNum = extractEpisodeNumber(props.playback.fileName ?? "");
     result.push({
       key: `current:${props.playback.gid}`,
       episodeNumber: fallbackNum,

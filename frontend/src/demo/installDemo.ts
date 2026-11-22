@@ -1030,6 +1030,28 @@ export function installDemoMode(): void {
         configured: p === "google"
       });
     }
+    // 演示没有真实文件：播放信息指向官网上的一段测试视频，见 api.ts 的 getDownloadStreamUrl。
+    const playbackMatch = /^\/api\/downloads\/([^/]+)\/playback(\/progress)?$/.exec(path);
+    if (playbackMatch) {
+      const gid = decodeURIComponent(playbackMatch[1]);
+      if (playbackMatch[2]) {
+        return jsonResponse({ gid, deliveryMode: "direct", bufferedSeconds: 10, durationSeconds: 10, finished: true, error: null });
+      }
+      const job = downloads.find((item) => item.gid === gid);
+      const fileName = `${job?.feedItemTitle?.replace(/[\\/]/g, " ").trim() || "演示视频"}.mp4`;
+      return jsonResponse({
+        gid,
+        filePath: `${demoSettings.defaultSaveTo}/${fileName}`,
+        fileName,
+        mimeType: "video/mp4",
+        durationSeconds: 10,
+        deliveryMode: "direct",
+        supportsInAppPlayback: true,
+        supportsTranscodePlayback: false,
+        subtitleTracks: [],
+        availablePlayers: []
+      });
+    }
     if (path === "/api/downloads/engines/test") {
       const b = parseBody();
       const c = String(b.client || demoSettings.downloadClient || "native");

@@ -863,7 +863,16 @@ export async function openDownloadPlayer(
   });
 }
 
+// 官网演示没有后端，播放时用站点自带的测试视频（site/assets/demo-sample.mp4）。
+const DEMO_SAMPLE_VIDEO_URL =
+  import.meta.env.VITE_DEMO_MODE === "true"
+    ? new URL("../assets/demo-sample.mp4", new URL(import.meta.env.BASE_URL, window.location.origin)).href
+    : "";
+
 export function getDownloadStreamUrl(gid: string): string {
+  if (DEMO_SAMPLE_VIDEO_URL) {
+    return DEMO_SAMPLE_VIDEO_URL;
+  }
   const token = readApiToken();
   const query = token ? `?token=${encodeURIComponent(token)}` : "";
   return `${API_BASE_URL}/api/downloads/${encodeURIComponent(gid)}/stream${query}`;
