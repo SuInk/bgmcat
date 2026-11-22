@@ -334,8 +334,10 @@
       title = "选择你的设备";
       body = '<a class="btn btn-primary btn-lg" href="#all">' + icon("download") + "<span>查看所有平台</span></a>";
     }
+    // 首页「三分钟上手」里只要按钮，不要大标题。
+    var compact = mount.hasAttribute("data-recommend-compact");
     mount.innerHTML =
-      '<h1 data-recommend-title>' + title + "</h1>" +
+      (compact ? "" : '<h1 data-recommend-title>' + title + "</h1>") +
       '<div class="dl-hero-actions">' + body + "</div>" +
       (note ? '<p class="dl-hero-note">' + note + "</p>" : "");
   }
@@ -355,7 +357,7 @@
   }
 
   function enhanceDownloadPage() {
-    if (!document.querySelector("[data-download-page]")) return;
+    if (!document.querySelector("[data-download-page], [data-recommend]")) return;
     var releaseReq = fetch("https://api.github.com/repos/" + REPO + "/releases/latest", { headers: { Accept: "application/vnd.github+json" } })
       .then(function (res) {
         if (!res.ok) throw new Error("release_unavailable");
