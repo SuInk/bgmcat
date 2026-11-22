@@ -29,9 +29,23 @@ The third-party libraries and external tools below remain under their respective
 
 构建期工具（Vite、Tailwind CSS、TypeScript、`electron-builder`、Gradle）仅用于编译打包，不作为运行时代码随独立服务包分发。前端锁定的确切版本见 `package-lock.json`。
 
+## 随桌面安装包分发的程序 / Programs Bundled with the Desktop App
+
+桌面安装包内附带 FFmpeg / FFprobe 的预编译静态程序，用于 MKV / HEVC 等非原生编码的实时转码、内封字幕提取和缩略图生成。它们是独立的可执行文件，猫追番只通过子进程调用，未与本项目代码静态或动态链接。这些构建启用了 libx264 等 GPL 组件，整体按 **GNU General Public License v3** 分发，许可全文随安装包附在 `ffmpeg-COPYING.GPLv3.txt`。设置里「ffmpeg 路径」留空时优先使用内置程序，找不到再使用系统安装的 FFmpeg。
+
+The desktop app ships prebuilt static FFmpeg / FFprobe executables, invoked only as separate processes. These builds are distributed under the GNU GPL v3; the full license text is included as `ffmpeg-COPYING.GPLv3.txt`.
+
+| 平台 | 版本 | 预编译来源 | 对应源码 |
+| --- | --- | --- | --- |
+| macOS arm64 / x64 | 9.1 | [martin-riedl.de](https://ffmpeg.martin-riedl.de/)（构建配置见下载目录中的 `versions.txt`） | [ffmpeg-9.1.tar.xz](https://ffmpeg.org/releases/ffmpeg-9.1.tar.xz)、[构建脚本](https://git.martin-riedl.de/ffmpeg/build-script) |
+| Windows x64 | 9.1 | [gyan.dev](https://www.gyan.dev/ffmpeg/builds/) release essentials（[GyanD/codexffmpeg 9.1](https://github.com/GyanD/codexffmpeg/releases/tag/9.1)） | [FFmpeg 74e4393595](https://github.com/FFmpeg/FFmpeg/commit/74e4393595)、包内 `README.txt` 列出的组件版本 |
+| Linux x64 | 7.0.2 | [johnvansickle.com](https://johnvansickle.com/ffmpeg/) amd64 static | [release-source](https://johnvansickle.com/ffmpeg/release-source/) |
+
+各构建的下载地址与 SHA-256 固定在 `scripts/desktop-ffmpeg.cjs`。如需上表源码而无法从上述地址取得，可在本项目 GitHub Issues 中索取，我们会提供对应版本的源码副本。
+
 ## 可选外部程序 / Optional External Programs
 
-以下外部工具不随 Go 发布包和桌面安装包捆绑分发，由用户或系统包管理器按需安装，运行时仅通过独立进程或网络接口调用，未与本项目代码静态或动态链接（Docker 镜像从 Debian 官方源安装 `ffmpeg`，其版权说明位于镜像内 `/usr/share/doc/ffmpeg/copyright`）：
+以下外部工具不随 Go 发布包捆绑分发（FFmpeg 除外：桌面安装包内置，见上节），由用户或系统包管理器按需安装，运行时仅通过独立进程或网络接口调用，未与本项目代码静态或动态链接（Docker 镜像从 Debian 官方源安装 `ffmpeg`，其版权说明位于镜像内 `/usr/share/doc/ffmpeg/copyright`）：
 
 | 程序 | 用途 | 协议 |
 | --- | --- | --- |
