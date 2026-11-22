@@ -1370,7 +1370,7 @@ onUnmounted(() => {
       </SettingsItem>
 
       <SettingsItem stacked title="ffmpeg 路径">
-        <input v-model="settingsForm.ffmpegPath" class="settings-input settings-input-wide" placeholder="留空使用内置 ffmpeg" />
+        <input v-model="settingsForm.ffmpegPath" class="settings-input settings-input-wide" placeholder="留空自动查找：桌面版内置，其次系统安装的 ffmpeg" />
       </SettingsItem>
     </div>
   </SettingsSection>
