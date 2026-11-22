@@ -5,7 +5,7 @@ plugins {
 }
 
 val versionFile = rootProject.file("../internal/version/VERSION")
-val rawVersion = if (versionFile.isFile) versionFile.readText().trim() else "0.2.0"
+val rawVersion = if (versionFile.isFile) versionFile.readText().trim() else "0.2.1"
 val coreParts = rawVersion.substringBefore("-").split(".")
 val computedVersionCode =
     (coreParts.getOrNull(0)?.toIntOrNull() ?: 0) * 10000 +

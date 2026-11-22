@@ -63,6 +63,7 @@ type App struct {
 	jobsMu          sync.Mutex
 	jobs            map[string]context.CancelFunc
 	downloadSlots   chan struct{}
+	slotBypass      map[string]chan struct{}
 	archiveMu       sync.Mutex
 	archiveJobs     map[string]context.CancelFunc
 	archiveSlots    chan struct{}
@@ -127,6 +128,7 @@ func New(cfg Config) (*App, error) {
 		cancel:          cancel,
 		jobs:            map[string]context.CancelFunc{},
 		downloadSlots:   make(chan struct{}, 6),
+		slotBypass:      map[string]chan struct{}{},
 		archiveJobs:     map[string]context.CancelFunc{},
 		archiveSlots:    make(chan struct{}, 3),
 		archiveWake:     make(chan struct{}, 1),

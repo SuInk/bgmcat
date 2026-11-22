@@ -1775,3 +1775,10 @@ export async function syncPublicTrackers(): Promise<SyncPublicTrackersResult> {
     20000
   );
 }
+
+/** 边下边播：让任务立即开始（不排队）并优先下载媒体开头片段。 */
+export async function streamDownloadNow(gid: string): Promise<DownloadJob | null> {
+  return request<DownloadJob | null>(`/api/downloads/${encodeURIComponent(gid)}/stream-now`, {
+    method: "POST"
+  });
+}
