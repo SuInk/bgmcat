@@ -2,6 +2,7 @@
 import { computed, onMounted, ref, watch } from "vue";
 import { Eye, EyeOff, KeyRound, LogOut, RefreshCw } from "@lucide/vue";
 
+import AppDialog from "../../common/AppDialog.vue";
 import MobileAccessQrCard from "../MobileAccessQrCard.vue";
 import SettingsItem from "../SettingsItem.vue";
 import SettingsSection from "../SettingsSection.vue";
@@ -32,6 +33,38 @@ import {
   status
 } from "../../../stores/session";
 import { tunnelStateLabel, tunnelStatus } from "../../../stores/tunnel";
+
+const confirmRotateTokenOpen = ref(false);
+const pendingRevokeSession = ref<AuthSessionSummary | null>(null);
+const confirmRevokeOthersOpen = ref(false);
+const revokingSession = ref(false);
+
+async function confirmRotateToken(): Promise<void> {
+  await rotateToken();
+  confirmRotateTokenOpen.value = false;
+}
+
+async function confirmRevokeSingleSession(): Promise<void> {
+  const target = pendingRevokeSession.value;
+  if (!target) return;
+  revokingSession.value = true;
+  try {
+    await revokeSession(target.id);
+    pendingRevokeSession.value = null;
+  } finally {
+    revokingSession.value = false;
+  }
+}
+
+async function confirmRevokeOthers(): Promise<void> {
+  revokingSession.value = true;
+  try {
+    await revokeOtherSessions();
+    confirmRevokeOthersOpen.value = false;
+  } finally {
+    revokingSession.value = false;
+  }
+}
 
 const liveTunnelState = computed(() => status.value?.tunnelState ?? tunnelStatus.value?.state);
 const tunnelPublicUrl = computed(() => status.value?.tunnelPublicUrl ?? tunnelStatus.value?.publicUrl ?? "");
@@ -375,7 +408,7 @@ onMounted(() => {
               <button
                 type="button"
                 class="settings-secondary-button sec-danger-btn shrink-0"
-                @click="revokeSession(session.id)"
+                @click="pendingRevokeSession = session"
               >
                 <LogOut :size="13" aria-hidden="true" />
                 <span>{{ session.current ? "退出" : "移除" }}</span>
@@ -391,7 +424,7 @@ onMounted(() => {
               v-if="otherSessionCount > 0"
               type="button"
               class="settings-secondary-button sec-danger-btn inline-flex items-center gap-1.5"
-              @click="revokeOtherSessions()"
+              @click="confirmRevokeOthersOpen = true"
             >
               <LogOut :size="13" aria-hidden="true" />
               <span>移除其他 {{ otherSessionCount }} 台</span>
@@ -504,11 +537,64 @@ onMounted(() => {
             </button>
           </div>
           <button type="button" class="settings-secondary-button" :disabled="!settingsForm.token.trim()" @click="copyText(settingsForm.token)">复制</button>
-          <button type="button" class="settings-secondary-button" :disabled="rotatingToken" @click="rotateToken()">重置</button>
+          <button type="button" class="settings-secondary-button" :disabled="rotatingToken" @click="confirmRotateTokenOpen = true">重置</button>
         </div>
       </SettingsItem>
     </div>
   </SettingsSection>
+
+  <AppDialog
+    v-if="confirmRotateTokenOpen"
+    title="确认重置访问令牌？"
+    :dismissible="!rotatingToken"
+    @close="confirmRotateTokenOpen = false"
+  >
+    <p class="text-sm leading-6 text-[var(--muted)]">
+      重置后旧的 API 访问令牌会<strong class="text-[var(--ink)]">立即失效</strong>，已接入的 MCP 客户端或外部脚本需要更新为新令牌。
+    </p>
+    <template #footer>
+      <button type="button" class="btn-ghost" :disabled="rotatingToken" @click="confirmRotateTokenOpen = false">取消</button>
+      <button type="button" class="btn-danger" :disabled="rotatingToken" @click="confirmRotateToken()">
+        {{ rotatingToken ? "重置中…" : "确认重置" }}
+      </button>
+    </template>
+  </AppDialog>
+
+  <AppDialog
+    v-if="pendingRevokeSession"
+    :title="pendingRevokeSession.current ? '确认退出当前设备？' : '确认移除登录设备？'"
+    :dismissible="!revokingSession"
+    @close="pendingRevokeSession = null"
+  >
+    <p class="text-sm leading-6 text-[var(--muted)]">
+      将立即注销 <strong class="text-[var(--ink)]">{{ pendingRevokeSession.deviceName || "未知设备" }}</strong>
+      <template v-if="pendingRevokeSession.ipAddress">（{{ pendingRevokeSession.ipAddress }}）</template>
+      的登录状态，该设备需要重新验证才能访问。
+    </p>
+    <template #footer>
+      <button type="button" class="btn-ghost" :disabled="revokingSession" @click="pendingRevokeSession = null">取消</button>
+      <button type="button" class="btn-danger" :disabled="revokingSession" @click="confirmRevokeSingleSession()">
+        {{ revokingSession ? "处理中…" : pendingRevokeSession.current ? "确认退出" : "确认移除" }}
+      </button>
+    </template>
+  </AppDialog>
+
+  <AppDialog
+    v-if="confirmRevokeOthersOpen"
+    title="确认移除其他全部设备？"
+    :dismissible="!revokingSession"
+    @close="confirmRevokeOthersOpen = false"
+  >
+    <p class="text-sm leading-6 text-[var(--muted)]">
+      将强制注销除当前设备外的其余 <strong class="text-[var(--ink)]">{{ otherSessionCount }} 台</strong> 登录设备，这些设备需要重新登录。
+    </p>
+    <template #footer>
+      <button type="button" class="btn-ghost" :disabled="revokingSession" @click="confirmRevokeOthersOpen = false">取消</button>
+      <button type="button" class="btn-danger" :disabled="revokingSession" @click="confirmRevokeOthers()">
+        {{ revokingSession ? "处理中…" : "确认移除" }}
+      </button>
+    </template>
+  </AppDialog>
 </template>
 
 <style scoped>

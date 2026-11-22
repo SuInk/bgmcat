@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, defineAsyncComponent, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 
+import AppDialog from "./components/common/AppDialog.vue";
 import AppToastStack from "./components/common/AppToastStack.vue";
 import AsyncPagePlaceholder from "./components/common/AsyncPagePlaceholder.vue";
 import BrandLogo from "./components/common/BrandLogo.vue";
@@ -65,7 +66,9 @@ const VersionModal = defineAsyncComponent(() => import("./components/settings/Ve
 const ShareModal = defineAsyncComponent(() => import("./components/shares/ShareModal.vue"));
 const SharePublicView = defineAsyncComponent(() => import("./views/SharePublicView.vue"));
 const versionOpen = ref(false);
+const logoutConfirmOpen = ref(false);
 function openVersion() { mobileSidebarOpen.value = false; versionOpen.value = true; }
+function confirmLogout() { logoutConfirmOpen.value = false; void logout(); }
 
 const publicShareCode = ref(
   /^\/s\/([A-Za-z0-9_-]{6,32})\/?$/u.exec(window.location.pathname)?.[1] ?? ""
@@ -371,7 +374,7 @@ onUnmounted(() => {
             <button type="button" class="topbar-btn" title="刷新数据" aria-label="刷新数据" :disabled="refreshing" @click="refreshCurrentView">
               <AppNavIcon name="refresh" :class="{ 'animate-spin': refreshing }" />
             </button>
-            <button v-if="!isDesktopShell && !isDemoMode" type="button" class="topbar-btn topbar-logout" title="退出登录" @click="logout">
+            <button v-if="!isDesktopShell && !isDemoMode" type="button" class="topbar-btn topbar-logout" title="退出登录" @click="logoutConfirmOpen = true">
               <AppNavIcon name="logout" />
               <span class="topbar-logout-text">退出登录</span>
             </button>
@@ -404,6 +407,15 @@ onUnmounted(() => {
 
     <VersionModal v-if="versionOpen" @close="versionOpen = false" />
     <ShareModal v-if="shareModalOpen" />
+    <AppDialog v-if="logoutConfirmOpen" title="确认退出登录？" @close="logoutConfirmOpen = false">
+      <p class="text-sm leading-6 text-[var(--muted)]">
+        退出后当前浏览器需要重新验证账号密码或访问令牌才能进入控制台。
+      </p>
+      <template #footer>
+        <button type="button" class="btn-ghost" @click="logoutConfirmOpen = false">取消</button>
+        <button type="button" class="btn-danger" @click="confirmLogout">退出登录</button>
+      </template>
+    </AppDialog>
   </main>
 </template>
 

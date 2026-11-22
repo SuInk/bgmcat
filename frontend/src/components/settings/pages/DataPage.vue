@@ -202,6 +202,10 @@ async function runOpenDataDir(): Promise<void> {
   }
 }
 
+const confirmClearCacheOpen = ref(false);
+const pendingDeleteBackup = ref<BackupSummary | null>(null);
+const deletingBackup = ref(false);
+
 async function runClearCache(): Promise<void> {
   await withBusy("playback-cache:clear", async () => {
     try {
@@ -215,6 +219,8 @@ async function runClearCache(): Promise<void> {
       );
     } catch (error) {
       toastError(error, "清理缓存失败。");
+    } finally {
+      confirmClearCacheOpen.value = false;
     }
   });
 }
@@ -242,14 +248,20 @@ async function runDownloadBackup(name: string): Promise<void> {
   });
 }
 
-async function runDeleteBackup(name: string): Promise<void> {
-  await withBusy(`backups:delete:${name}`, async () => {
+async function confirmDeleteBackup(): Promise<void> {
+  const target = pendingDeleteBackup.value;
+  if (!target) return;
+  deletingBackup.value = true;
+  await withBusy(`backups:delete:${target.name}`, async () => {
     try {
-      backups.value = (await deleteBackup(name)).backups;
+      backups.value = (await deleteBackup(target.name)).backups;
       storage.value = await getSystemStorage();
       updateFeedback("已删除备份", "success");
+      pendingDeleteBackup.value = null;
     } catch (error) {
       toastError(error, "删除备份失败。");
+    } finally {
+      deletingBackup.value = false;
     }
   });
 }
@@ -351,7 +363,7 @@ onMounted(() => {
                 type="button"
                 class="settings-secondary-button"
                 :disabled="clearingCache"
-                @click="runClearCache()"
+                @click="confirmClearCacheOpen = true"
               >
                 {{
                   clearingCache
@@ -491,7 +503,7 @@ onMounted(() => {
             <span class="settings-actions">
               <button type="button" class="settings-secondary-button" @click="runDownloadBackup(backup.name)">下载</button>
               <button type="button" class="settings-secondary-button" :disabled="restoringBackup" @click="askRestore(backup)">恢复</button>
-              <button type="button" class="settings-secondary-button" @click="runDeleteBackup(backup.name)">删除</button>
+              <button type="button" class="settings-secondary-button" :disabled="deletingBackup" @click="pendingDeleteBackup = backup">删除</button>
             </span>
           </div>
         </div>
@@ -507,6 +519,34 @@ onMounted(() => {
       <button type="button" class="btn-ghost" :disabled="restoringBackup" @click="pendingRestore = null">取消</button>
       <button type="button" class="btn-primary" :disabled="restoringBackup" @click="confirmRestore()">
         {{ restoringBackup ? "恢复中…" : "确认恢复" }}
+      </button>
+    </template>
+  </AppDialog>
+
+  <AppDialog v-if="confirmClearCacheOpen" title="确认清理缓存？" :dismissible="!clearingCache" @close="confirmClearCacheOpen = false">
+    <p class="text-sm leading-6 text-[var(--muted)]">
+      将清理本地转码切片、封面缩略图与字幕缓存
+      <template v-if="storage && storage.cacheBytes > 0">
+        （约 <strong class="text-[var(--ink)]">{{ formatBytes(storage.cacheBytes) }}</strong>）
+      </template>
+      ，不会删除已下载的番剧文件或云盘内容。
+    </p>
+    <template #footer>
+      <button type="button" class="btn-ghost" :disabled="clearingCache" @click="confirmClearCacheOpen = false">取消</button>
+      <button type="button" class="btn-danger" :disabled="clearingCache" @click="runClearCache()">
+        {{ clearingCache ? "清理中…" : "确认清理" }}
+      </button>
+    </template>
+  </AppDialog>
+
+  <AppDialog v-if="pendingDeleteBackup" title="确认删除备份？" :dismissible="!deletingBackup" @close="pendingDeleteBackup = null">
+    <p class="text-sm leading-6 text-[var(--muted)]">
+      将永久删除备份 <strong class="text-[var(--ink)]">{{ formatBackupTime(pendingDeleteBackup.createdAt) }} · {{ pendingDeleteBackup.name }}</strong>（{{ formatBytes(pendingDeleteBackup.size) }}），删除后无法恢复。
+    </p>
+    <template #footer>
+      <button type="button" class="btn-ghost" :disabled="deletingBackup" @click="pendingDeleteBackup = null">取消</button>
+      <button type="button" class="btn-danger" :disabled="deletingBackup" @click="confirmDeleteBackup()">
+        {{ deletingBackup ? "删除中…" : "确认删除" }}
       </button>
     </template>
   </AppDialog>
