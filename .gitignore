@@ -34,3 +34,5 @@ android/local.properties
 *.idsig
 *.keystore
 *.jks
+
+android/app/src/main/jniLibs/

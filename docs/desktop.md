@@ -13,7 +13,7 @@
 | Windows 10 / 11 (`x64`) | `bgmcat-desktop-版本-win-x64.exe` |
 | Ubuntu / Debian (`x64`) | `bgmcat-desktop-版本-linux-x64.deb` |
 | 其他 Linux (`x64`) | `bgmcat-desktop-版本-linux-x64.AppImage` |
-| Android 手机 / 平板（播放终端） | `bgmcat-android-版本-universal.apk` |
+| Android 手机 / 平板（内置服务，也可连远程） | `bgmcat-android-版本-universal.apk` |
 
 - **macOS**：打开 `.dmg` 将 **Bangumi Cat** 拖入 `Applications`。当前构建未绑定付费 Apple Developer ID 公证，首次打开如提示无法验证开发者，可在「系统设置 → 隐私与安全性」点击「仍要打开」。
 - **Windows**：运行 `.exe` 安装器（默认安装到当前用户目录，卸载时默认保留用户数据）。
@@ -34,7 +34,7 @@
 
 1. 在电脑桌面端打开 **「设置 → 安全与访问」**，确认已设置好管理员用户名与密码。
 2. 打开 **「设置 → 远程与隧道 → 手机与局域网直连」**，开启 **「允许局域网设备访问」** 并保存。后端会立即在本机私有局域网 / Tailscale 网卡（如 `192.168.x.x:39123`、`100.x.y.z:39123`）动态挂载监听服务，**无需重启桌面端**，并展示可一键复制的手机连接地址。
-3. **Android 手机端**：安装 `bgmcat-android-*-universal.apk`，在首次启动连接页将上述局域网地址填入「主地址」，如有 Cloudflare Tunnel 地址可一并填入「备用公网 / 穿透地址」。App 打开时会自动优先探测局域网（2 秒超时），外出不在同一 Wi-Fi 时自动无缝切至穿透地址，并在视频全屏播放时自动锁定横屏沉浸模式与屏幕常亮。
+3. **Android 手机端**：安装 `bgmcat-android-*-universal.apk` 后直接打开即可使用：App 内置同一套 Go 服务，在手机本机 `127.0.0.1` 运行，订阅、下载与设置保存在应用私有目录，由前台服务（通知栏「猫追番正在本机运行」，可点「退出」完全停止）保持后台下载。想改用电脑端或 NAS 上的服务时，在「设置 → 访问与安全 → 当前服务器 → 切换」填写局域网「主地址」，可再填 Cloudflare Tunnel「备用公网 / 穿透地址」：打开时优先探测局域网（2 秒超时），外出时自动切至穿透地址。全屏播放会自动横屏沉浸并保持常亮。安卓内置服务不含 FFmpeg，MKV / HEVC 等需要转码的视频会提示改用电脑端或服务器播放。
 4. **iPhone / iPad / 网页端**：使用 Safari 打开同一连接地址登录，点击分享 → **添加到主屏幕** 即可作为全屏 PWA 使用。
 
 ## 本机认证与数据目录
@@ -57,7 +57,9 @@ npm run desktop:prepare
 npm run desktop:test
 npm run desktop:pack
 
-# Android 客户端 APK（需要 JDK 21 与 Android SDK Platform 35）
+# Android APK（需要 JDK 21、Android SDK Platform 35 与 Android NDK）
+npm run build                          # 前端，会嵌入内置后端
+scripts/build-android-backend.sh       # 交叉编译 arm64-v8a / x86_64 后端到 jniLibs
 cd android && ./gradlew assembleRelease
 ```
 

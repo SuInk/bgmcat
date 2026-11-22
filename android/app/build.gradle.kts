@@ -83,11 +83,39 @@ android {
         }
     }
 
+    packaging {
+        jniLibs {
+            // The backend is an executable shipped as lib*.so; it must be extracted to
+            // nativeLibraryDir, the only app directory Android lets us exec() from.
+            useLegacyPackaging = true
+        }
+    }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
 }
+
+dependencies {
+    // WebViewCompat.addDocumentStartJavaScript: injects the local API token per origin.
+    implementation("androidx.webkit:webkit:1.12.1")
+}
+
+// The Go backend is cross-compiled outside Gradle (Go and the NDK are not Gradle
+// plugins); fail early with the fix instead of shipping an APK that cannot start.
+val backendAbis = listOf("arm64-v8a", "x86_64")
+val verifyBundledBackend by tasks.registering {
+    val libs = backendAbis.map { file("src/main/jniLibs/$it/libbgmcat.so") }
+    inputs.files(libs).optional()
+    doLast {
+        val missing = libs.filter { !it.isFile }
+        check(missing.isEmpty()) {
+            "缺少内置后端：${missing.joinToString { it.parentFile.name }}。请先在仓库根目录运行 npm run build 和 scripts/build-android-backend.sh"
+        }
+    }
+}
+tasks.named("preBuild") { dependsOn(verifyBundledBackend) }
 
 tasks.matching { it.name.contains("Release") && it.name.contains("Sign", ignoreCase = true) || it.name == "validateSigningRelease" }.configureEach {
     dependsOn(ensureFallbackKeystore)

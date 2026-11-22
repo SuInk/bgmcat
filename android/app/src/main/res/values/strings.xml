@@ -1,4 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">猫追番</string>
+    <string name="backend_channel_name">本机服务</string>
+    <string name="backend_channel_desc">内置服务在后台运行时显示，订阅和下载会继续进行</string>
+    <string name="backend_notification_title">猫追番正在本机运行</string>
+    <string name="backend_notification_text">订阅和下载会在后台继续；点「退出」可完全停止</string>
+    <string name="backend_notification_quit">退出</string>
+    <string name="backend_service_purpose">在本机运行追番与下载服务，供应用界面通过 127.0.0.1 访问</string>
 </resources>

@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+<title>正在启动 · 猫追番</title>
+<style>
+  :root { --bg: #f6f7f9; --ink: #14171f; --muted: #767e8f; --track: rgba(20, 23, 31, 0.1); --accent: #0041fd; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #0e1015; --ink: #f3f5f8; --muted: #848d9f; --track: rgba(255, 255, 255, 0.12); --accent: #4b83ff; }
+  }
+  body {
+    margin: 0;
+    min-height: 100dvh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 14px;
+    background: var(--bg);
+    color: var(--ink);
+    font: 400 14px/1.5 -apple-system, BlinkMacSystemFont, "PingFang SC", "Noto Sans SC", system-ui, sans-serif;
+  }
+  .logo {
+    width: 56px;
+    height: 56px;
+    border-radius: 16px;
+    background: linear-gradient(135deg, #0041fd, #4b83ff);
+    color: #fff;
+    display: grid;
+    place-items: center;
+    font-weight: 800;
+    font-size: 26px;
+  }
+  .spinner {
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    border: 3px solid var(--track);
+    border-top-color: var(--accent);
+    animation: spin 0.9s linear infinite;
+  }
+  p { margin: 0; color: var(--muted); font-size: 13px; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce) { .spinner { animation-duration: 2.4s; } }
+</style>
+</head>
+<body>
+  <div class="logo">猫</div>
+  <div class="spinner" role="progressbar" aria-label="正在启动本机服务"></div>
+  <p>正在启动本机服务…</p>
+</body>
+</html>

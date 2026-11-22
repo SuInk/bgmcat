@@ -58,7 +58,7 @@ sh scripts/build.sh
 
 1. **局域网直连**：在「设置 → 远程与隧道 → 手机与局域网直连」开启 **允许局域网设备访问**，服务端会立即在本机局域网 / Tailscale IPv4 接口挂载监听（无需重启），展示可一键复制的连接地址。
 2. **Cloudflare Tunnel 外网穿透**：本机安装 `cloudflared` 后，可在同一页面开启临时快速隧道（`trycloudflare.com`）或填入固定域名的命名隧道 Token / 凭据文件（支持异常断线有限次数自动重连）。
-3. **Android 客户端与 PWA**：Android 手机安装 `bgmcat-android-*-universal.apk` 后可同时填写局域网主地址与穿透备用地址，启动时自动优先走局域网、外出自动回退穿透地址，并支持横屏沉浸全屏播放；iPhone / iPad 可通过 Safari「添加到主屏幕」作为全屏 PWA 使用。
+3. **Android App 与 PWA**：Android 手机安装 `bgmcat-android-*-universal.apk` 后默认在手机本机运行内置服务，打开即用（暂不支持 FFmpeg 转码）；也可在「设置 → 访问与安全 → 当前服务器」切换为远程服务器，同时填写局域网主地址与穿透备用地址，启动时自动优先走局域网、外出自动回退穿透地址，并支持横屏沉浸全屏播放；iPhone / iPad 可通过 Safari「添加到主屏幕」作为全屏 PWA 使用。
 
 ## Google Drive IP 直连与独立 TLS SNI
 

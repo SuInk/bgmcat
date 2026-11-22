@@ -1,5 +1,6 @@
 package io.github.suink.bgmcat;
 
+import android.Manifest;
 import android.annotation.SuppressLint;
 import android.app.Activity;
 import android.content.Context;
@@ -7,6 +8,7 @@ import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.ActivityInfo;
 import android.content.pm.PackageInfo;
+import android.content.pm.PackageManager;
 import android.graphics.Color;
 import android.net.Uri;
 import android.os.Build;
@@ -29,6 +31,10 @@ import android.widget.FrameLayout;
 import android.window.OnBackInvokedCallback;
 import android.window.OnBackInvokedDispatcher;
 
+import androidx.webkit.ScriptHandler;
+import androidx.webkit.WebViewCompat;
+import androidx.webkit.WebViewFeature;
+
 import org.json.JSONArray;
 import org.json.JSONObject;
 
@@ -39,16 +45,24 @@ import java.net.URI;
 import java.net.URLEncoder;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
+import java.util.Collections;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 public class MainActivity extends Activity {
     private static final String ASSET_CONNECT_URL = "file:///android_asset/connect.html";
+    private static final String ASSET_STARTING_URL = "file:///android_asset/starting.html";
     private static final String PREFS_NAME = "bgmcat_client_prefs";
     private static final String KEY_PRIMARY_URL = "primary_url";
     private static final String KEY_BACKUP_URL = "backup_url";
     private static final String KEY_LABEL = "label";
     private static final String KEY_PROFILES = "profiles_json";
+    /** "local" (default): the backend bundled in this APK; "remote": a server the user entered. */
+    private static final String KEY_MODE = "server_mode";
+    private static final String MODE_LOCAL = "local";
+    private static final String MODE_REMOTE = "remote";
+    private static final String LOCAL_LABEL = "本机内置服务";
+    private static final int REQUEST_NOTIFICATIONS = 1;
 
     private final ExecutorService executor = Executors.newCachedThreadPool();
 
@@ -61,6 +75,10 @@ public class MainActivity extends Activity {
 
     private volatile String activeServerOrigin = "";
     private volatile String activeServerLabel = "";
+    /** True while the user wants the bundled backend, so its state changes drive the WebView. */
+    private boolean localMode;
+    private ScriptHandler shellScript;
+    private final BackendService.Listener backendListener = state -> runOnUiThread(() -> onBackendState(state));
 
     @SuppressLint({"SetJavaScriptEnabled", "JavascriptInterface"})
     @Override
@@ -146,6 +164,14 @@ public class MainActivity extends Activity {
                 if (request != null && request.isForMainFrame()) {
                     Uri reqUri = request.getUrl();
                     if (reqUri != null && !"file".equalsIgnoreCase(reqUri.getScheme())) {
+                        if (localMode) {
+                            // A dead backend is reported through onBackendState; only a
+                            // still-running one that refuses the page needs this message.
+                            if (BackendService.current().phase == BackendService.Phase.READY) {
+                                loadConnectScreen("本机服务暂时无法访问，请重试");
+                            }
+                            return;
+                        }
                         String msg = "服务器连接中断（" + reqUri.getHost() + "），请检查网络或切换备用地址";
                         loadConnectScreen(msg);
                     }
@@ -192,6 +218,10 @@ public class MainActivity extends Activity {
 
     private void autoConnectOrShowLauncher() {
         SharedPreferences prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+        if (!MODE_REMOTE.equals(prefs.getString(KEY_MODE, MODE_LOCAL))) {
+            startLocalServer();
+            return;
+        }
         String primary = prefs.getString(KEY_PRIMARY_URL, "");
         String backup = prefs.getString(KEY_BACKUP_URL, "");
         String label = prefs.getString(KEY_LABEL, "");
@@ -211,6 +241,99 @@ public class MainActivity extends Activity {
                 }
             });
         });
+    }
+
+    /** Switches to the bundled backend: start it, show a waiting page, load the UI once ready. */
+    private void startLocalServer() {
+        getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit().putString(KEY_MODE, MODE_LOCAL).apply();
+        localMode = true;
+        activeServerLabel = LOCAL_LABEL;
+        activeServerOrigin = "";
+        requestNotificationPermissionOnce();
+        BackendService.addListener(backendListener);
+        BackendService.State state = BackendService.current();
+        if (state.phase == BackendService.Phase.READY) {
+            onBackendState(state);
+            return;
+        }
+        webView.loadUrl(ASSET_STARTING_URL);
+        BackendService.start(this);
+    }
+
+    private void onBackendState(BackendService.State state) {
+        if (!localMode || webView == null) return;
+        switch (state.phase) {
+            case READY:
+                enterLocalServer(state);
+                break;
+            case FAILED:
+                activeServerOrigin = "";
+                loadConnectScreen(state.error);
+                break;
+            case STOPPED:
+                if (state.userStopped) {
+                    // "退出" in the notification ends the whole app, not just the backend.
+                    finishAndRemoveTask();
+                }
+                break;
+            default:
+                break;
+        }
+    }
+
+    private void enterLocalServer(BackendService.State state) {
+        String origin = originOf(state.origin);
+        if (origin.isEmpty()) return;
+        if (origin.equals(activeServerOrigin) && !isOnLocalAssetPage()) return;
+        if (!WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
+            loadConnectScreen("系统 WebView 版本过旧，无法使用本机服务；请在应用商店更新「Android System WebView」，或连接远程服务器");
+            return;
+        }
+        // Same contract as desktop/preload.cjs: the UI reads its API token from
+        // window.animeRssShell, which exists only on the local backend's origin.
+        removeShellScript();
+        String script = "(function(){if(window.animeRssShell)return;" +
+                "Object.defineProperty(window,'animeRssShell',{value:Object.freeze({apiToken:" +
+                JSONObject.quote(state.token) + ",platform:'android'})});})();";
+        shellScript = WebViewCompat.addDocumentStartJavaScript(webView, script, Collections.singleton(origin));
+        activeServerOrigin = origin;
+        activeServerLabel = LOCAL_LABEL;
+        webView.loadUrl(state.origin);
+    }
+
+    private void removeShellScript() {
+        if (shellScript != null) {
+            shellScript.remove();
+            shellScript = null;
+        }
+    }
+
+    /** Leaves local mode for a remote server and stops the bundled backend to save battery. */
+    private void leaveLocalServer() {
+        localMode = false;
+        BackendService.removeListener(backendListener);
+        removeShellScript();
+        BackendService.stop(this);
+    }
+
+    private void requestNotificationPermissionOnce() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return;
+        if (checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) return;
+        SharedPreferences prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+        if (prefs.getBoolean("asked_notifications", false)) return;
+        prefs.edit().putBoolean("asked_notifications", true).apply();
+        // Optional: without it the backend still runs, its status notification is just hidden.
+        requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, REQUEST_NOTIFICATIONS);
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode == REQUEST_NOTIFICATIONS && grantResults.length > 0
+                && grantResults[0] == PackageManager.PERMISSION_GRANTED && localMode) {
+            // The status notification posted before the grant stays hidden; post it again.
+            BackendService.start(this);
+        }
     }
 
     private void loadConnectScreen(String errorText) {
@@ -329,6 +452,8 @@ public class MainActivity extends Activity {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && backCallback != null) {
             getOnBackInvokedDispatcher().unregisterOnBackInvokedCallback(backCallback);
         }
+        BackendService.removeListener(backendListener);
+        removeShellScript();
         executor.shutdownNow();
         if (webView != null) {
             rootLayout.removeView(webView);
@@ -516,6 +641,7 @@ public class MainActivity extends Activity {
                         out.put("backupUrl", prefs.getString(KEY_BACKUP_URL, ""));
                         out.put("label", prefs.getString(KEY_LABEL, ""));
                         out.put("profiles", new JSONArray(prefs.getString(KEY_PROFILES, "[]")));
+                        out.put("mode", prefs.getString(KEY_MODE, MODE_LOCAL));
                         holder[0] = out.toString();
                     }
                 } catch (Exception ignored) {
@@ -532,6 +658,14 @@ public class MainActivity extends Activity {
                 }
             }
             return holder[0];
+        }
+
+        @JavascriptInterface
+        public void useLocalServer() {
+            runOnUiThread(() -> {
+                if (webView == null || !isOnLocalAssetPage()) return;
+                startLocalServer();
+            });
         }
 
         @JavascriptInterface
@@ -574,6 +708,8 @@ public class MainActivity extends Activity {
                             return;
                         }
                         saveServerProfile(primary, backup, label);
+                        getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit().putString(KEY_MODE, MODE_REMOTE).apply();
+                        leaveLocalServer();
                         activeServerOrigin = originOf(chosen);
                         activeServerLabel = !label.isEmpty() ? label : hostLabel(chosen);
                         webView.loadUrl(chosen);
