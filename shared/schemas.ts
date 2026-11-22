@@ -135,7 +135,7 @@ export const updateSettingsSchema = z.object({
   updateAutoDownload: z.boolean().optional(),
   updateAutoInstall: z.boolean().optional(),
   updateMirror: z.string().trim().optional(),
-  updateChannel: z.enum(["stable"]).optional(),
+  updateChannel: z.enum(["stable", "canary"]).optional(),
   launchAtLogin: z.boolean().optional(),
   minimizeToTray: z.boolean().optional(),
   enabledResourceProviders: z.array(z.string().trim()).optional(),

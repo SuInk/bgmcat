@@ -26,6 +26,47 @@ env:
   NODE_VERSION: "22"
 
 jobs:
+  version:
+    name: Resolve Build Version
+    runs-on: ubuntu-latest
+    outputs:
+      value: ${{ steps.version.outputs.value }}
+      canary: ${{ steps.version.outputs.canary }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: version
+        name: Resolve canary version for pushes to main
+        run: |
+          SOURCE="$(tr -d '[:space:]' < internal/version/VERSION)"
+          # 上一版基线拿不到时留空，按「没改过」处理。
+          PREVIOUS="$(git show "${GITHUB_SHA}^:internal/version/VERSION" 2>/dev/null | tr -d '[:space:]' || true)"
+          VALUE="$SOURCE"
+          CANARY=false
+          if [[ "$GITHUB_EVENT_NAME" == push && "$GITHUB_REF" == refs/heads/main ]]; then
+            if [[ -n "$PREVIOUS" && "$PREVIOUS" != "$SOURCE" ]]; then
+              # 这次合并改了版本基线，是在准备发正式版。此时再发 Canary，它的版本号会比
+              # 紧接着发的正式版还高，Canary 用户之后会以为正式版是退版，所以跳过。
+              echo "internal/version/VERSION 改成了 $SOURCE，按发布准备处理，跳过 Canary"
+            else
+              # 每次合并到 main 发一个 Canary：最新正式版的下一个修订号，序号接着已有的 Canary 往上加。
+              STABLE="$(git tag -l 'v*' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n 1 || true)"
+              if [[ -z "$STABLE" ]]; then
+                echo "没有正式版标签，推算不出 Canary 版本号" >&2
+                exit 1
+              fi
+              IFS=. read -r MAJOR MINOR PATCH <<<"${STABLE#v}"
+              CORE="${MAJOR}.${MINOR}.$((PATCH + 1))"
+              LAST="$(git tag -l "v${CORE}-canary.*" | sed "s/^v${CORE}-canary\.//" | grep -E '^[0-9]+$' | sort -n | tail -n 1 || true)"
+              VALUE="${CORE}-canary.$(( ${LAST:-0} + 1 ))"
+              CANARY=true
+            fi
+          fi
+          echo "构建版本 $VALUE（canary=$CANARY）"
+          echo "value=$VALUE" >> "$GITHUB_OUTPUT"
+          echo "canary=$CANARY" >> "$GITHUB_OUTPUT"
+
   audit:
     name: Public Repo & License Audit
     runs-on: ubuntu-latest
@@ -36,11 +77,18 @@ jobs:
 
   build:
     name: Build, Test & Package
+    needs: version
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      - name: Apply canary version
+        if: needs.version.outputs.canary == 'true'
+        shell: bash
+        env:
+          BUILD_VERSION: ${{ needs.version.outputs.value }}
+        run: printf '%s\n' "$BUILD_VERSION" > internal/version/VERSION
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
@@ -83,7 +131,7 @@ jobs:
           docker build -t bgmcat:test .
           docker run --rm bgmcat:test --version
       - name: Upload full release packages
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: startsWith(github.ref, 'refs/tags/v') || needs.version.outputs.canary == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: release-packages
@@ -129,6 +177,7 @@ jobs:
 
   desktop:
     name: Desktop ${{ matrix.platform }}-${{ matrix.arch }}
+    needs: version
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -140,6 +189,12 @@ jobs:
           - {os: ubuntu-24.04, platform: linux, arch: x64}
     steps:
       - uses: actions/checkout@v4
+      - name: Apply canary version
+        if: needs.version.outputs.canary == 'true'
+        shell: bash
+        env:
+          BUILD_VERSION: ${{ needs.version.outputs.value }}
+        run: printf '%s\n' "$BUILD_VERSION" > internal/version/VERSION
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
@@ -157,7 +212,7 @@ jobs:
         if: runner.os == 'macOS'
         run: node scripts/package-desktop-dmg.cjs
       - name: Upload desktop installer artifacts
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: startsWith(github.ref, 'refs/tags/v') || needs.version.outputs.canary == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: desktop-${{ matrix.platform }}-${{ matrix.arch }}
@@ -172,9 +227,16 @@ jobs:
 
   android:
     name: Android APK
+    needs: version
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Apply canary version
+        if: needs.version.outputs.canary == 'true'
+        shell: bash
+        env:
+          BUILD_VERSION: ${{ needs.version.outputs.value }}
+        run: printf '%s\n' "$BUILD_VERSION" > internal/version/VERSION
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
@@ -214,7 +276,7 @@ jobs:
           mkdir -p android-dist
           cp android/app/build/outputs/apk/release/app-release.apk "android-dist/bgmcat-android-${version}-universal.apk"
       - name: Upload Android APK artifact
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: startsWith(github.ref, 'refs/tags/v') || needs.version.outputs.canary == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: android-apk
@@ -223,13 +285,15 @@ jobs:
           path: android-dist/*.apk
 
   release:
-    if: startsWith(github.ref, 'refs/tags/v')
-    needs: [audit, build, windows-install, desktop, android]
+    if: startsWith(github.ref, 'refs/tags/v') || needs.version.outputs.canary == 'true'
+    needs: [version, audit, build, windows-install, desktop, android]
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/download-artifact@v4
         with:
           name: release-packages
@@ -247,25 +311,72 @@ jobs:
         run: |
           cd release
           sha256sum bgmcat-desktop-* bgmcat-android-* >> SHA256SUMS
+      - name: Write canary release notes
+        if: needs.version.outputs.canary == 'true'
+        run: |
+          # 列出上一个版本（Canary 或正式版）以来合进 main 的改动。
+          previous="$(git describe --tags --abbrev=0 --match 'v*' HEAD 2>/dev/null || true)"
+          {
+            echo "这是从 main 自动构建的 Canary 测试版（提交 ${GITHUB_SHA:0:7}），没有经过正式发布前的检查，可能不稳定。"
+            echo
+            echo "想长期使用请装稳定版。应用内「设置 → 版本」把更新通道切到 Canary，才会提示这类版本。"
+            echo
+            if [[ -n "$previous" ]]; then
+              echo "## 自 ${previous} 以来的改动"
+              echo
+              git log --no-merges --format='- %s' "${previous}..HEAD"
+            fi
+          } > "$RUNNER_TEMP/canary-notes.md"
+          cat "$RUNNER_TEMP/canary-notes.md"
       - name: Publish complete release
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ github.ref_name }}
           GH_REPO: ${{ github.repository }}
+          CANARY: ${{ needs.version.outputs.canary }}
+          BUILD_VERSION: ${{ needs.version.outputs.value }}
+          TAG: ${{ github.ref_name }}
         run: |
+          if [[ "$CANARY" == true ]]; then
+            # Canary 的标签由这里在当前提交上创建；GITHUB_TOKEN 建的标签不会再触发一轮 CI。
+            gh release create "v$BUILD_VERSION" release/* --target "$GITHUB_SHA" --title "Bangumi Cat v$BUILD_VERSION" \
+              --notes-file "$RUNNER_TEMP/canary-notes.md" --prerelease --latest=false
+            exit 0
+          fi
           flags=(--latest)
           if [[ "$TAG" == *-* ]]; then flags=(--prerelease --latest=false); fi
           gh release create "$TAG" release/* --verify-tag --title "Bangumi Cat $TAG" --notes-file "docs/releases/${TAG#v}.md" "${flags[@]}"
+      - name: Prune superseded canary releases
+        if: startsWith(github.ref, 'refs/tags/v') && !contains(github.ref_name, '-')
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          # 应用内检查更新只看最近 30 条 Release，Canary 堆多了会把正式版挤出去。
+          # 发正式版时删掉版本号不高于它的 Canary；手动发的 beta/rc 保留。
+          gh release list --limit 1000 --json tagName --jq '.[].tagName' |
+            { grep -E '^v[0-9]+\.[0-9]+\.[0-9]+-canary\.[0-9]+$' || true; } |
+            while read -r tag; do
+              if [[ "$(printf '%s\n%s\n' "${tag%%-*}" "$TAG" | sort -V | tail -n 1)" == "$TAG" ]]; then
+                gh release delete "$tag" --cleanup-tag --yes || echo "::warning::删除 $tag 失败"
+              fi
+            done
 
   container:
-    if: startsWith(github.ref, 'refs/tags/v') && vars.PUBLISH_CONTAINER == 'true'
-    needs: [audit, build, windows-install]
+    if: (startsWith(github.ref, 'refs/tags/v') || needs.version.outputs.canary == 'true') && vars.PUBLISH_CONTAINER == 'true'
+    needs: [version, audit, build, windows-install]
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
     steps:
       - uses: actions/checkout@v4
+      - name: Apply canary version
+        if: needs.version.outputs.canary == 'true'
+        shell: bash
+        env:
+          BUILD_VERSION: ${{ needs.version.outputs.value }}
+        run: printf '%s\n' "$BUILD_VERSION" > internal/version/VERSION
       - uses: docker/setup-qemu-action@v3
       - uses: docker/setup-buildx-action@v3
       - uses: docker/login-action@v3
@@ -277,10 +388,13 @@ jobs:
         env:
           REPOSITORY: ${{ github.repository }}
           TAG: ${{ github.ref_name }}
+          CANARY: ${{ needs.version.outputs.canary }}
+          BUILD_VERSION: ${{ needs.version.outputs.value }}
         run: |
           image="ghcr.io/${REPOSITORY,,}"
           channel=latest
           if [[ "$TAG" == *-* ]]; then channel=beta; fi
+          if [[ "$CANARY" == true ]]; then TAG="v$BUILD_VERSION"; channel=canary; fi
           echo "tags=$image:$TAG,$image:$channel" >> "$GITHUB_OUTPUT"
       - uses: docker/build-push-action@v6
         with:

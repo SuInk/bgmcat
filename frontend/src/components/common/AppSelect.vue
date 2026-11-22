@@ -40,6 +40,8 @@ const triggerRef = ref<HTMLButtonElement | null>(null);
 const menuRef = ref<HTMLElement | null>(null);
 const open = ref(false);
 const menuStyle = ref<Record<string, string>>({});
+// 打开的原生 <dialog> 在浏览器顶层，挂到 body 上的菜单会被它压住；在对话框里就挂进对话框。
+const teleportTarget = ref<string | HTMLElement>("body");
 
 const selectedOption = computed(
   () => props.options.find((opt) => opt.value === props.modelValue) ?? props.options[0] ?? null
@@ -100,6 +102,7 @@ function toggle(): void {
     close();
     return;
   }
+  teleportTarget.value = (rootRef.value?.closest("dialog[open]") as HTMLElement | null) ?? "body";
   updateMenuPosition();
   open.value = true;
   bindViewportListeners();
@@ -188,7 +191,7 @@ onBeforeUnmount(() => {
       </svg>
     </button>
 
-    <Teleport to="body">
+    <Teleport :to="teleportTarget">
       <div
         v-if="open"
         ref="menuRef"
