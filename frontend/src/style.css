@@ -217,19 +217,19 @@
   .icon-btn {
     display: inline-grid;
     place-items: center;
-    width: 2.5rem;
-    height: 2.5rem;
-    border-radius: var(--radius-sm);
-    border: 1px solid color-mix(in srgb, var(--line) 55%, transparent);
-    background: var(--panel);
+    width: 2rem;
+    height: 2rem;
+    border-radius: 8px;
+    border: 1px solid transparent;
+    background: transparent;
     color: var(--muted);
     transition: border-color 150ms ease, background 150ms ease, color 150ms ease, opacity 150ms ease;
   }
 
   .icon-btn:hover:not(:disabled) {
-    border-color: var(--accent-line);
-    background: var(--accent-soft);
-    color: var(--accent);
+    border-color: var(--line);
+    background: var(--tint-2);
+    color: var(--ink);
   }
 
   .icon-btn:disabled {
@@ -238,24 +238,27 @@
   }
 
   .icon-btn > svg {
-    width: 1.125rem;
-    height: 1.125rem;
+    width: 1rem;
+    height: 1rem;
   }
 
-  /* 列表里「能看了」的主操作：实心圆形播放键，和视频 App 下载页一样一眼找到 */
+  /* 列表里「能看了」的主操作：精致轻盈的圆形播放键，和次级图标按钮尺寸协调 */
   .play-btn {
     display: inline-grid;
     place-items: center;
-    width: 2.375rem;
-    height: 2.375rem;
+    width: 2rem;
+    height: 2rem;
     border-radius: 999px;
-    background: var(--accent);
-    color: var(--accent-contrast);
-    transition: filter 150ms ease, transform 150ms ease;
+    border: 1px solid var(--accent-line);
+    background: var(--accent-soft);
+    color: var(--accent-vivid);
+    transition: background 150ms ease, border-color 150ms ease, color 150ms ease, transform 150ms ease;
   }
 
   .play-btn:hover {
-    filter: brightness(1.08);
+    border-color: var(--accent);
+    background: var(--accent);
+    color: var(--accent-contrast);
   }
 
   .play-btn:active {
@@ -263,21 +266,15 @@
   }
 
   .play-btn > svg {
-    margin-left: 2px;
+    width: 0.875rem;
+    height: 0.875rem;
+    margin-left: 1.5px;
     fill: currentColor;
   }
 
-  /* 删除这类低频操作：鼠标移到行上才出现；触屏没有悬停，始终显示 */
-  @media (hover: hover) {
-    .reveal-on-hover {
-      opacity: 0;
-    }
-
-    :hover > * > .reveal-on-hover,
-    :hover > .reveal-on-hover,
-    .reveal-on-hover:focus-visible {
-      opacity: 1;
-    }
+  /* 操作按钮始终常驻显示，不做悬停若隐若现 */
+  .reveal-on-hover {
+    opacity: 1;
   }
 
   .chip {
@@ -301,13 +298,13 @@
     }
 
     .icon-btn {
-      width: 2.75rem;
-      height: 2.75rem;
+      width: 2.25rem;
+      height: 2.25rem;
     }
 
     .play-btn {
-      width: 2.625rem;
-      height: 2.625rem;
+      width: 2.25rem;
+      height: 2.25rem;
     }
 
     .chip {

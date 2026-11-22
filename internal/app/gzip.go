@@ -319,11 +319,25 @@ func (a *App) buildBootstrapPayload(r *http.Request) Obj {
 
 	var homeItems any
 	homeFresh := false
-	if cachedHome, ok := a.peekDiscoveryCache("home:v3", time.Hour); ok {
-		homeItems = list(cachedHome["items"])
+	if cachedHome, ok := a.peekDiscoveryCache("home:v4", time.Hour); ok {
+		rawItems := list(cachedHome["items"])
+		enriched := make([]Obj, 0, len(rawItems))
+		for _, v := range rawItems {
+			item := object(v)
+			a.enrichAnimeBroadcast(item)
+			enriched = append(enriched, item)
+		}
+		homeItems = enriched
 		homeFresh = true
-	} else if staleHome, ok := a.peekDiscoveryCache("home:v3", 7*24*time.Hour); ok {
-		homeItems = list(staleHome["items"])
+	} else if staleHome, ok := a.peekDiscoveryCache("home:v4", 7*24*time.Hour); ok {
+		rawItems := list(staleHome["items"])
+		enriched := make([]Obj, 0, len(rawItems))
+		for _, v := range rawItems {
+			item := object(v)
+			a.enrichAnimeBroadcast(item)
+			enriched = append(enriched, item)
+		}
+		homeItems = enriched
 		homeFresh = false
 	}
 

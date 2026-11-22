@@ -46,6 +46,8 @@ type App struct {
 	discoveryGroup  singleflight.Group
 	bgmData         bangumiDataStore
 	staticAssets    staticAssetStore
+	trackerMu       sync.RWMutex
+	dynamicTrackers []string
 	resourceMu      sync.Mutex
 	resourceFlights map[string]*resourceFlight
 	Store           *Store
@@ -56,6 +58,7 @@ type App struct {
 	wg              sync.WaitGroup
 	http            *http.Client
 	refreshMu       sync.Mutex
+	cloudFolderMu   sync.Mutex
 	enqueueMu       sync.Mutex
 	jobsMu          sync.Mutex
 	jobs            map[string]context.CancelFunc
@@ -416,6 +419,10 @@ func (a *App) Start() {
 	a.resumeJobs()
 	a.syncLANListeners()
 	go a.warmBangumiDataIndex()
+	go a.warmPublicTrackers()
+	if flag(a.Settings()["aria2SeedEnabled"]) {
+		go a.engine.SyncSeedTasks()
+	}
 	if flag(a.Settings()["tunnelEnabled"]) {
 		if e := a.startTunnel(); e != nil {
 			a.Log("warn", e.Error())
@@ -612,6 +619,44 @@ func (a *App) routes() {
 		}
 		return e
 	})
+	a.handle("POST /api/settings/trackers/sync", func(w http.ResponseWriter, r *http.Request) error {
+		trackers, e := a.syncPublicTrackers(r.Context(), true)
+		if e != nil {
+			return fmt.Errorf("同步公共 Tracker 失败：%w", e)
+		}
+		s := a.Settings()
+		merged := make([]string, 0, len(list(s["btTrackers"]))+len(trackers))
+		seen := map[string]bool{}
+		for _, v := range list(s["btTrackers"]) {
+			tr := strings.TrimSpace(str(v))
+			if tr != "" && !seen[tr] && validTracker(tr) {
+				seen[tr] = true
+				merged = append(merged, tr)
+			}
+		}
+		added := 0
+		for _, tr := range trackers {
+			if !seen[tr] {
+				seen[tr] = true
+				merged = append(merged, tr)
+				added++
+			}
+		}
+		rawAny := make([]any, len(merged))
+		for i, tr := range merged {
+			rawAny[i] = tr
+		}
+		if _, pErr := a.Store.Patch("config", "settings", Obj{"btTrackers": rawAny}); pErr != nil {
+			return pErr
+		}
+		ok(w, Obj{
+			"btTrackers": merged,
+			"totalCount": len(merged),
+			"addedCount": added,
+			"syncedCount": len(trackers),
+		})
+		return nil
+	})
 	a.handle("GET /api/logs/recent", func(w http.ResponseWriter, r *http.Request) error {
 		limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
 		if limit <= 0 || limit > 2000 {
@@ -710,6 +755,9 @@ func (a *App) updateSettings(w http.ResponseWriter, r *http.Request) error {
 		if k == "downloadClient" && !validDownloadClient(str(v)) {
 			return errors.New("请选择受支持的下载引擎")
 		}
+		if k == "downloadFolderMode" && !validDownloadFolderMode(str(v)) {
+			return errors.New("请选择有效的目录分组方式")
+		}
 		if k == "cloudProvider" && !validCloudProvider(str(v)) {
 			return errors.New("请选择受支持的云盘服务")
 		}
@@ -760,6 +808,9 @@ func (a *App) updateSettings(w http.ResponseWriter, r *http.Request) error {
 	if e == nil {
 		if o["lanAccessEnabled"] != nil {
 			a.syncLANListeners()
+		}
+		if o["aria2SeedEnabled"] != nil {
+			go a.engine.SyncSeedTasks()
 		}
 		if o["cloudArchiveEnabled"] != nil || o["cloudDeleteLocal"] != nil || o["cloudDriveFolderId"] != nil || o["cloudProvider"] != nil || o["onedriveFolderId"] != nil || o["webdavRootPath"] != nil {
 			a.triggerArchive()

@@ -6,7 +6,7 @@
  * - 选集优先横向条：默认聚焦最新一话（带「最新」角标），一键切「全部」，未开播剧集折叠在右侧
  * - 下方衔接单行筛选工具栏与清爽细分割线资源表
  */
-import { computed, ref, watch } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 
 import type {
   AnimeDetail,
@@ -101,6 +101,13 @@ const detailScrollRef = ref<HTMLElement | null>(null);
 const selectedDownloadGroupKey = ref<string | null>(null);
 const userManuallyPickedScope = ref(false);
 const subscribeDialogOpen = ref(false);
+const moreMenuRef = ref<HTMLDetailsElement | null>(null);
+
+function closeMoreMenu(): void {
+  if (moreMenuRef.value) {
+    moreMenuRef.value.open = false;
+  }
+}
 
 const allAnimeTitles = computed(() => {
   const primary = props.animeDetail?.anime.title ?? "";
@@ -172,6 +179,27 @@ const heroStreamingButtons = computed<AnimeStreamingLink[]>(() => {
     }
   ];
 });
+
+const primaryStreamingLink = computed<AnimeStreamingLink | null>(() => heroStreamingButtons.value[0] ?? null);
+const extraStreamingLinks = computed<AnimeStreamingLink[]>(() => heroStreamingButtons.value.slice(1));
+const streamMenuRef = ref<HTMLDetailsElement | null>(null);
+
+function openStreamFromMenu(url: string): void {
+  if (streamMenuRef.value) {
+    streamMenuRef.value.open = false;
+  }
+  emit("open-link", url);
+}
+
+function closeStreamMenuOnOutsideClick(event: PointerEvent): void {
+  const menu = streamMenuRef.value;
+  if (menu?.open && !menu.contains(event.target as Node)) {
+    menu.open = false;
+  }
+}
+
+onMounted(() => window.addEventListener("pointerdown", closeStreamMenuOnOutsideClick));
+onBeforeUnmount(() => window.removeEventListener("pointerdown", closeStreamMenuOnOutsideClick));
 
 const sourceLinks = computed(() => {
   const detail = props.animeDetail;
@@ -259,12 +287,16 @@ const platformFailureNotice = computed(() => {
 });
 
 const animeStartDate = computed(() => props.animeDetail?.episodes.find((episode) => episode.airDate)?.airDate ?? null);
+const redundantHeaderTags = new Set(["TV", "WEB", "OVA", "OAD", "剧场版", "日本", "动画", "日本动画", "新番"]);
 const meaningfulTags = computed(() =>
   animeTags.value.filter((tag) => {
     const t = tag.trim();
     if (!t) return false;
-    // 首播日期已单独显示时，剔除纯年份/年月重复标签（如 2026 / 2026年10月）
-    if (animeStartDate.value && (/^\d{4}(?:年(?:\d{1,2}月)?)?$/u.test(t) || /^\d{1,2}月$/u.test(t))) {
+    // 剔除纯年份/年月标签（如 2026 / 2026年10月 / 10月）与泛化媒介标签（如 TV / 日本）
+    if (/^\d{4}(?:年(?:\d{1,2}月)?)?$/u.test(t) || /^\d{1,2}月(?:新番)?$/u.test(t)) {
+      return false;
+    }
+    if (redundantHeaderTags.has(t.toUpperCase()) || redundantHeaderTags.has(t)) {
       return false;
     }
     return true;
@@ -400,56 +432,26 @@ const latestEpisodeInfo = computed(() => {
 const latestAvailableEpisodeKey = computed(() => latestEpisodeInfo.value.key);
 const latestEpisodeNumber = computed(() => latestEpisodeInfo.value.num);
 
-const latestResourcePublishedLabel = computed(() => {
-  const downloads = props.animeDetail?.downloads ?? [];
-  let bestTs = 0;
-  for (const item of downloads) {
-    if (!item.publishedAt) continue;
-    const ts = Date.parse(item.publishedAt);
-    if (Number.isFinite(ts) && ts > bestTs) {
-      bestTs = ts;
-    }
-  }
-  if (!bestTs) {
-    return null;
-  }
-  const date = new Date(bestTs);
-  const now = new Date();
-  const sameDay =
-    date.getFullYear() === now.getFullYear() &&
-    date.getMonth() === now.getMonth() &&
-    date.getDate() === now.getDate();
-  const hh = String(date.getHours()).padStart(2, "0");
-  const mm = String(date.getMinutes()).padStart(2, "0");
-  if (sameDay) {
-    return `今天 ${hh}:${mm} 发布`;
-  }
-  const mo = String(date.getMonth() + 1).padStart(2, "0");
-  const da = String(date.getDate()).padStart(2, "0");
-  return `${mo}-${da} ${hh}:${mm} 发布`;
-});
-
-/** 头部绿点连载进度文案：如「周日更新 · 更新至第 6 话」 */
+/** 头部绿点连载进度文案：优先显示具体更新时刻，如「每周四 23:30 更新 · 更新至第 6 话」 */
 const airingStatusText = computed(() => {
   const day = animeAirDayLabel.value;
+  const broadcast = animeBroadcastLabel.value;
   const latest = latestEpisodeNumber.value;
-  if (day && latest) {
-    return `${day}更新 · 更新至第 ${latest} 话`;
+  const schedulePrefix = broadcast ? `${broadcast} 更新` : day ? `${day}更新` : null;
+  if (schedulePrefix && latest) {
+    return `${schedulePrefix} · 更新至第 ${latest} 话`;
+  }
+  if (schedulePrefix) {
+    return schedulePrefix;
   }
   if (latest) {
     return `更新至第 ${latest} 话`;
   }
-  if (animeBroadcastLabel.value) {
-    return animeBroadcastLabel.value;
-  }
-  if (day) {
-    return `${day}更新`;
-  }
   return null;
 });
 
-/** 圆点分隔的头部纯文本元信息段 */
-const heroMetaTextSegments = computed(() => {
+/** 头部精简元信息文本（总集数 + 核心题材标签），保持单行或干净双行且无悬空前导点 */
+const heroSecondaryMetaText = computed(() => {
   const segments: string[] = [];
   const epCount = Math.max(
     episodes.value.length,
@@ -460,17 +462,15 @@ const heroMetaTextSegments = computed(() => {
   if (epCount > 0) {
     segments.push(`全 ${epCount} 话`);
   }
-  if (latestResourcePublishedLabel.value) {
-    segments.push(`最新源 ${latestResourcePublishedLabel.value}`);
-  }
-  const startDate = animeStartDate.value || props.animeDetail?.anime.airDate?.trim() || null;
-  if (startDate) {
-    segments.push(`${startDate} 首播`);
-  }
   if (meaningfulTags.value.length > 0) {
     segments.push(meaningfulTags.value.slice(0, 3).join(" / "));
+  } else {
+    const startDate = animeStartDate.value || props.animeDetail?.anime.airDate?.trim() || null;
+    if (startDate) {
+      segments.push(`${startDate} 首播`);
+    }
   }
-  return segments;
+  return segments.join(" · ");
 });
 
 const activeAnimeSubscriptions = computed(() => {
@@ -712,6 +712,10 @@ watch(
     subscribeDialogOpen.value = false;
     showAllEpisodes.value = false;
     episodeRangeIndex.value = -1;
+    if (streamMenuRef.value) {
+      streamMenuRef.value.open = false;
+    }
+    closeMoreMenu();
     applyDefaultEpisodeFocus();
   },
   { immediate: true }
@@ -802,7 +806,7 @@ watch(
                 <span>返回</span>
               </button>
 
-              <div v-if="sourceLinks.length" class="flex flex-wrap items-center gap-1.5 text-xs font-medium text-[var(--muted)]">
+              <div class="flex flex-wrap items-center gap-1 text-xs font-medium text-[var(--muted)]">
                 <button
                   v-for="link in sourceLinks"
                   :key="link.label"
@@ -814,6 +818,42 @@ watch(
                   <span>{{ link.label }}</span>
                   <AppNavIcon name="external" class="size-3 opacity-75" aria-hidden="true" />
                 </button>
+
+                <details ref="moreMenuRef" class="detail-more-menu relative">
+                  <summary
+                    class="detail-more-trigger"
+                    :class="{ 'text-[var(--accent-vivid)]': isHidden }"
+                    title="更多操作"
+                    aria-label="更多操作"
+                  >
+                    <svg class="size-4" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                      <circle cx="5" cy="12" r="1.75" />
+                      <circle cx="12" cy="12" r="1.75" />
+                      <circle cx="19" cy="12" r="1.75" />
+                    </svg>
+                  </summary>
+                  <div class="detail-more-popover" role="menu">
+                    <button
+                      type="button"
+                      role="menuitem"
+                      class="detail-more-item"
+                      @click="emit('copy-text', animeDetail.anime.title); closeMoreMenu()"
+                    >
+                      <AppNavIcon name="copy" class="size-3.5 shrink-0" aria-hidden="true" />
+                      <span>复制番剧名</span>
+                    </button>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      class="detail-more-item"
+                      :class="isHidden ? 'text-[var(--accent-vivid)]' : 'is-muted'"
+                      @click="emit('toggle-hidden', animeDetail.anime); closeMoreMenu()"
+                    >
+                      <AppNavIcon :name="isHidden ? 'eye' : 'eye-off'" class="size-3.5 shrink-0" aria-hidden="true" />
+                      <span>{{ isHidden ? "恢复首页显示" : "在首页隐藏" }}</span>
+                    </button>
+                  </div>
+                </details>
               </div>
             </div>
 
@@ -846,19 +886,14 @@ watch(
                   </span>
                 </div>
 
-                <!-- 圆点分隔的紧凑元信息（圆点跟随后项，换行不悬空） -->
+                <!-- 精简元信息：连载进度独立一行或同行流式展示，绝不出现行首悬空圆点 -->
                 <div class="meta-line">
                   <span v-if="airingStatusText" class="airing-badge">{{ airingStatusText }}</span>
-                  <span
-                    v-for="(seg, idx) in heroMetaTextSegments"
-                    :key="seg"
-                    class="meta-seg"
-                    :class="{ 'has-dot': idx > 0 || Boolean(airingStatusText) }"
-                  >{{ seg }}</span>
+                  <span v-if="heroSecondaryMetaText" class="meta-secondary">{{ heroSecondaryMetaText }}</span>
                 </div>
 
                 <!-- 紧凑单行操作栏 -->
-                <div class="mt-1 flex flex-wrap items-center gap-1.5">
+                <div class="mt-0.5 flex flex-wrap items-center gap-1 sm:gap-1.5">
                   <button
                     type="button"
                     class="btn-cta"
@@ -868,7 +903,7 @@ watch(
                     @click="subscribeDialogOpen = true"
                   >
                     <AppNavIcon name="subscriptions" class="size-3.5 shrink-0" aria-hidden="true" />
-                    <span class="max-w-[11rem] truncate">{{ subscribedButtonLabel }}</span>
+                    <span class="max-w-[7.5rem] truncate sm:max-w-[10rem]">{{ subscribedButtonLabel }}</span>
                   </button>
 
                   <button
@@ -891,33 +926,52 @@ watch(
                     <span>已收藏</span>
                   </button>
 
-                  <button
-                    type="button"
-                    class="btn-fav-secondary"
-                    :class="{ 'is-favorited': isHidden }"
-                    :title="isHidden ? '恢复在首页显示' : '在首页隐藏'"
-                    :aria-label="isHidden ? `恢复在首页显示 ${animeDetail.anime.title}` : `在首页隐藏 ${animeDetail.anime.title}`"
-                    @click="emit('toggle-hidden', animeDetail.anime)"
-                  >
-                    <AppNavIcon :name="isHidden ? 'eye' : 'eye-off'" class="size-3.5 shrink-0" aria-hidden="true" />
-                    <span>{{ isHidden ? "已隐藏" : "隐藏" }}</span>
-                  </button>
-
-                  <template v-if="heroStreamingButtons.length">
+                  <template v-if="primaryStreamingLink">
                     <span class="mx-0.5 hidden h-4 w-px bg-[var(--line)] sm:inline-block" aria-hidden="true" />
                     <button
-                      v-for="stream in heroStreamingButtons"
-                      :key="stream.id"
                       type="button"
                       class="btn-stream-link"
-                      :class="{ 'is-direct': Boolean(stream.direct) }"
-                      :title="stream.direct ? `直达 ${stream.label} 播放：${stream.url}` : `前往 ${stream.label}：${stream.url}`"
-                      @click="emit('open-link', stream.url)"
+                      :class="{ 'is-direct': Boolean(primaryStreamingLink.direct) }"
+                      :title="
+                        primaryStreamingLink.direct
+                          ? `直达 ${primaryStreamingLink.label} 播放：${primaryStreamingLink.url}`
+                          : `前往 ${primaryStreamingLink.label}：${primaryStreamingLink.url}`
+                      "
+                      @click="emit('open-link', primaryStreamingLink.url)"
                     >
                       <AppNavIcon name="play" class="size-3 shrink-0" aria-hidden="true" />
-                      <span>{{ stream.label }}</span>
-                      <AppNavIcon name="external" class="size-3 shrink-0 opacity-70" aria-hidden="true" />
+                      <span>{{ primaryStreamingLink.label }}</span>
+                      <AppNavIcon name="external" class="hidden size-3 shrink-0 opacity-70 sm:inline-block" aria-hidden="true" />
                     </button>
+
+                    <details
+                      v-if="extraStreamingLinks.length"
+                      ref="streamMenuRef"
+                      class="stream-more-menu relative"
+                    >
+                      <summary
+                        class="btn-stream-more"
+                        :title="`查看其余 ${extraStreamingLinks.length} 个播放平台：${extraStreamingLinks.map((s) => s.label).join('、')}`"
+                      >
+                        <span>+{{ extraStreamingLinks.length }}</span>
+                        <AppNavIcon name="chevron-down" class="size-3 shrink-0 opacity-75" aria-hidden="true" />
+                      </summary>
+                      <div class="stream-more-popover" role="menu" aria-label="更多播放平台">
+                        <button
+                          v-for="stream in extraStreamingLinks"
+                          :key="stream.id"
+                          type="button"
+                          role="menuitem"
+                          class="stream-more-item"
+                          :title="stream.url"
+                          @click="openStreamFromMenu(stream.url)"
+                        >
+                          <AppNavIcon name="play" class="size-3 shrink-0 text-[var(--accent-vivid)]" aria-hidden="true" />
+                          <span class="min-w-0 flex-1 truncate">{{ stream.label }}</span>
+                          <AppNavIcon name="external" class="size-3 shrink-0 opacity-60" aria-hidden="true" />
+                        </button>
+                      </div>
+                    </details>
                   </template>
                 </div>
 
@@ -1127,6 +1181,7 @@ watch(
                 :busy-key="busyKey"
                 :is-download-busy="isDownloadBusy"
                 :is-download-queued="isDownloadQueued"
+                :get-queued-download="getQueuedDownload"
                 :anime-titles="allAnimeTitles"
                 :anime-title="animeDetail.anime.title"
                 :streaming-links="activeStreamingLinks"
@@ -1135,6 +1190,7 @@ watch(
                 @select-provider="emit('select-provider', $event)"
                 @select-download-group="selectDownloadGroup"
                 @queue-download="emit('queue-download', $event)"
+                @play-download="emit('play-download', $event)"
                 @open-link="emit('open-link', $event)"
               />
             </div>
@@ -1266,16 +1322,14 @@ watch(
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 2px 6px;
+  gap: 3px 10px;
   font-size: 12px;
   line-height: 1.45;
   color: var(--muted);
 }
 
-.meta-seg.has-dot::before {
-  content: "·";
-  margin-right: 6px;
-  opacity: 0.45;
+.meta-secondary {
+  color: var(--muted);
 }
 
 .airing-badge {
@@ -1297,11 +1351,12 @@ watch(
 .btn-cta {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  gap: 4px;
   height: 30px;
-  padding: 0 11px;
+  min-height: 30px;
+  padding: 0 9px;
   border-radius: 7px;
-  font-size: 12.5px;
+  font-size: 12px;
   font-weight: 600;
   white-space: nowrap;
 }
@@ -1309,17 +1364,33 @@ watch(
 .btn-fav-secondary {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: 3.5px;
   height: 30px;
-  padding: 0 10px;
+  min-height: 30px;
+  padding: 0 8.5px;
   border-radius: 7px;
   border: 1px solid var(--line);
   background: var(--card);
   color: var(--ink);
-  font-size: 12.5px;
+  font-size: 12px;
   font-weight: 600;
   white-space: nowrap;
   transition: border-color 0.15s, background 0.15s, color 0.15s;
+}
+.btn-hide-compact {
+  padding: 0 7.5px;
+}
+@media (min-width: 640px) {
+  .btn-cta {
+    gap: 5px;
+    padding: 0 11px;
+    font-size: 12.5px;
+  }
+  .btn-fav-secondary {
+    gap: 4px;
+    padding: 0 10px;
+    font-size: 12.5px;
+  }
 }
 .btn-fav-secondary:hover {
   border-color: var(--accent-line);
@@ -1334,9 +1405,10 @@ watch(
 .btn-stream-link {
   display: inline-flex;
   align-items: center;
-  gap: 4.5px;
+  gap: 4px;
   height: 30px;
-  padding: 0 10px;
+  min-height: 30px;
+  padding: 0 8.5px;
   border-radius: 7px;
   border: 1px solid var(--accent-line);
   background: color-mix(in srgb, var(--accent-soft) 55%, var(--card));
@@ -1346,17 +1418,99 @@ watch(
   white-space: nowrap;
   transition: border-color 0.15s, background 0.15s, color 0.15s;
 }
+@media (min-width: 640px) {
+  .btn-stream-link {
+    gap: 4.5px;
+    padding: 0 10px;
+  }
+}
 .btn-stream-link:hover {
   border-color: var(--accent);
   background: var(--accent);
   color: var(--accent-contrast);
 }
+
+.stream-more-menu > summary {
+  list-style: none;
+}
+.stream-more-menu > summary::-webkit-details-marker {
+  display: none;
+}
+
+.btn-stream-more {
+  display: inline-flex;
+  cursor: pointer;
+  user-select: none;
+  align-items: center;
+  gap: 2px;
+  height: 30px;
+  min-height: 30px;
+  padding: 0 6.5px;
+  border-radius: 7px;
+  border: 1px solid var(--line);
+  background: var(--card);
+  color: var(--ink-secondary);
+  font-size: 11.5px;
+  font-weight: 600;
+  white-space: nowrap;
+  transition: border-color 0.15s, background 0.15s, color 0.15s;
+}
+.btn-stream-more:hover,
+.stream-more-menu[open] .btn-stream-more {
+  border-color: var(--accent-line);
+  background: var(--tint-1);
+  color: var(--ink);
+}
+
+.stream-more-popover {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 5px);
+  z-index: 35;
+  display: grid;
+  min-width: 10.5rem;
+  max-height: 22rem;
+  overflow-y: auto;
+  gap: 2px;
+  padding: 5px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: var(--card);
+  box-shadow: var(--strong-shadow);
+}
+@media (min-width: 640px) {
+  .stream-more-popover {
+    left: 0;
+    right: auto;
+  }
+}
+
+.stream-more-item {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 32px;
+  padding: 5px 9px;
+  border-radius: 7px;
+  color: var(--ink);
+  font-size: 12.5px;
+  font-weight: 550;
+  text-align: left;
+  white-space: nowrap;
+  transition: background 0.12s, color 0.12s;
+}
+.stream-more-item:hover {
+  background: var(--tint-2);
+  color: var(--accent-vivid);
+}
+
 @media (pointer: coarse) {
   .btn-cta,
   .btn-fav-secondary,
-  .btn-stream-link {
-    min-height: 36px;
-    padding: 0 12px;
+  .btn-stream-link,
+  .btn-stream-more {
+    height: 31px;
+    min-height: 31px;
   }
 }
 
@@ -1661,5 +1815,66 @@ watch(
   100% {
     transform: translateX(100%);
   }
+}
+.detail-more-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  list-style: none;
+  cursor: pointer;
+  color: var(--muted);
+  transition: background 0.14s ease, color 0.14s ease;
+}
+.detail-more-trigger::-webkit-details-marker {
+  display: none;
+}
+.detail-more-trigger:hover,
+.detail-more-menu[open] > .detail-more-trigger {
+  background: var(--panel);
+  color: var(--ink);
+}
+.detail-more-popover {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 6px);
+  z-index: 40;
+  display: grid;
+  gap: 2px;
+  min-width: 148px;
+  padding: 5px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: var(--card);
+  box-shadow: 0 12px 30px rgba(15, 23, 42, 0.22);
+}
+.detail-more-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  height: 32px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--ink);
+  font-size: 12.5px;
+  font-weight: 500;
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+.detail-more-item:hover {
+  background: var(--panel);
+}
+.detail-more-item.is-muted {
+  color: var(--muted);
+}
+.detail-more-item.is-muted:hover {
+  color: var(--ink);
 }
 </style>

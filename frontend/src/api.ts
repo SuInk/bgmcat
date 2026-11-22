@@ -1760,3 +1760,18 @@ export async function deleteMangaProgress(mangaId: string): Promise<{ deleted: b
     method: "DELETE"
   });
 }
+
+export interface SyncPublicTrackersResult {
+  btTrackers: string[];
+  totalCount: number;
+  addedCount: number;
+  syncedCount: number;
+}
+
+export async function syncPublicTrackers(): Promise<SyncPublicTrackersResult> {
+  return request<SyncPublicTrackersResult>(
+    "/api/settings/trackers/sync",
+    { method: "POST", body: JSON.stringify({}) },
+    20000
+  );
+}

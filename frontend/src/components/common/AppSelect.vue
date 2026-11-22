@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref } from "vue";
 
 import AppNavIcon from "../layout/AppNavIcon.vue";
 
@@ -36,21 +36,80 @@ const emit = defineEmits<{
 }>();
 
 const rootRef = ref<HTMLElement | null>(null);
+const triggerRef = ref<HTMLButtonElement | null>(null);
+const menuRef = ref<HTMLElement | null>(null);
 const open = ref(false);
+const menuStyle = ref<Record<string, string>>({});
 
 const selectedOption = computed(
   () => props.options.find((opt) => opt.value === props.modelValue) ?? props.options[0] ?? null
 );
 
+function updateMenuPosition(): void {
+  const trigger = triggerRef.value ?? rootRef.value;
+  if (!trigger) return;
+  const rect = trigger.getBoundingClientRect();
+  const minW = Math.max(Math.round(rect.width), 152);
+  const estimatedH = Math.min(props.options.length * 38 + 10, 256);
+  const spaceBelow = window.innerHeight - rect.bottom - 10;
+  const spaceAbove = rect.top - 10;
+  const openUp = props.direction === "up" ? spaceAbove >= Math.min(estimatedH, 120) || spaceAbove > spaceBelow : spaceBelow < estimatedH && spaceAbove > spaceBelow;
+
+  const style: Record<string, string> = {
+    minWidth: `${minW}px`,
+    maxWidth: `min(22rem, calc(100vw - 16px))`
+  };
+  if (props.align === "right") {
+    style.right = `${Math.max(8, Math.round(window.innerWidth - rect.right))}px`;
+  } else {
+    const left = Math.min(rect.left, window.innerWidth - minW - 8);
+    style.left = `${Math.max(8, Math.round(left))}px`;
+  }
+  if (openUp) {
+    style.bottom = `${Math.max(8, Math.round(window.innerHeight - rect.top + 6))}px`;
+  } else {
+    style.top = `${Math.max(8, Math.round(rect.bottom + 6))}px`;
+  }
+  menuStyle.value = style;
+}
+
+function bindViewportListeners(): void {
+  window.addEventListener("resize", updateMenuPosition);
+  window.addEventListener("scroll", handleViewportScroll, true);
+}
+
+function unbindViewportListeners(): void {
+  window.removeEventListener("resize", updateMenuPosition);
+  window.removeEventListener("scroll", handleViewportScroll, true);
+}
+
+function handleViewportScroll(event: Event): void {
+  if (!open.value) return;
+  const target = event.target as Node | null;
+  if (target && menuRef.value?.contains(target)) {
+    return;
+  }
+  updateMenuPosition();
+}
+
 function toggle(): void {
   if (props.disabled) {
     return;
   }
-  open.value = !open.value;
+  if (open.value) {
+    close();
+    return;
+  }
+  updateMenuPosition();
+  open.value = true;
+  bindViewportListeners();
+  void nextTick(updateMenuPosition);
 }
 
 function close(): void {
+  if (!open.value) return;
   open.value = false;
+  unbindViewportListeners();
 }
 
 function selectOption(option: AppSelectOption): void {
@@ -65,12 +124,14 @@ function selectOption(option: AppSelectOption): void {
 }
 
 function handleDocumentPointerDown(event: PointerEvent): void {
-  if (!open.value || !rootRef.value) {
+  if (!open.value) {
     return;
   }
-  if (!rootRef.value.contains(event.target as Node)) {
-    close();
+  const target = event.target as Node | null;
+  if (target && (rootRef.value?.contains(target) || menuRef.value?.contains(target))) {
+    return;
   }
+  close();
 }
 
 function handleKeydown(event: KeyboardEvent): void {
@@ -104,12 +165,14 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   document.removeEventListener("pointerdown", handleDocumentPointerDown);
+  unbindViewportListeners();
 });
 </script>
 
 <template>
   <div ref="rootRef" class="app-select" :class="[`is-${size}`, { 'is-open': open, 'is-disabled': disabled }]" @keydown="handleKeydown">
     <button
+      ref="triggerRef"
       type="button"
       class="app-select-trigger"
       :disabled="disabled"
@@ -125,30 +188,34 @@ onBeforeUnmount(() => {
       </svg>
     </button>
 
-    <div
-      v-if="open"
-      class="app-select-menu"
-      :class="[align === 'right' ? 'is-right' : 'is-left', direction === 'up' ? 'is-up' : 'is-down']"
-      role="listbox"
-      :aria-label="ariaLabel"
-    >
-      <button
-        v-for="opt in options"
-        :key="String(opt.value)"
-        type="button"
-        role="option"
-        class="app-select-option"
-        :class="{ 'is-active': opt.value === modelValue }"
-        :aria-selected="opt.value === modelValue"
-        :disabled="opt.disabled"
-        @click="selectOption(opt)"
+    <Teleport to="body">
+      <div
+        v-if="open"
+        ref="menuRef"
+        class="app-select-menu"
+        :style="menuStyle"
+        role="listbox"
+        :aria-label="ariaLabel"
+        @keydown="handleKeydown"
       >
-        <span class="app-select-option-check" aria-hidden="true">
-          <AppNavIcon v-if="opt.value === modelValue" name="check" class="size-3.5" />
-        </span>
-        <span class="min-w-0 flex-1 truncate text-left">{{ opt.label }}</span>
-      </button>
-    </div>
+        <button
+          v-for="opt in options"
+          :key="String(opt.value)"
+          type="button"
+          role="option"
+          class="app-select-option"
+          :class="{ 'is-active': opt.value === modelValue }"
+          :aria-selected="opt.value === modelValue"
+          :disabled="opt.disabled"
+          @click="selectOption(opt)"
+        >
+          <span class="app-select-option-check" aria-hidden="true">
+            <AppNavIcon v-if="opt.value === modelValue" name="check" class="size-3.5" />
+          </span>
+          <span class="min-w-0 flex-1 truncate text-left">{{ opt.label }}</span>
+        </button>
+      </div>
+    </Teleport>
   </div>
 </template>
 
@@ -223,12 +290,19 @@ onBeforeUnmount(() => {
   transform: rotate(180deg);
 }
 
+@media (pointer: coarse) {
+  .app-select-trigger {
+    min-height: 2.5rem;
+  }
+}
+</style>
+
+<style>
 .app-select-menu {
-  position: absolute;
-  z-index: 120;
+  position: fixed;
+  z-index: 200;
   display: grid;
   gap: 2px;
-  min-width: max(100%, 9.5rem);
   max-height: 16rem;
   overflow-y: auto;
   padding: 4px;
@@ -236,22 +310,6 @@ onBeforeUnmount(() => {
   border: 1px solid var(--line);
   background: var(--card);
   box-shadow: var(--strong-shadow);
-}
-
-.app-select-menu.is-left {
-  left: 0;
-}
-
-.app-select-menu.is-right {
-  right: 0;
-}
-
-.app-select-menu.is-down {
-  top: calc(100% + 6px);
-}
-
-.app-select-menu.is-up {
-  bottom: calc(100% + 6px);
 }
 
 .app-select-option {
@@ -294,7 +352,6 @@ onBeforeUnmount(() => {
 }
 
 @media (pointer: coarse) {
-  .app-select-trigger,
   .app-select-option {
     min-height: 2.5rem;
   }

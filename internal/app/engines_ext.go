@@ -141,6 +141,11 @@ func (a *App) aria2RPCDownload(ctx context.Context, j Obj) error {
 	remoteGID := str(j["aria2Gid"])
 	if remoteGID == "" {
 		opts := Obj{"dir": saveDir}
+		if flag(s["aria2SeedEnabled"]) {
+			opts["seed-ratio"] = "0.0"
+		} else {
+			opts["seed-time"] = "0"
+		}
 		if trackers := list(s["btTrackers"]); len(trackers) > 0 {
 			strs := make([]string, 0, len(trackers))
 			for _, tr := range trackers {

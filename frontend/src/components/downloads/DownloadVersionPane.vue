@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from "vue";
+import { computed, onBeforeUnmount, ref, watch } from "vue";
 
 import type { AnimeDetail, DownloadConflictStrategy, DownloadJob } from "@shared/index";
 import {
@@ -14,6 +14,8 @@ import {
 import { extractResolutionLabel } from "../../lib/mikan";
 import { computeDownloadsTotalProgress } from "../../lib/downloadGrouping";
 import { formatSpeed } from "../../lib/format";
+import { SHARE_FEATURE_ENABLED } from "../../stores/shares";
+import { updateFeedback } from "../../stores/toasts";
 import AppNavIcon from "../layout/AppNavIcon.vue";
 
 export interface DownloadEpisodeGroup {
@@ -87,14 +89,53 @@ function rowPriority(item: DownloadJob): number {
 
 const primaryDownload = computed(() => primaryForDownloads(props.downloads));
 const overviewSummary = computed(() => computeDownloadsTotalProgress(props.downloads));
-const totalLength = computed(() =>
-  overviewSummary.value.localTotalBytes > 0
+const totalLength = computed(() => {
+  const completedOnly = props.downloads.filter((d) => d.status === "complete");
+  if (allComplete.value && completedOnly.length > 0 && completedOnly.length < props.downloads.length) {
+    return computeDownloadsTotalProgress(completedOnly).localTotalBytes;
+  }
+  return overviewSummary.value.localTotalBytes > 0
     ? overviewSummary.value.localTotalBytes
-    : overviewSummary.value.estimatedTotalBytes
-);
+    : overviewSummary.value.estimatedTotalBytes;
+});
 const aggregateProgress = computed(() => overviewSummary.value.percent);
 const aggregateProgressWidth = computed(() => overviewSummary.value.widthPercent);
 const totalDownloadSpeed = computed(() => overviewSummary.value.downloadSpeed);
+const isSingleEpisodeMultiVersion = computed(
+  () => props.episodes.length === 1 && props.downloads.length > 1
+);
+const hasPlayableEpisode = computed(() =>
+  props.episodes.some((ep) => Boolean(playableForDownloads(ep.downloads)))
+);
+const activePeerCount = computed(() =>
+  props.downloads.reduce(
+    (sum, d) => sum + (d.status === "active" ? Math.max(0, d.connectionCount || 0) : 0),
+    0
+  )
+);
+const overviewProgressLabel = computed(() => {
+  if (isSingleEpisodeMultiVersion.value && primaryDownload.value) {
+    const primaryPct = rowEffectivePercent(primaryDownload.value);
+    if (primaryPct > 0 && primaryPct !== aggregateProgress.value) {
+      return `最快版本 ${primaryPct}%（${props.downloads.length} 版本总 ${aggregateProgress.value}%）`;
+    }
+    if (hasPlayableEpisode.value) {
+      return `已有可播版本（其余版本 ${primaryPct}%）`;
+    }
+  }
+  return `总进度 ${aggregateProgress.value}%`;
+});
+const overviewSpeedOrPeerLabel = computed(() => {
+  if (totalDownloadSpeed.value > 0) {
+    return `↓ ${formatSpeed(totalDownloadSpeed.value)}${activePeerCount.value > 0 ? ` (${activePeerCount.value} 节点)` : ""}`;
+  }
+  if (props.downloads.some((d) => d.status === "active")) {
+    return activePeerCount.value > 0
+      ? `已连 ${activePeerCount.value} 节点，等待传输`
+      : "当前版本无活跃做种 (0 节点)";
+  }
+  return null;
+});
 const totalUploadSpeed = computed(() => overviewSummary.value.uploadSpeed);
 const totalCloudSpeed = computed(() => overviewSummary.value.cloudSpeed);
 const remainingSeconds = computed(() => overviewSummary.value.etaSeconds);
@@ -102,11 +143,20 @@ const detailReady = computed(() => props.detailBelongsToGroup && !props.detailLo
 const displaySummary = computed(() =>
   detailReady.value ? props.animeDetail?.summary || props.animeDetail?.intro || null : null
 );
-/** 全部下完且没有进行中/报错转存：概览只说「已完成 · 大小」 */
+const everyEpisodeHasCompleteVersion = computed(
+  () =>
+    props.episodes.length > 0 &&
+    props.episodes.every((ep) =>
+      ep.downloads.some((d) => d.status === "complete" && !isCloudTransferring(d) && !isCloudFailed(d))
+    )
+);
+/** 全部下完且没有进行中/报错转存，或每一集都已有完成版本且其余冗余版本已暂停：概览直接作为已完成展示 */
 const allComplete = computed(
   () =>
     props.downloads.length > 0 &&
-    overviewSummary.value.finishedTaskCount === props.downloads.length
+    (overviewSummary.value.finishedTaskCount === props.downloads.length ||
+      (everyEpisodeHasCompleteVersion.value &&
+        !props.downloads.some((d) => ["active", "waiting", "queued", "error"].includes(d.status) || isCloudTransferring(d) || isCloudFailed(d))))
 );
 const overviewStatusLabel = computed(() => {
   if (allComplete.value) {
@@ -226,6 +276,109 @@ function episodeIndex(label: string | null | undefined): string {
   return label?.match(/\d+(?:\.\d+)?/)?.[0] ?? "SP";
 }
 
+function normalizeEpisodeKey(raw: string | null | undefined): string | null {
+  const match = raw?.match(/\d+(?:\.\d+)?/)?.[0];
+  if (!match) return null;
+  const n = Number(match);
+  return Number.isFinite(n) ? String(n) : match;
+}
+
+/** 从 Bangumi 剧集信息里按集数索引出每集的中文/原名标题 */
+const episodeTitleMap = computed(() => {
+  const map = new Map<string, string>();
+  if (!props.detailBelongsToGroup || !props.animeDetail?.episodes?.length) {
+    return map;
+  }
+  for (const ep of props.animeDetail.episodes) {
+    const title = ep.title?.trim();
+    if (!title || /^第\s*\d+(?:\.\d+)?\s*[集话話回]$/u.test(title)) {
+      continue;
+    }
+    const epKey = normalizeEpisodeKey(ep.episodeNumber);
+    if (epKey && !map.has(epKey)) {
+      map.set(epKey, title);
+    }
+    const seasonKey = normalizeEpisodeKey(ep.seasonNumber);
+    if (seasonKey && !map.has(seasonKey)) {
+      map.set(seasonKey, title);
+    }
+  }
+  return map;
+});
+
+function episodeName(label: string | null | undefined): string | null {
+  const key = normalizeEpisodeKey(label);
+  if (!key) return null;
+  return episodeTitleMap.value.get(key) ?? null;
+}
+
+const openMenuEpisodeKey = ref<string | null>(null);
+const menuPosition = ref<{ top: number; right: number }>({ top: 0, right: 16 });
+const activeMenuEpisode = computed(() =>
+  openMenuEpisodeKey.value ? props.episodes.find((ep) => ep.key === openMenuEpisodeKey.value) ?? null : null
+);
+
+function closeEpisodeMenu(): void {
+  if (openMenuEpisodeKey.value === null) return;
+  openMenuEpisodeKey.value = null;
+  window.removeEventListener("pointerdown", handleMenuOutsideClick, true);
+  window.removeEventListener("keydown", handleMenuKeydown);
+  window.removeEventListener("scroll", closeEpisodeMenu, true);
+  window.removeEventListener("resize", closeEpisodeMenu);
+}
+
+function handleMenuOutsideClick(event: PointerEvent): void {
+  const target = event.target as HTMLElement | null;
+  if (target?.closest(".episode-more-menu") || target?.closest(".episode-more-btn")) {
+    return;
+  }
+  closeEpisodeMenu();
+}
+
+function handleMenuKeydown(event: KeyboardEvent): void {
+  if (event.key === "Escape") {
+    closeEpisodeMenu();
+  }
+}
+
+function toggleEpisodeMenu(episode: DownloadEpisodeGroup, event: MouseEvent): void {
+  if (openMenuEpisodeKey.value === episode.key) {
+    closeEpisodeMenu();
+    return;
+  }
+  const btn = event.currentTarget as HTMLElement | null;
+  if (btn) {
+    const rect = btn.getBoundingClientRect();
+    const estimatedHeight = 200;
+    const openUp = rect.bottom + estimatedHeight > window.innerHeight - 12 && rect.top > estimatedHeight;
+    menuPosition.value = {
+      top: openUp ? Math.max(12, rect.top - estimatedHeight) : rect.bottom + 6,
+      right: Math.max(12, window.innerWidth - rect.right)
+    };
+  }
+  openMenuEpisodeKey.value = episode.key;
+  window.addEventListener("pointerdown", handleMenuOutsideClick, true);
+  window.addEventListener("keydown", handleMenuKeydown);
+  window.addEventListener("scroll", closeEpisodeMenu, true);
+  window.addEventListener("resize", closeEpisodeMenu);
+}
+
+async function copyEpisodeReleaseName(episode: DownloadEpisodeGroup): Promise<void> {
+  const name = releaseName(episode.downloads);
+  closeEpisodeMenu();
+  if (!name) return;
+  try {
+    await navigator.clipboard.writeText(name);
+    updateFeedback("已复制发布名。", "success");
+  } catch {
+    updateFeedback("复制失败，请手动复制。", "error");
+  }
+}
+
+onBeforeUnmount(() => {
+  closeEpisodeMenu();
+});
+
 /** 点一集：多个版本先展开挑版本，只有一个版本且能播就直接播 */
 function openEpisode(episode: DownloadEpisodeGroup): void {
   if (episode.downloads.length > 1) {
@@ -320,11 +473,35 @@ function rowEffectiveWidth(download: DownloadJob): number {
 function primaryForDownloads(downloads: DownloadJob[]): DownloadJob | undefined {
   let best: DownloadJob | undefined;
   for (const item of downloads) {
-    if (
-      !best ||
-      rowPriority(item) < rowPriority(best) ||
-      (rowPriority(item) === rowPriority(best) && item.updatedAt > best.updatedAt)
-    ) {
+    if (!best) {
+      best = item;
+      continue;
+    }
+    const prioDelta = rowPriority(item) - rowPriority(best);
+    if (prioDelta < 0) {
+      best = item;
+      continue;
+    }
+    if (prioDelta > 0) {
+      continue;
+    }
+    const speedDelta = (item.downloadSpeed || 0) - (best.downloadSpeed || 0);
+    if (speedDelta > 0) {
+      best = item;
+      continue;
+    }
+    if (speedDelta < 0) {
+      continue;
+    }
+    const pctDelta = props.progressPercent(item) - props.progressPercent(best);
+    if (pctDelta > 0) {
+      best = item;
+      continue;
+    }
+    if (pctDelta < 0) {
+      continue;
+    }
+    if ((item.completedLength || 0) > (best.completedLength || 0) || item.updatedAt > best.updatedAt) {
       best = item;
     }
   }
@@ -345,6 +522,12 @@ function episodeRowPercent(downloads: DownloadJob[]): number {
   if (episodeComplete(downloads) && cloudTarget) {
     return cloudUploadProgress(cloudTarget).percent;
   }
+  if (downloads.length > 1) {
+    const primary = primaryForDownloads(downloads);
+    if (primary) {
+      return rowEffectivePercent(primary);
+    }
+  }
   const total = downloads.reduce((sum, d) => sum + d.totalLength, 0);
   const completed = downloads.reduce((sum, d) => sum + d.completedLength, 0);
   if (total > 0) {
@@ -358,12 +541,42 @@ function episodeRowWidth(downloads: DownloadJob[]): number {
   if (episodeComplete(downloads) && cloudTarget) {
     return rowEffectiveWidth(cloudTarget);
   }
+  if (downloads.length > 1) {
+    const primary = primaryForDownloads(downloads);
+    if (primary) {
+      return rowEffectiveWidth(primary);
+    }
+  }
   const total = downloads.reduce((sum, d) => sum + d.totalLength, 0);
   const completed = downloads.reduce((sum, d) => sum + d.completedLength, 0);
   if (total > 0) {
     return Math.max(0, Math.min(100, Math.round((completed / total) * 1000) / 10));
   }
   return episodeRowPercent(downloads);
+}
+
+function episodeProgressText(downloads: DownloadJob[]): string {
+  const primary = primaryForDownloads(downloads);
+  if (!primary) {
+    return "等待中 · 0%";
+  }
+  const pct = episodeRowPercent(downloads);
+  const playable = playableForDownloads(downloads);
+  if (primary.status === "active") {
+    const speed = downloads.reduce((sum, d) => sum + Math.max(0, d.downloadSpeed || 0), 0);
+    const conns = downloads.reduce((sum, d) => sum + (d.status === "active" ? Math.max(0, d.connectionCount || 0) : 0), 0);
+    if (speed > 0) {
+      return `下载中 ${pct}% · ↓ ${formatSpeed(speed)}`;
+    }
+    if (playable && pct === 0) {
+      return `已就绪 1 版 · 其余版本无做种 (0 节点)`;
+    }
+    return conns > 0 ? `进行中 ${pct}% · ${conns} 节点` : `寻源中 ${pct}% · 0 节点`;
+  }
+  if (playable && primary.status === "paused" && downloads.length > 1) {
+    return `已就绪可播 · 其余版本已暂停`;
+  }
+  return `${statusLabel(primary.status)} · ${pct}%`;
 }
 
 function sizeForDownloads(downloads: DownloadJob[]): string {
@@ -376,10 +589,11 @@ function sizeForDownloads(downloads: DownloadJob[]): string {
 function releaseMeta(downloads: DownloadJob[]): string {
   const name = releaseName(downloads);
   const subgroup = name.match(/^\s*[[【]([^\]】]+)[\]】]/)?.[1]?.trim();
+  const completedOnly = downloads.filter((d) => d.status === "complete");
   const size = episodeComplete(downloads)
-    ? props.formatBytes(downloads.reduce((sum, download) => sum + download.totalLength, 0))
+    ? props.formatBytes((completedOnly.length > 0 ? completedOnly : downloads).reduce((sum, download) => sum + download.totalLength, 0))
     : sizeForDownloads(downloads);
-  const primary = primaryForDownloads(downloads);
+  const primary = (episodeComplete(downloads) && completedOnly[0]) || primaryForDownloads(downloads);
   const cloudNote =
     primary && isCloudStored(primary)
       ? primary.cloudArchive?.status === "archived"
@@ -392,11 +606,22 @@ function releaseMeta(downloads: DownloadJob[]): string {
 }
 
 function episodeComplete(downloads: DownloadJob[]): boolean {
-  return downloads.length > 0 && downloads.every((download) => download.status === "complete");
+  if (!downloads.length) {
+    return false;
+  }
+  if (downloads.every((download) => download.status === "complete")) {
+    return true;
+  }
+  return (
+    downloads.some((download) => download.status === "complete" && !isCloudTransferring(download) && !isCloudFailed(download)) &&
+    !downloads.some((download) => ["active", "waiting", "queued", "error"].includes(download.status) || isCloudTransferring(download) || isCloudFailed(download))
+  );
 }
 
 function releaseName(downloads: DownloadJob[]): string {
-  const target = primaryForDownloads(downloads);
+  const completed = downloads.find((d) => d.status === "complete");
+  const active = downloads.find((d) => ["active", "waiting", "queued"].includes(d.status));
+  const target = active ?? completed ?? primaryForDownloads(downloads);
   return target ? props.downloadDisplayTitle(target) : "--";
 }
 
@@ -464,56 +689,59 @@ function formatDateTime(value: string): string {
     :class="props.flat ? '' : 'motion-drop px-2 pb-3 @min-[640px]:pl-[4.75rem]'"
   >
     <div class="grid gap-2">
-      <!-- 概览条：状态、总进度、分阶段字节统计、批量操作全部横排 -->
-      <div v-if="primaryDownload && (props.showOverview ?? props.flat)" class="flex flex-wrap items-center gap-x-3 gap-y-2">
-        <span class="shrink-0 rounded-full border px-2.5 py-0.5 text-xs font-semibold" :class="rowStatusPillClass(primaryDownload)">
+      <!-- 概览条：单行紧凑展示状态、进度、速度、已完计数与批量暂停/开始 -->
+      <div
+        v-if="primaryDownload && (props.showOverview ?? props.flat)"
+        class="flex flex-wrap items-center gap-x-2.5 gap-y-1.5 rounded-lg border border-[var(--line)] bg-[var(--card)] px-3 py-1.5"
+      >
+        <span
+          class="shrink-0 rounded-full border px-2 py-0.5 text-[11px] font-semibold leading-tight"
+          :class="allComplete ? 'border-[var(--ok-soft)] bg-[var(--ok-soft)] text-[var(--ok)]' : rowStatusPillClass(primaryDownload)"
+        >
           {{ overviewStatusLabel }}
         </span>
         <span v-if="allComplete" class="shrink-0 text-xs font-semibold tabular-nums text-[var(--muted)]">{{ props.formatBytes(totalLength) }}</span>
         <template v-else>
-          <span class="progress-track w-32 shrink-0 sm:w-44">
+          <span class="progress-track w-24 shrink-0 sm:w-32">
             <span
               class="progress-fill"
               :class="progressBarClass(downloads)"
               :style="{ width: `${aggregateProgressWidth}%` }"
             ></span>
           </span>
-          <span class="shrink-0 text-xs font-semibold tabular-nums text-[var(--ink)]">总进度 {{ aggregateProgress }}%</span>
-          <span v-if="overviewBytesLabel" class="shrink-0 text-xs font-semibold tabular-nums text-[var(--muted)]">
+          <span class="shrink-0 text-xs font-semibold tabular-nums text-[var(--ink)]">{{ overviewProgressLabel }}</span>
+          <span v-if="overviewSpeedOrPeerLabel" class="shrink-0 text-xs font-semibold tabular-nums" :class="totalDownloadSpeed > 0 ? 'text-[var(--ok)]' : 'text-[var(--warn)]'">
+            {{ overviewSpeedOrPeerLabel }}
+          </span>
+          <span v-if="overviewBytesLabel" class="hidden shrink-0 text-xs font-medium tabular-nums text-[var(--muted)] md:inline">
             {{ overviewBytesLabel }}
           </span>
-          <span v-if="totalDownloadSpeed > 0" class="shrink-0 text-xs font-semibold tabular-nums text-[var(--muted)]">↓ {{ formatSpeed(totalDownloadSpeed) }}</span>
           <span v-if="totalUploadSpeed > 0" class="shrink-0 text-xs font-semibold tabular-nums text-[var(--muted)]">↑ {{ formatSpeed(totalUploadSpeed) }}</span>
           <span v-if="totalCloudSpeed > 0" class="shrink-0 text-xs font-semibold tabular-nums text-[var(--accent-vivid)]">☁↑ {{ formatSpeed(totalCloudSpeed) }}</span>
-          <span v-if="remainingSeconds" class="shrink-0 text-xs font-semibold tabular-nums text-[var(--muted)]">剩余 {{ formatDuration(remainingSeconds) }}</span>
+          <span v-if="remainingSeconds" class="shrink-0 text-xs font-medium tabular-nums text-[var(--muted)]">剩余 {{ formatDuration(remainingSeconds) }}</span>
         </template>
-        <span v-if="taskCompletionLabel" class="shrink-0 text-xs font-semibold tabular-nums text-[var(--muted)]">{{ taskCompletionLabel }}</span>
-        <span v-if="detailLoading" class="shrink-0 text-xs font-semibold text-[var(--muted)]">加载详情…</span>
+        <span v-if="taskCompletionLabel" class="shrink-0 text-xs font-medium tabular-nums text-[var(--muted)]">{{ taskCompletionLabel }}</span>
+        <span v-if="detailLoading" class="shrink-0 text-xs font-medium text-[var(--muted)]">加载详情…</span>
 
-        <span class="ml-auto flex shrink-0 flex-wrap gap-1.5">
+        <span v-if="resumableDownloads.length || pausableDownloads.length" class="ml-auto flex shrink-0 items-center gap-1.5">
           <button
             v-if="resumableDownloads.length"
             type="button"
-            class="btn-ghost h-8 rounded-md px-3 text-xs font-semibold"
+            class="btn-ghost h-6 rounded-md px-2 text-[11.5px] font-semibold"
             @click="resumableDownloads.forEach((download) => emit('resume', download.gid))"
           >
-            全部开始（{{ resumableDownloads.length }}）
+            全部开始 ({{ resumableDownloads.length }})
           </button>
           <button
             v-if="pausableDownloads.length"
             type="button"
-            class="btn-ghost h-8 rounded-md px-3 text-xs font-semibold"
+            class="btn-ghost h-6 rounded-md px-2 text-[11.5px] font-semibold"
             @click="pausableDownloads.forEach((download) => emit('pause', download.gid))"
           >
-            全部暂停（{{ pausableDownloads.length }}）
+            全部暂停 ({{ pausableDownloads.length }})
           </button>
         </span>
       </div>
-
-      <!-- 简介只留一行；要看全番信息走番剧页 -->
-      <p v-if="displaySummary && props.flat" class="line-clamp-1 text-xs leading-5 text-[var(--muted)]" :title="displaySummary">
-        {{ displaySummary }}
-      </p>
 
       <!-- 文件冲突就地给出三种处理方式 -->
       <div
@@ -553,7 +781,7 @@ function formatDateTime(value: string): string {
 
         <div class="flex shrink-0 items-center gap-1.5">
           <button
-            v-if="shareableCount > 0"
+            v-if="SHARE_FEATURE_ENABLED && shareableCount > 0"
             type="button"
             class="cloud-batch-btn"
             title="生成在线播放分享链接"
@@ -591,8 +819,8 @@ function formatDateTime(value: string): string {
             </span>
 
             <span class="grid min-w-0 gap-0.5">
-              <span class="flex min-w-0 items-center gap-1.5 text-[13px] font-semibold text-[var(--ink)]">
-                <span class="truncate">{{ episode.episodeLabel ?? "未知集数" }}</span>
+              <span class="flex min-w-0 flex-wrap items-center gap-1.5 text-[13px] font-semibold text-[var(--ink)]">
+                <span class="shrink-0 whitespace-nowrap">{{ episode.episodeLabel ?? "未知集数" }}</span>
                 <span
                   v-if="episode.downloads.some(isCloudStored)"
                   class="inline-flex shrink-0 items-center gap-0.5 rounded-full border border-[var(--accent-line)] bg-[var(--accent-soft)] px-1.5 py-0.5 text-[10px] font-semibold text-[var(--accent-vivid)]"
@@ -605,11 +833,18 @@ function formatDateTime(value: string): string {
                   <span class="inline-block transition-transform" :class="expandedEpisodeKey === episode.key ? 'rotate-90' : ''" aria-hidden="true">›</span>
                 </span>
               </span>
+              <span
+                v-if="episodeName(episode.episodeLabel)"
+                class="truncate text-[12px] font-medium text-[var(--ink-secondary)]"
+                :title="episodeName(episode.episodeLabel) ?? undefined"
+              >
+                {{ episodeName(episode.episodeLabel) }}
+              </span>
               <span class="truncate text-[11px] tabular-nums text-[var(--muted)]">{{ releaseMeta(episode.downloads) }}</span>
 
-              <!-- 下载中或转存云盘中都显示实时进度条 -->
-              <span v-if="!episodeComplete(episode.downloads) || episodeCloudTarget(episode.downloads)" class="mt-1 flex min-w-0 items-center gap-2.5">
-                <span class="progress-track w-28 shrink-0 sm:w-36">
+              <!-- 下载中或转存云盘中都显示实时进度条（条与文字分行展示，避免截断速度与剩余时间） -->
+              <span v-if="!episodeComplete(episode.downloads) || episodeCloudTarget(episode.downloads)" class="mt-1 grid min-w-0 gap-1">
+                <span class="progress-track w-full max-w-[20rem]">
                   <span
                     class="progress-fill"
                     :class="progressBarClass(episode.downloads)"
@@ -617,14 +852,14 @@ function formatDateTime(value: string): string {
                   ></span>
                 </span>
                 <span
-                  class="min-w-0 truncate text-[11px] tabular-nums"
+                  class="text-[11px] leading-snug tabular-nums"
                   :class="episode.downloads.some(isCloudFailed) ? 'text-[var(--err)]' : 'text-[var(--muted)]'"
                 >
                   <template v-if="episodeComplete(episode.downloads) && episodeCloudTarget(episode.downloads)">
                     {{ cloudArchiveLabel(episodeCloudTarget(episode.downloads)!) }}
                   </template>
                   <template v-else>
-                    {{ statusLabel(primaryForDownloads(episode.downloads)?.status ?? "waiting") }} · {{ episodeRowPercent(episode.downloads) }}%
+                    {{ episodeProgressText(episode.downloads) }}
                   </template>
                 </span>
               </span>
@@ -637,77 +872,7 @@ function formatDateTime(value: string): string {
               </span>
             </span>
 
-            <span class="flex shrink-0 items-center gap-1" @click.stop>
-              <button
-                v-if="playableForDownloads(episode.downloads)"
-                type="button"
-                class="icon-btn reveal-on-hover"
-                :title="`分享 ${episode.episodeLabel ?? '该集'}`"
-                :aria-label="`分享 ${episode.episodeLabel ?? '该集'}`"
-                @click="emit('share-episode', { download: playableForDownloads(episode.downloads)!, episodeLabel: episode.episodeLabel })"
-              >
-                <AppNavIcon name="share" />
-              </button>
-              <button
-                v-if="primaryForDownloads(episode.downloads)"
-                type="button"
-                class="icon-btn reveal-on-hover text-[var(--err)] hover:text-[var(--err)]"
-                title="删除该集"
-                aria-label="删除该集"
-                @click="emit('remove', primaryForDownloads(episode.downloads)!)"
-              >
-                <AppNavIcon name="trash" />
-              </button>
-
-              <!-- 云盘转存操作：重试 / 取消 / 一键转存 -->
-              <template v-if="primaryForDownloads(episode.downloads)">
-                <button
-                  v-if="isCloudFailed(primaryForDownloads(episode.downloads)!)"
-                  type="button"
-                  class="icon-btn text-[var(--warn)] hover:text-[var(--accent-vivid)]"
-                  title="立即重试云盘转存"
-                  aria-label="立即重试云盘转存"
-                  :disabled="props.isDownloadRowBusy(primaryForDownloads(episode.downloads)!.gid)"
-                  @click="emit('archive', primaryForDownloads(episode.downloads)!.gid)"
-                >
-                  <AppNavIcon name="refresh" />
-                </button>
-                <button
-                  v-else-if="canArchiveToCloud(primaryForDownloads(episode.downloads)!)"
-                  type="button"
-                  class="icon-btn reveal-on-hover text-[var(--accent-vivid)]"
-                  :title="primaryForDownloads(episode.downloads)!.status === 'complete' ? '转存至 Google Drive' : '完成后自动转存至 Google Drive'"
-                  aria-label="转存至 Google Drive"
-                  :disabled="props.isDownloadRowBusy(primaryForDownloads(episode.downloads)!.gid)"
-                  @click="emit('archive', primaryForDownloads(episode.downloads)!.gid)"
-                >
-                  <AppNavIcon name="cloud-upload" />
-                </button>
-
-                <button
-                  v-if="isCloudTransferring(primaryForDownloads(episode.downloads)!) || isCloudFailed(primaryForDownloads(episode.downloads)!)"
-                  type="button"
-                  class="icon-btn text-[var(--muted)] hover:text-[var(--err)]"
-                  title="取消云盘转存"
-                  aria-label="取消云盘转存"
-                  :disabled="props.isDownloadRowBusy(primaryForDownloads(episode.downloads)!.gid)"
-                  @click="emit('cancel-archive', primaryForDownloads(episode.downloads)!.gid)"
-                >
-                  <AppNavIcon name="close" />
-                </button>
-              </template>
-
-              <button
-                v-if="primaryForDownloads(episode.downloads) && (canPause(primaryForDownloads(episode.downloads)!) || canResume(primaryForDownloads(episode.downloads)!))"
-                type="button"
-                class="icon-btn"
-                :title="canResume(primaryForDownloads(episode.downloads)!) ? '继续' : '暂停'"
-                :aria-label="canResume(primaryForDownloads(episode.downloads)!) ? '继续' : '暂停'"
-                :disabled="props.isDownloadRowBusy(primaryForDownloads(episode.downloads)!.gid)"
-                @click="triggerTransfer(primaryForDownloads(episode.downloads)!)"
-              >
-                <AppNavIcon :name="canResume(primaryForDownloads(episode.downloads)!) ? 'download' : 'pause'" />
-              </button>
+            <span class="flex shrink-0 items-center gap-1.5" @click.stop>
               <button
                 v-if="playableForDownloads(episode.downloads)"
                 type="button"
@@ -717,6 +882,23 @@ function formatDateTime(value: string): string {
                 @click="emit('playback', playableForDownloads(episode.downloads)!)"
               >
                 <AppNavIcon name="play" class="size-3.5" />
+              </button>
+              <button
+                v-if="primaryForDownloads(episode.downloads)"
+                type="button"
+                class="episode-more-btn"
+                :class="{ 'is-open': openMenuEpisodeKey === episode.key }"
+                :aria-expanded="openMenuEpisodeKey === episode.key"
+                aria-haspopup="menu"
+                :title="`更多操作：${episode.episodeLabel ?? '该集'}`"
+                :aria-label="`更多操作：${episode.episodeLabel ?? '该集'}`"
+                @click="toggleEpisodeMenu(episode, $event)"
+              >
+                <svg viewBox="0 0 16 16" class="size-4" fill="currentColor" aria-hidden="true">
+                  <circle cx="3.2" cy="8" r="1.25" />
+                  <circle cx="8" cy="8" r="1.25" />
+                  <circle cx="12.8" cy="8" r="1.25" />
+                </svg>
               </button>
             </span>
           </div>
@@ -936,7 +1118,115 @@ function formatDateTime(value: string): string {
           <span class="shrink-0 text-right text-[11px] font-semibold tabular-nums text-[var(--muted)]">{{ formatDateTime(entry.time) }}</span>
         </div>
       </template>
+      <!-- 底部完整番剧简介（左右内边距与分集行对齐，不占首屏分集空间） -->
+      <section v-if="displaySummary && props.flat" class="mt-2 grid gap-1.5 border-t border-[var(--line)] px-2.5 pt-3" aria-label="番剧简介">
+        <h3 class="text-[13px] font-semibold text-[var(--ink)]">番剧简介</h3>
+        <p class="whitespace-pre-line text-xs leading-relaxed text-[var(--muted)]">
+          {{ displaySummary }}
+        </p>
+      </section>
     </div>
+
+    <Teleport to="body">
+      <div
+        v-if="activeMenuEpisode && primaryForDownloads(activeMenuEpisode.downloads)"
+        class="episode-more-menu"
+        role="menu"
+        :style="{ top: `${menuPosition.top}px`, right: `${menuPosition.right}px` }"
+        @click.stop
+      >
+        <button
+          v-if="canPause(primaryForDownloads(activeMenuEpisode.downloads)!) || canResume(primaryForDownloads(activeMenuEpisode.downloads)!)"
+          type="button"
+          class="episode-menu-item"
+          role="menuitem"
+          :disabled="props.isDownloadRowBusy(primaryForDownloads(activeMenuEpisode.downloads)!.gid)"
+          @click="triggerTransfer(primaryForDownloads(activeMenuEpisode.downloads)!); closeEpisodeMenu()"
+        >
+          <AppNavIcon :name="canResume(primaryForDownloads(activeMenuEpisode.downloads)!) ? 'download' : 'pause'" class="size-3.5 shrink-0" />
+          <span>{{ canResume(primaryForDownloads(activeMenuEpisode.downloads)!) ? "继续下载" : "暂停下载" }}</span>
+        </button>
+
+        <button
+          v-if="activeMenuEpisode.downloads.length > 1"
+          type="button"
+          class="episode-menu-item"
+          role="menuitem"
+          @click="toggleEpisode(activeMenuEpisode.key); closeEpisodeMenu()"
+        >
+          <AppNavIcon name="files" class="size-3.5 shrink-0" />
+          <span>{{ expandedEpisodeKey === activeMenuEpisode.key ? "收起版本列表" : `查看全部 ${activeMenuEpisode.downloads.length} 个版本` }}</span>
+        </button>
+
+        <button
+          v-if="isCloudFailed(primaryForDownloads(activeMenuEpisode.downloads)!)"
+          type="button"
+          class="episode-menu-item"
+          role="menuitem"
+          :disabled="props.isDownloadRowBusy(primaryForDownloads(activeMenuEpisode.downloads)!.gid)"
+          @click="emit('archive', primaryForDownloads(activeMenuEpisode.downloads)!.gid); closeEpisodeMenu()"
+        >
+          <AppNavIcon name="refresh" class="size-3.5 shrink-0 text-[var(--warn)]" />
+          <span>重试云盘转存</span>
+        </button>
+        <button
+          v-else-if="canArchiveToCloud(primaryForDownloads(activeMenuEpisode.downloads)!)"
+          type="button"
+          class="episode-menu-item"
+          role="menuitem"
+          :disabled="props.isDownloadRowBusy(primaryForDownloads(activeMenuEpisode.downloads)!.gid)"
+          @click="emit('archive', primaryForDownloads(activeMenuEpisode.downloads)!.gid); closeEpisodeMenu()"
+        >
+          <AppNavIcon name="cloud-upload" class="size-3.5 shrink-0 text-[var(--accent-vivid)]" />
+          <span>{{ primaryForDownloads(activeMenuEpisode.downloads)!.status === "complete" ? "转存至云盘" : "完成后自动转存" }}</span>
+        </button>
+
+        <button
+          v-if="isCloudTransferring(primaryForDownloads(activeMenuEpisode.downloads)!) || isCloudFailed(primaryForDownloads(activeMenuEpisode.downloads)!)"
+          type="button"
+          class="episode-menu-item"
+          role="menuitem"
+          :disabled="props.isDownloadRowBusy(primaryForDownloads(activeMenuEpisode.downloads)!.gid)"
+          @click="emit('cancel-archive', primaryForDownloads(activeMenuEpisode.downloads)!.gid); closeEpisodeMenu()"
+        >
+          <AppNavIcon name="close" class="size-3.5 shrink-0" />
+          <span>取消云盘转存</span>
+        </button>
+
+        <button
+          v-if="SHARE_FEATURE_ENABLED && playableForDownloads(activeMenuEpisode.downloads)"
+          type="button"
+          class="episode-menu-item"
+          role="menuitem"
+          @click="emit('share-episode', { download: playableForDownloads(activeMenuEpisode.downloads)!, episodeLabel: activeMenuEpisode.episodeLabel }); closeEpisodeMenu()"
+        >
+          <AppNavIcon name="share" class="size-3.5 shrink-0" />
+          <span>分享该集</span>
+        </button>
+
+        <button
+          type="button"
+          class="episode-menu-item"
+          role="menuitem"
+          @click="copyEpisodeReleaseName(activeMenuEpisode)"
+        >
+          <AppNavIcon name="copy" class="size-3.5 shrink-0" />
+          <span>复制发布名</span>
+        </button>
+
+        <div class="episode-menu-divider" role="separator" />
+
+        <button
+          type="button"
+          class="episode-menu-item is-danger"
+          role="menuitem"
+          @click="emit('remove', primaryForDownloads(activeMenuEpisode.downloads)!); closeEpisodeMenu()"
+        >
+          <AppNavIcon name="trash" class="size-3.5 shrink-0" />
+          <span>删除该集</span>
+        </button>
+      </div>
+    </Teleport>
   </section>
 </template>
 
@@ -1031,5 +1321,67 @@ function formatDateTime(value: string): string {
 .episode-index.is-done {
   background: var(--accent-soft);
   color: var(--accent);
+}
+.episode-more-btn {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 999px;
+  color: var(--muted);
+  transition: background 0.15s, color 0.15s;
+}
+.episode-more-btn:hover,
+.episode-more-btn.is-open,
+.episode-more-btn:focus-visible {
+  background: var(--panel);
+  color: var(--ink);
+  outline: none;
+}
+</style>
+
+<style>
+.episode-more-menu {
+  position: fixed;
+  z-index: 120;
+  display: grid;
+  gap: 2px;
+  min-width: 156px;
+  padding: 5px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: var(--card);
+  box-shadow: var(--strong-shadow);
+}
+.episode-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 10px;
+  border-radius: 8px;
+  color: var(--ink);
+  font-size: 12.5px;
+  font-weight: 500;
+  text-align: left;
+  transition: background 0.12s, color 0.12s;
+}
+.episode-menu-item:hover:not(:disabled) {
+  background: var(--panel);
+}
+.episode-menu-item:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.episode-menu-item.is-danger {
+  color: var(--err);
+}
+.episode-menu-item.is-danger:hover:not(:disabled) {
+  background: var(--err-soft);
+}
+.episode-menu-divider {
+  height: 1px;
+  margin: 3px 6px;
+  background: var(--line);
 }
 </style>

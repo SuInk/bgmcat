@@ -38,6 +38,7 @@ import {
   type DownloadSortMode,
   type SeriesDownloadGroup
 } from "../lib/downloadGrouping";
+import { openExternalLink } from "../lib/actions";
 import { formatBytes, formatSpeed, progressPercent } from "../lib/format";
 import { selectTab } from "../stores/boot";
 import { isBusyMatching } from "../stores/busy";
@@ -46,6 +47,7 @@ import {
   animeDetailError,
   closeAnimeDetail,
   homepageAnime,
+  openAnimeDetail,
   openDownloadAnimeDetail,
   queueMikanDownload
 } from "../stores/discovery";
@@ -74,6 +76,7 @@ import {
 } from "../stores/downloads";
 import { subscriptions } from "../stores/subscriptions";
 import {
+  SHARE_FEATURE_ENABLED,
   activeSharesCount,
   canShareSeriesGroup,
   openShareForDownload,
@@ -81,7 +84,13 @@ import {
   openShareManager,
   refreshShares
 } from "../stores/shares";
-import { viewportWidth } from "../stores/ui";
+import {
+  DOWNLOAD_SIDE_DEFAULT_WIDTH,
+  DOWNLOAD_SIDE_MAX_WIDTH,
+  DOWNLOAD_SIDE_MIN_WIDTH,
+  downloadSideWidth,
+  viewportWidth
+} from "../stores/ui";
 
 const filterKey = ref<DownloadFilterKey>("all");
 const sortMode = ref<DownloadSortMode>("status");
@@ -320,18 +329,33 @@ const filterTabs = computed(() => {
 });
 
 /**
- * 按 B 站「离线缓存」分两段：上面「正在缓存 / 转存」包含仍在下载、正在转存云盘或转存报错的番（带实时进度与重试/取消操作），
- * 下面「已缓存」是已全部就绪的番，排成封面墙，点进去看分集。
+ * 统一采用海报封面墙排版：正在下载或转存云盘的番排在最前面，封面自带实时状态徽章与底部进度条，
+ * 避免「下载一半」和「已缓存」被拆成两套割裂排版。
  */
 const cachingGroups = computed(() => pagedDownloadGroups.value.filter(isGroupActiveOrTransferring));
 const cachedGroups = computed(() => pagedDownloadGroups.value.filter((group) => !isGroupActiveOrTransferring(group)));
-const activeSectionTitle = computed(() => {
-  const hasDownloading = cachingGroups.value.some((group) => groupStatus(group) !== "complete");
-  const hasTransferring = cachingGroups.value.some((group) => Boolean(groupCloudTransferSummary(group)));
-  if (hasDownloading && hasTransferring) return "正在缓存 / 转存";
-  if (hasTransferring) return "正在转存云盘";
-  return "正在缓存";
-});
+const unifiedDownloadGroups = computed(() => [...cachingGroups.value, ...cachedGroups.value]);
+
+function cardStatusBadge(group: SeriesDownloadGroup): { label: string; kind: "err" | "cloud-up" | "active" | "paused" | "cloud" } | null {
+  if (group.primary.status === "error" || isCloudFailed(group.primary)) {
+    return { label: "异常", kind: "err" };
+  }
+  const cloud = groupCloudTransferSummary(group);
+  if (cloud?.transferring || isCloudTransferring(group.primary)) {
+    return { label: `转存 ${groupProgressWidth(group)}%`, kind: "cloud-up" };
+  }
+  if (isGroupActiveOrTransferring(group)) {
+    const st = groupStatus(group);
+    if (st === "paused") {
+      return { label: `已暂停 ${groupProgressWidth(group)}%`, kind: "paused" };
+    }
+    return { label: `缓存 ${groupProgressWidth(group)}%`, kind: "active" };
+  }
+  if (groupCloudStoredCount(group) > 0) {
+    return { label: "云盘", kind: "cloud" };
+  }
+  return null;
+}
 
 function resolveGroupArtworkUrl(group: SeriesDownloadGroup): string | null {
   for (const download of group.downloads) {
@@ -501,6 +525,51 @@ const detailPanelAnimeTitle = computed(() => {
   return (belongs && animeDetail.value?.anime.title) || group.title;
 });
 
+const detailBelongsToGroup = computed(() =>
+  Boolean(
+    detailPanelGroup.value &&
+      animeDetail.value &&
+      detailPanelGroup.value.downloads.some((item) => item.gid === selectedDownloadDetailGid.value)
+  )
+);
+
+const detailMatchedAnime = computed(() =>
+  detailBelongsToGroup.value ? animeDetail.value : null
+);
+
+const detailSourceLinks = computed(() => {
+  const anime = detailMatchedAnime.value?.anime;
+  if (!anime) {
+    return [];
+  }
+  const links: Array<{ label: string; url: string }> = [];
+  if (anime.bangumiId) {
+    links.push({ label: "Bangumi", url: `https://bgm.tv/subject/${anime.bangumiId}` });
+  }
+  if (anime.mikanId) {
+    links.push({ label: "蜜柑", url: `https://mikanani.me/Home/Bangumi/${anime.mikanId}` });
+  }
+  return links;
+});
+
+const detailPrimaryStreamingLink = computed(() =>
+  detailMatchedAnime.value?.streamingLinks?.[0] ?? null
+);
+
+const detailRatingLabel = computed(() => {
+  const value = detailMatchedAnime.value?.anime.rating;
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? value.toFixed(1) : null;
+});
+
+function openDetailInDiscovery(): void {
+  const matched = detailMatchedAnime.value?.anime;
+  if (!matched) {
+    return;
+  }
+  selectTab("home");
+  void openAnimeDetail(matched);
+}
+
 function collapseDownloadGroup(): void {
   activeDownloadGroupKey.value = null;
   activeGroupAnchorGid.value = null;
@@ -514,6 +583,74 @@ function handleViewKeydown(event: KeyboardEvent): void {
   }
 }
 
+const downloadsLayoutRef = ref<HTMLElement | null>(null);
+const sideResizing = ref(false);
+let sideResizeStartX = 0;
+let sideResizeStartWidth = DOWNLOAD_SIDE_DEFAULT_WIDTH;
+
+const downloadsLayoutStyle = computed(() => {
+  if (!detailPanelGroup.value || fullPageDetail.value) {
+    return undefined;
+  }
+  return {
+    gridTemplateColumns: `minmax(0, 1fr) 16px min(${downloadSideWidth.value}px, max(22.5rem, 62%))`
+  };
+});
+
+function maxDownloadSideWidth(): number {
+  const layoutWidth = downloadsLayoutRef.value?.clientWidth ?? 0;
+  if (layoutWidth <= 0) {
+    return DOWNLOAD_SIDE_MAX_WIDTH;
+  }
+  return Math.min(DOWNLOAD_SIDE_MAX_WIDTH, Math.max(DOWNLOAD_SIDE_MIN_WIDTH, layoutWidth - 280));
+}
+
+function onSideResizeMove(event: PointerEvent): void {
+  const delta = sideResizeStartX - event.clientX;
+  const next = Math.min(maxDownloadSideWidth(), Math.max(DOWNLOAD_SIDE_MIN_WIDTH, Math.round(sideResizeStartWidth + delta)));
+  downloadSideWidth.value = next;
+}
+
+function stopSideResize(): void {
+  if (!sideResizing.value) return;
+  sideResizing.value = false;
+  document.body.style.userSelect = "";
+  document.body.style.cursor = "";
+  window.removeEventListener("pointermove", onSideResizeMove);
+  window.removeEventListener("pointerup", stopSideResize);
+  window.removeEventListener("pointercancel", stopSideResize);
+}
+
+function startSideResize(event: PointerEvent): void {
+  if (fullPageDetail.value || !detailPanelGroup.value || event.button !== 0) return;
+  event.preventDefault();
+  sideResizeStartX = event.clientX;
+  sideResizeStartWidth = downloadSideWidth.value;
+  sideResizing.value = true;
+  document.body.style.userSelect = "none";
+  document.body.style.cursor = "col-resize";
+  window.addEventListener("pointermove", onSideResizeMove);
+  window.addEventListener("pointerup", stopSideResize);
+  window.addEventListener("pointercancel", stopSideResize);
+}
+
+function resetSideWidth(): void {
+  downloadSideWidth.value = DOWNLOAD_SIDE_DEFAULT_WIDTH;
+}
+
+function handleSideResizeKeydown(event: KeyboardEvent): void {
+  if (event.key === "ArrowLeft") {
+    event.preventDefault();
+    downloadSideWidth.value = Math.min(maxDownloadSideWidth(), downloadSideWidth.value + 16);
+  } else if (event.key === "ArrowRight") {
+    event.preventDefault();
+    downloadSideWidth.value = Math.max(DOWNLOAD_SIDE_MIN_WIDTH, downloadSideWidth.value - 16);
+  } else if (event.key === "Home" || event.key === "0") {
+    event.preventDefault();
+    resetSideWidth();
+  }
+}
+
 onMounted(() => {
   void refreshShares(true);
   window.addEventListener("keydown", handleViewKeydown);
@@ -523,6 +660,7 @@ onMounted(() => {
   });
 });
 onBeforeUnmount(() => {
+  stopSideResize();
   downloadsLoadMoreObserver?.disconnect();
   downloadsLoadMoreObserver = null;
   window.removeEventListener("keydown", handleViewKeydown);
@@ -602,6 +740,10 @@ watch(groupedDownloads, () => {
     <DownloadPlaybackSection
       v-if="activePlayback"
       :playback="activePlayback"
+      :active-download="activePlaybackDownload"
+      :total-download-speed="totalDownloadSpeed"
+      :total-upload-speed="totalUploadSpeed"
+      :total-cloud-upload-speed="totalCloudUploadSpeed"
       :group="playbackGroup"
       :subgroup="activePlaybackSubgroup"
       :resolution="activePlaybackResolution"
@@ -618,7 +760,13 @@ watch(groupedDownloads, () => {
       @share="handlePlaybackShare"
     />
 
-    <div v-else class="downloads-layout" :class="{ 'has-side': detailPanelGroup && !fullPageDetail }">
+    <div
+      v-else
+      ref="downloadsLayoutRef"
+      class="downloads-layout"
+      :class="{ 'has-side': detailPanelGroup && !fullPageDetail }"
+      :style="downloadsLayoutStyle"
+    >
       <div v-if="!(fullPageDetail && detailPanelGroup)" class="motion-rise grid min-h-0 grid-rows-[auto_minmax(0,1fr)_auto] overflow-hidden">
         <div class="page-toolbar">
           <div class="toolbar-row">
@@ -636,17 +784,27 @@ watch(groupedDownloads, () => {
                 <span class="chip-count tabular-nums">{{ tab.count }}</span>
               </button>
             </div>
-            <span v-if="totalDownloadSpeed > 0 || totalUploadSpeed > 0 || totalCloudUploadSpeed > 0" class="toolbar-meta flex shrink-0 items-center gap-3 tabular-nums">
-              <span v-if="totalDownloadSpeed > 0" class="inline-block min-w-[5.25rem] text-right text-[var(--ink)]">↓ {{ formatSpeed(totalDownloadSpeed) }}</span>
-              <span v-if="totalUploadSpeed > 0" class="inline-block min-w-[5.25rem] text-right max-sm:hidden">↑ {{ formatSpeed(totalUploadSpeed) }}</span>
-              <span
-                v-if="totalCloudUploadSpeed > 0"
-                class="inline-flex min-w-[5.75rem] items-center justify-end gap-1 text-right font-semibold text-[var(--accent-vivid)]"
-                title="Google Drive 实时转存速率"
-              >
-                <AppNavIcon name="cloud-upload" class="size-3.5 shrink-0" aria-hidden="true" />
-                <span>{{ formatSpeed(totalCloudUploadSpeed) }}</span>
+            <span
+              class="toolbar-meta inline-flex shrink-0 items-center gap-2.5 rounded-full border border-[var(--line)] bg-[var(--panel)] px-3 py-1 text-xs font-semibold tabular-nums"
+              :title="`实时速率：下载 ${formatSpeed(totalDownloadSpeed)} · 上传 ${formatSpeed(totalUploadSpeed)}${totalCloudUploadSpeed > 0 ? ` · 云盘转存 ${formatSpeed(totalCloudUploadSpeed)}` : ''}`"
+            >
+              <span :class="totalDownloadSpeed > 0 ? 'text-[var(--ok)]' : 'text-[var(--muted)]'">
+                ↓ <span :class="totalDownloadSpeed > 0 ? 'text-[var(--ink)]' : ''">{{ formatSpeed(totalDownloadSpeed) }}</span>
               </span>
+              <span class="h-3 w-px bg-[var(--line)] max-sm:hidden" aria-hidden="true" />
+              <span class="max-sm:hidden" :class="totalUploadSpeed > 0 ? 'text-[var(--accent)]' : 'text-[var(--muted)]'">
+                ↑ <span :class="totalUploadSpeed > 0 ? 'text-[var(--ink)]' : ''">{{ formatSpeed(totalUploadSpeed) }}</span>
+              </span>
+              <template v-if="totalCloudUploadSpeed > 0">
+                <span class="h-3 w-px bg-[var(--line)]" aria-hidden="true" />
+                <span
+                  class="inline-flex items-center gap-1 text-[var(--accent-vivid)]"
+                  title="Google Drive 实时转存速率"
+                >
+                  <AppNavIcon name="cloud-upload" class="size-3.5 shrink-0" aria-hidden="true" />
+                  <span>{{ formatSpeed(totalCloudUploadSpeed) }}</span>
+                </span>
+              </template>
             </span>
           </div>
 
@@ -667,6 +825,7 @@ watch(groupedDownloads, () => {
             />
             <div class="ml-auto flex flex-wrap items-center justify-end gap-2 max-sm:contents">
               <button
+                v-if="SHARE_FEATURE_ENABLED"
                 type="button"
                 class="btn-ghost inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-semibold max-sm:px-2.5"
                 title="管理已分享的在线观看链接"
@@ -755,191 +914,20 @@ watch(groupedDownloads, () => {
             </div>
           </div>
 
-          <div v-else class="grid gap-6 py-2">
-            <section v-if="cachingGroups.length" class="grid gap-2">
-              <h3 class="cache-section-title">{{ activeSectionTitle }} <span class="tabular-nums">{{ cachingGroups.length }}</span></h3>
-              <div class="grid gap-1">
-                <div
-                  v-for="group in cachingGroups"
-                  :key="group.key"
-                  class="download-card"
-                  :class="{ 'is-open': activeDownloadGroupKey === group.key }"
-                >
-                  <article class="download-row" @click="onGroupActivate(group)">
-                    <label v-if="selectMode" class="grid size-6 shrink-0 place-items-center" @click.stop>
-                      <input
-                        type="checkbox"
-                        class="size-4 accent-[var(--accent)]"
-                        :aria-label="`选择 ${group.title}`"
-                        :checked="selectedGroupKeys.has(group.key)"
-                        @change="setGroupSelected(group.key, ($event.target as HTMLInputElement).checked)"
-                      />
-                    </label>
-
-                    <div class="download-poster" :style="coverStyle(group.primary.gid)">
-                      <img
-                        v-if="resolveGroupArtworkUrl(group)"
-                        :src="resolveGroupArtworkUrl(group) ?? ''"
-                        :alt="group.title"
-                        class="absolute inset-0 size-full object-cover"
-                        loading="lazy"
-                      />
-                      <div v-else class="absolute inset-0 grid place-items-center px-1 text-center">
-                        <span class="text-xs font-semibold text-white/90">{{ coverLabel(group.title) }}</span>
-                      </div>
-                    </div>
-
-                    <div class="download-info grid min-w-0 gap-1">
-                      <strong class="truncate text-[15px] font-semibold leading-snug text-[var(--ink)]" :title="group.title">{{ group.title }}</strong>
-                      <p class="flex min-w-0 items-center gap-1.5 text-xs text-[var(--muted)]">
-                        <span class="truncate">{{ formatGroupMetaLine(group) }}</span>
-                      </p>
-                      <div class="flex min-w-0 items-center gap-2.5">
-                        <span class="progress-track w-36 shrink-0 sm:w-48">
-                          <span
-                            class="progress-fill"
-                            :class="
-                              group.primary.status === 'error' || isCloudFailed(group.primary)
-                                ? '!bg-[var(--err)]'
-                                : group.primary.status === 'paused'
-                                  ? '!bg-[var(--muted)]'
-                                  : ''
-                            "
-                            :style="{ width: `${groupProgressWidth(group)}%` }"
-                          ></span>
-                        </span>
-                        <span
-                          class="min-w-0 truncate text-xs tabular-nums"
-                          :class="
-                            group.primary.status === 'error' || isCloudFailed(group.primary)
-                              ? 'text-[var(--err)]'
-                              : isCloudTransferring(group.primary)
-                                ? 'font-semibold text-[var(--accent-vivid)]'
-                                : 'text-[var(--muted)]'
-                          "
-                        >
-                          {{ groupProgressLine(group) }}
-                        </span>
-                      </div>
-                      <p
-                        v-if="downloadRawError(group.primary)"
-                        class="truncate text-xs text-[var(--err)]"
-                        :title="downloadRawError(group.primary) ?? undefined"
-                      >
-                        {{ downloadRawError(group.primary) }}
-                      </p>
-                      <p
-                        v-if="group.primary.cloudArchive?.error"
-                        class="truncate text-xs text-[var(--err)]"
-                        :title="group.primary.cloudArchive.error ?? undefined"
-                      >
-                        {{ cloudArchiveLabel(group.primary) }} · {{ group.primary.cloudArchive.error }}
-                      </p>
-                      <p
-                        v-else-if="group.primary.cloudArchive && groupStatus(group) !== 'complete'"
-                        class="truncate text-xs text-[var(--muted)]"
-                      >
-                        {{ cloudArchiveLabel(group.primary) }}
-                      </p>
-                    </div>
-
-                    <div v-if="!selectMode" class="flex shrink-0 items-center gap-1.5" @click.stop>
-                      <button
-                        v-if="canShareSeriesGroup(group)"
-                        type="button"
-                        class="icon-btn reveal-on-hover max-sm:hidden"
-                        :title="`分享 ${group.title}`"
-                        :aria-label="`分享 ${group.title}`"
-                        @click="openShareForSeriesGroup(group)"
-                      >
-                        <AppNavIcon name="share" />
-                      </button>
-                      <button
-                        type="button"
-                        class="icon-btn reveal-on-hover text-[var(--err)] hover:text-[var(--err)] max-sm:hidden"
-                        title="删除"
-                        aria-label="删除"
-                        @click="requestDelete(group.primary)"
-                      >
-                        <AppNavIcon name="trash" />
-                      </button>
-                      <button
-                        v-if="isCloudFailed(group.primary)"
-                        type="button"
-                        class="icon-btn text-[var(--warn)] hover:text-[var(--accent-vivid)]"
-                        title="立即重试云盘转存"
-                        aria-label="立即重试云盘转存"
-                        :disabled="isDownloadRowBusy(group.primary.gid)"
-                        @click="triggerCloudArchive(group.primary.gid)"
-                      >
-                        <AppNavIcon name="refresh" />
-                      </button>
-                      <button
-                        v-else-if="canArchiveToCloud(group.primary)"
-                        type="button"
-                        class="icon-btn reveal-on-hover text-[var(--accent-vivid)] max-sm:hidden"
-                        :title="group.primary.status === 'complete' ? '转存至 Google Drive' : '完成后自动转存至 Google Drive'"
-                        aria-label="转存至 Google Drive"
-                        :disabled="isDownloadRowBusy(group.primary.gid)"
-                        @click="triggerCloudArchive(group.primary.gid)"
-                      >
-                        <AppNavIcon name="cloud-upload" />
-                      </button>
-                      <button
-                        v-if="isCloudTransferring(group.primary) || isCloudFailed(group.primary)"
-                        type="button"
-                        class="icon-btn text-[var(--muted)] hover:text-[var(--err)]"
-                        title="取消云盘转存"
-                        aria-label="取消云盘转存"
-                        :disabled="isDownloadRowBusy(group.primary.gid)"
-                        @click="cancelCloudArchive(group.primary.gid)"
-                      >
-                        <AppNavIcon name="close" />
-                      </button>
-                      <button
-                        v-if="canPauseDownload(group.primary) || canResumeDownload(group.primary)"
-                        type="button"
-                        class="icon-btn"
-                        :title="canResumeDownload(group.primary) ? '继续下载' : '暂停'"
-                        :aria-label="canResumeDownload(group.primary) ? '继续下载' : '暂停'"
-                        :disabled="isDownloadRowBusy(group.primary.gid)"
-                        @click="updateDownloadState(canResumeDownload(group.primary) ? 'resume' : 'pause', group.primary.gid)"
-                      >
-                        <AppNavIcon :name="canResumeDownload(group.primary) ? 'download' : 'pause'" />
-                      </button>
-                      <button
-                        v-if="group.playable"
-                        type="button"
-                        class="play-btn"
-                        :title="`${group.playable.status === 'complete' ? '播放' : '边下边播'} ${group.playableEpisodeLabel ?? ''}`.trim()"
-                        :aria-label="`${group.playable.status === 'complete' ? '播放' : '边下边播'} ${group.playableEpisodeLabel ?? ''}`.trim()"
-                        :disabled="isDownloadRowBusy(group.playable.gid)"
-                        @click="openPlayback(group.playable)"
-                      >
-                        <AppNavIcon name="play" class="size-3.5" />
-                      </button>
-                      <AppNavIcon
-                        name="chevron-right"
-                        class="size-4 shrink-0 text-[var(--muted)] transition-transform duration-200"
-                        aria-hidden="true"
-                      />
-                    </div>
-                  </article>
-                </div>
-              </div>
-            </section>
-
-            <section v-if="cachedGroups.length" class="grid gap-3">
-              <h3 class="cache-section-title">已缓存 <span class="tabular-nums">{{ cachedGroups.length }}</span></h3>
+          <div v-else class="grid gap-4 py-2">
+            <section class="grid gap-3">
               <div class="cache-grid">
                 <div
-                  v-for="group in cachedGroups"
+                  v-for="group in unifiedDownloadGroups"
                   :key="group.key"
                   class="cache-card"
-                  :class="{ 'is-open': activeDownloadGroupKey === group.key, 'is-selected': selectMode && selectedGroupKeys.has(group.key) }"
+                  :class="{
+                    'is-open': activeDownloadGroupKey === group.key,
+                    'is-selected': selectMode && selectedGroupKeys.has(group.key)
+                  }"
                   role="button"
                   tabindex="0"
-                  :aria-label="`${group.title}，${cachedMetaLine(group)}`"
+                  :aria-label="`${group.title}，${isGroupActiveOrTransferring(group) ? groupProgressLine(group) : cachedMetaLine(group)}`"
                   @click="onGroupActivate(group)"
                   @keydown.enter.prevent="onGroupActivate(group)"
                   @keydown.space.prevent="onGroupActivate(group)"
@@ -955,13 +943,29 @@ watch(groupedDownloads, () => {
                     <div v-else class="absolute inset-0 grid place-items-center px-2 text-center">
                       <span class="text-sm font-semibold text-white/90">{{ coverLabel(group.title) }}</span>
                     </div>
-                    <span v-if="!selectMode && groupCloudStoredCount(group) > 0" class="cache-cloud-badge">
-                      <AppNavIcon name="cloud" class="size-3" aria-hidden="true" />
-                      <span>云盘</span>
+
+                    <span
+                      v-if="!selectMode && cardStatusBadge(group)"
+                      class="cache-cloud-badge"
+                      :class="`is-${cardStatusBadge(group)!.kind}`"
+                    >
+                      <AppNavIcon
+                        v-if="cardStatusBadge(group)!.kind === 'cloud' || cardStatusBadge(group)!.kind === 'cloud-up'"
+                        name="cloud"
+                        class="size-3"
+                        aria-hidden="true"
+                      />
+                      <span
+                        v-else-if="cardStatusBadge(group)!.kind === 'active'"
+                        class="size-1.5 rounded-full bg-current animate-pulse"
+                        aria-hidden="true"
+                      />
+                      <span class="tabular-nums">{{ cardStatusBadge(group)!.label }}</span>
                     </span>
+
                     <span v-if="!selectMode" class="cache-top-actions">
                       <button
-                        v-if="canShareSeriesGroup(group)"
+                        v-if="SHARE_FEATURE_ENABLED && canShareSeriesGroup(group)"
                         type="button"
                         class="cache-cloud-btn"
                         :title="`分享 ${group.title}`"
@@ -971,7 +975,18 @@ watch(groupedDownloads, () => {
                         <AppNavIcon name="share" class="size-3.5" />
                       </button>
                       <button
-                        v-if="groupArchivableGids(group).length > 0"
+                        v-if="isGroupActiveOrTransferring(group) && (canPauseDownload(group.primary) || canResumeDownload(group.primary))"
+                        type="button"
+                        class="cache-cloud-btn"
+                        :title="canResumeDownload(group.primary) ? '继续下载' : '暂停下载'"
+                        :aria-label="canResumeDownload(group.primary) ? '继续下载' : '暂停下载'"
+                        :disabled="isDownloadRowBusy(group.primary.gid)"
+                        @click.stop="updateDownloadState(canResumeDownload(group.primary) ? 'resume' : 'pause', group.primary.gid)"
+                      >
+                        <AppNavIcon :name="canResumeDownload(group.primary) ? 'download' : 'pause'" class="size-3.5" />
+                      </button>
+                      <button
+                        v-else-if="groupArchivableGids(group).length > 0"
                         type="button"
                         class="cache-cloud-btn"
                         :title="`转存 ${group.title} 至 Google Drive`"
@@ -981,6 +996,7 @@ watch(groupedDownloads, () => {
                         <AppNavIcon name="cloud-upload" class="size-3.5" />
                       </button>
                     </span>
+
                     <span class="cache-badge tabular-nums">{{ group.episodes.length }} 集</span>
                     <span v-if="selectMode" class="cache-check" :class="{ 'is-on': selectedGroupKeys.has(group.key) }" aria-hidden="true">
                       <AppNavIcon name="check" class="size-3.5" />
@@ -989,15 +1005,42 @@ watch(groupedDownloads, () => {
                       v-else-if="group.playable"
                       type="button"
                       class="play-btn cache-play"
-                      :title="`播放 ${group.playableEpisodeLabel ?? ''}`"
-                      :aria-label="`播放 ${group.playableEpisodeLabel ?? ''}`"
+                      :title="`${group.playable.status === 'complete' ? '播放' : '边下边播'} ${group.playableEpisodeLabel ?? ''}`.trim()"
+                      :aria-label="`${group.playable.status === 'complete' ? '播放' : '边下边播'} ${group.playableEpisodeLabel ?? ''}`.trim()"
                       @click.stop="openPlayback(group.playable)"
                     >
                       <AppNavIcon name="play" class="size-3.5" />
                     </button>
+
+                    <!-- 正在缓存 / 转存时在封面底边显示实时进度细条 -->
+                    <span v-if="isGroupActiveOrTransferring(group)" class="cache-poster-progress" aria-hidden="true">
+                      <span
+                        class="cache-poster-progress-fill"
+                        :class="{
+                          'is-err': group.primary.status === 'error' || isCloudFailed(group.primary),
+                          'is-paused': group.primary.status === 'paused'
+                        }"
+                        :style="{ width: `${groupProgressWidth(group)}%` }"
+                      />
+                    </span>
                   </div>
+
                   <strong class="mt-2 line-clamp-1 text-[13px] font-semibold text-[var(--ink)]" :title="group.title">{{ group.title }}</strong>
-                  <span class="line-clamp-1 text-xs text-[var(--muted)]">{{ cachedMetaLine(group) }}</span>
+                  <span
+                    v-if="isGroupActiveOrTransferring(group)"
+                    class="line-clamp-2 text-[11.5px] leading-snug tabular-nums"
+                    :class="
+                      group.primary.status === 'error' || isCloudFailed(group.primary)
+                        ? 'text-[var(--err)]'
+                        : isCloudTransferring(group.primary)
+                          ? 'text-[var(--accent-vivid)]'
+                          : 'text-[var(--muted)]'
+                    "
+                    :title="groupProgressLine(group)"
+                  >
+                    {{ groupProgressLine(group) }}
+                  </span>
+                  <span v-else class="line-clamp-1 text-xs text-[var(--muted)]">{{ cachedMetaLine(group) }}</span>
                 </div>
               </div>
             </section>
@@ -1044,43 +1087,119 @@ watch(groupedDownloads, () => {
         </div>
       </div>
 
+      <div
+        v-if="detailPanelGroup && !fullPageDetail"
+        class="split-resizer"
+        :class="{ 'is-dragging': sideResizing }"
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="调整详情栏宽度"
+        :aria-valuenow="downloadSideWidth"
+        :aria-valuemin="DOWNLOAD_SIDE_MIN_WIDTH"
+        :aria-valuemax="DOWNLOAD_SIDE_MAX_WIDTH"
+        title="拖动调整左右栏宽度，双击重置"
+        tabindex="0"
+        @pointerdown="startSideResize"
+        @dblclick="resetSideWidth"
+        @keydown="handleSideResizeKeydown"
+      >
+        <span class="split-resizer-pill" aria-hidden="true" />
+      </div>
+
       <aside v-if="detailPanelGroup" :key="detailPanelGroup.key" class="download-detail" :class="fullPageDetail ? 'motion-rise' : 'is-side motion-slide'">
-        <button
-          v-if="fullPageDetail"
-          type="button"
-          class="btn-ghost inline-flex min-h-[40px] w-fit items-center gap-1.5 px-3.5 py-2 text-sm font-semibold"
-          @click="collapseDownloadGroup"
-        >
-          <AppNavIcon name="chevron-left" class="size-4" aria-hidden="true" />
-          下载管理
-        </button>
-        <header class="flex min-w-0 items-center gap-3">
-          <div class="download-poster !w-14" :style="coverStyle(detailPanelGroup.primary.gid)">
+        <!-- 顶部导航条：与首页番剧详情页对齐 -->
+        <div class="detail-top-nav">
+          <button
+            type="button"
+            class="detail-back-link"
+            :aria-label="fullPageDetail ? '返回下载管理' : '关闭侧栏'"
+            @click="collapseDownloadGroup"
+          >
+            <AppNavIcon :name="fullPageDetail ? 'chevron-left' : 'close'" class="size-3.5 shrink-0" aria-hidden="true" />
+            <span>{{ fullPageDetail ? "返回" : "关闭" }}</span>
+          </button>
+
+          <div v-if="detailSourceLinks.length" class="flex flex-wrap items-center gap-1 text-xs font-medium text-[var(--muted)]">
+            <button
+              v-for="link in detailSourceLinks"
+              :key="link.label"
+              type="button"
+              class="inline-flex min-h-8 items-center gap-1 rounded-lg px-2 py-1 transition hover:bg-[var(--panel)] hover:text-[var(--ink)]"
+              :title="link.url"
+              @click="openExternalLink(link.url)"
+            >
+              <span>{{ link.label }}</span>
+              <AppNavIcon name="external" class="size-3 opacity-75" aria-hidden="true" />
+            </button>
+          </div>
+        </div>
+
+        <!-- 紧凑番剧头部：与首页详情页一致的 2:3 海报 + 标题评分 + 单行操作栏 -->
+        <header class="detail-hero">
+          <div class="detail-hero-poster" :style="coverStyle(detailPanelGroup.primary.gid)">
             <img
               v-if="resolveGroupArtworkUrl(detailPanelGroup)"
               :src="resolveGroupArtworkUrl(detailPanelGroup) ?? ''"
               alt=""
-              class="absolute inset-0 size-full object-cover"
+              class="block size-full object-cover"
             />
-            <div v-else class="absolute inset-0 grid place-items-center text-sm font-semibold text-white/90">{{ coverLabel(detailPanelGroup.title) }}</div>
+            <span v-else class="text-sm font-semibold text-white/90">{{ coverLabel(detailPanelGroup.title) }}</span>
           </div>
-          <div class="min-w-0">
-            <h2 class="line-clamp-2 text-[15px] font-semibold leading-snug text-[var(--ink)]" :title="detailPanelGroup.title">{{ detailPanelAnimeTitle }}</h2>
-            <p class="mt-0.5 truncate text-xs text-[var(--muted)]">
+
+          <div class="flex min-w-0 flex-col gap-1.5">
+            <div class="flex items-baseline justify-between gap-2">
+              <h2 class="min-w-0 truncate text-[16px] font-bold leading-snug tracking-tight text-[var(--ink)] sm:text-[17px]" :title="detailPanelGroup.title">
+                {{ detailPanelAnimeTitle }}
+              </h2>
+              <span
+                v-if="detailRatingLabel"
+                class="inline-flex shrink-0 items-baseline gap-0.5 text-xs font-bold tabular-nums text-[var(--warn)]"
+              >
+                ★ {{ detailRatingLabel }}
+              </span>
+            </div>
+
+            <p class="text-xs leading-snug text-[var(--muted)]">
               {{ formatGroupMetaLine(detailPanelGroup) }}
             </p>
+
+            <div class="mt-0.5 flex flex-wrap items-center gap-1.5">
+              <button
+                v-if="detailPanelGroup.playable"
+                type="button"
+                class="btn-primary inline-flex h-[30px] items-center gap-1.5 rounded-[7px] px-3 text-xs font-semibold"
+                @click="openPlayback(detailPanelGroup.playable)"
+              >
+                <AppNavIcon name="play" class="size-3 shrink-0" aria-hidden="true" />
+                <span>{{ detailPanelGroup.playable.status === "complete" ? "立即播放" : "边下边播" }}</span>
+              </button>
+
+              <button
+                v-if="detailMatchedAnime"
+                type="button"
+                class="btn-ghost inline-flex h-[30px] items-center gap-1.5 rounded-[7px] px-2.5 text-xs font-semibold"
+                title="前往番剧发现页查看全部剧集、在线片源与订阅"
+                @click="openDetailInDiscovery"
+              >
+                <AppNavIcon name="home" class="size-3.5 shrink-0 opacity-85" aria-hidden="true" />
+                <span>番剧详情 / 在线资源</span>
+              </button>
+
+              <button
+                v-if="detailPrimaryStreamingLink"
+                type="button"
+                class="btn-ghost inline-flex h-[30px] items-center gap-1.5 rounded-[7px] px-2.5 text-xs font-semibold text-[var(--accent-vivid)]"
+                :title="`前往 ${detailPrimaryStreamingLink.label} 在线观看`"
+                @click="openExternalLink(detailPrimaryStreamingLink.url)"
+              >
+                <AppNavIcon name="play" class="size-3 shrink-0" aria-hidden="true" />
+                <span>{{ detailPrimaryStreamingLink.label }}</span>
+                <AppNavIcon name="external" class="size-3 shrink-0 opacity-75" aria-hidden="true" />
+              </button>
+            </div>
           </div>
-          <button
-            v-if="!fullPageDetail"
-            type="button"
-            class="icon-btn ml-auto shrink-0 self-start"
-            aria-label="关闭侧栏"
-            title="关闭侧栏"
-            @click="collapseDownloadGroup"
-          >
-            <AppNavIcon name="close" />
-          </button>
         </header>
+
         <DownloadVersionPane
           flat
           :show-overview="true"
@@ -1092,7 +1211,7 @@ watch(groupedDownloads, () => {
           :download-raw-error="downloadRawError"
           :is-download-row-busy="isDownloadRowBusy"
           :anime-detail="animeDetail"
-          :detail-belongs-to-group="detailPanelGroup.downloads.some((item) => item.gid === selectedDownloadDetailGid)"
+          :detail-belongs-to-group="detailBelongsToGroup"
           :detail-error="animeDetailError"
           :detail-loading="detailLoading"
           @conflict="handleDownloadConflict($event.gid, $event.strategy)"
@@ -1301,16 +1420,52 @@ watch(groupedDownloads, () => {
   overflow: hidden;
 }
 .downloads-layout.has-side {
-  grid-template-columns: minmax(0, 1fr) 22rem;
-  gap: 20px;
+  grid-template-columns: minmax(0, 1fr) 16px clamp(27rem, 42%, 34rem);
+  gap: 0;
+}
+.downloads-layout.has-side .toolbar-row {
+  flex-wrap: wrap;
+}
+.split-resizer {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: col-resize;
+  touch-action: none;
+  user-select: none;
+}
+.split-resizer-pill {
+  width: 3px;
+  height: 36px;
+  border-radius: 999px;
+  background: var(--line);
+  opacity: 0.65;
+  transition: background 150ms ease, height 150ms ease, opacity 150ms ease;
+}
+.split-resizer:hover .split-resizer-pill,
+.split-resizer.is-dragging .split-resizer-pill,
+.split-resizer:focus-visible .split-resizer-pill {
+  height: 56px;
+  background: var(--accent);
+  opacity: 1;
+}
+.split-resizer:focus-visible {
+  outline: none;
 }
 .download-detail {
   display: grid;
   align-content: start;
-  gap: 16px;
+  gap: 10px;
   min-height: 0;
-  overflow: auto;
-  padding: 12px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding: 10px 12px;
+  scrollbar-width: none;
+}
+.download-detail::-webkit-scrollbar {
+  width: 0;
+  height: 0;
 }
 @media (max-width: 768px) {
   .download-detail {
@@ -1331,5 +1486,84 @@ watch(groupedDownloads, () => {
   .download-poster {
     width: 2.75rem;
   }
+}
+.cache-cloud-badge.is-active,
+.cache-cloud-badge.is-cloud-up {
+  background: color-mix(in srgb, var(--accent) 82%, rgb(15 19 32));
+  color: #fff;
+}
+.cache-cloud-badge.is-err {
+  background: color-mix(in srgb, var(--err) 86%, rgb(15 19 32));
+  color: #fff;
+}
+.cache-cloud-badge.is-paused {
+  background: rgb(15 19 32 / 0.72);
+  color: rgba(255, 255, 255, 0.85);
+}
+.cache-poster-progress {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 4px;
+  background: rgb(0 0 0 / 0.45);
+  overflow: hidden;
+}
+.cache-poster-progress-fill {
+  display: block;
+  height: 100%;
+  background: var(--accent-vivid);
+  transition: width 0.25s ease;
+}
+.cache-poster-progress-fill.is-err {
+  background: var(--err);
+}
+.cache-poster-progress-fill.is-paused {
+  background: var(--muted);
+}
+.detail-top-nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 6px;
+}
+.detail-back-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 32px;
+  padding: 0 8px 0 4px;
+  border-radius: 8px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 550;
+  transition: background 0.14s ease, color 0.14s ease;
+}
+.detail-back-link:hover {
+  background: var(--panel);
+  color: var(--ink);
+}
+.detail-hero {
+  display: grid;
+  grid-template-columns: 60px minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+}
+@media (min-width: 640px) {
+  .detail-hero {
+    grid-template-columns: 68px minmax(0, 1fr);
+  }
+}
+.detail-hero-poster {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 100%;
+  aspect-ratio: 2 / 3;
+  overflow: hidden;
+  border-radius: 10px;
+  box-shadow: 0 2px 10px rgb(0 0 0 / 0.18);
 }
 </style>

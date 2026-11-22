@@ -344,8 +344,11 @@ onMounted(async () => {
 
       <!-- 4. 来源（多源时展示） -->
       <div v-if="providerOptions.length > 1" class="grid gap-1.5">
-        <div class="flex items-center justify-between">
-          <span class="text-xs font-semibold text-[var(--muted)]">来源</span>
+        <div class="flex flex-wrap items-baseline justify-between gap-2">
+          <div class="flex flex-wrap items-baseline gap-1.5">
+            <span class="text-xs font-semibold text-[var(--muted)]">来源</span>
+            <span class="text-[11px] text-[var(--muted)] opacity-80">多站互为兜底，每集自动去重只下 1 份</span>
+          </div>
           <button
             v-if="selectedProviders.length < providerOptions.length"
             type="button"

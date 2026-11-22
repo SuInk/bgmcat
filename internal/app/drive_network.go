@@ -425,7 +425,7 @@ func probeDriveEndpoint(ctx context.Context, ip string, policy driveTLSPolicy, b
 }
 
 func selectedDriveRoute(state Obj, at time.Time) (string, string) {
-	if !flag(state["enabled"]) {
+	if state["enabled"] != nil && !flag(state["enabled"]) {
 		return "", ""
 	}
 	preferred := str(state["preferredIP"])
@@ -455,7 +455,9 @@ func selectedDriveIP(state Obj, at time.Time) string {
 func (a *App) driveNetworkStatus() Obj {
 	state, _ := a.Store.Get("config", "drive-network")
 	if state == nil {
-		state = Obj{"enabled": false, "results": []any{}}
+		state = Obj{"enabled": true, "results": []any{}}
+	} else if state["enabled"] == nil {
+		state["enabled"] = true
 	}
 	policy := drivePolicy(state)
 	state["sniMode"], state["sniHost"] = policy.Mode, policy.ServerName

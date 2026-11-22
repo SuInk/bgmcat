@@ -2,6 +2,7 @@
 import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, ref } from "vue";
 import type {
   AnimeDetail,
+  DownloadJob,
   DownloadPlaybackInfo,
   ExternalPlayerId,
   MikanDownloadItem,
@@ -16,13 +17,20 @@ import {
   resolveDownloadArtworkUrl
 } from "../../api";
 import { playableDownloadForEpisode, statusLabel, type SeriesDownloadGroup } from "../../lib/downloadGrouping";
-import { progressPercent } from "../../lib/format";
+import { formatSpeed, progressPercent } from "../../lib/format";
 import { extractResolutionLabel } from "../../lib/mikan";
 import type { PlaybackHistoryMeta } from "../../lib/playbackHistory";
+import { SHARE_FEATURE_ENABLED } from "../../stores/shares";
 import AppNavIcon from "../layout/AppNavIcon.vue";
 
 // 按需加载播放器核心（artplayer / hls.js / assjs），未进入播放态时不阻塞下载管理列表
-const ArtPlayerPane = defineAsyncComponent(() => import("./ArtPlayerPane.vue"));
+import ArtPlayerPlaceholder from "./ArtPlayerPlaceholder.vue";
+
+const ArtPlayerPane = defineAsyncComponent({
+  loader: () => import("./ArtPlayerPane.vue"),
+  loadingComponent: ArtPlayerPlaceholder,
+  delay: 0
+});
 
 export interface UnifiedPlaybackEpisode {
   key: string;
@@ -42,6 +50,10 @@ export interface UnifiedPlaybackEpisode {
 
 const props = defineProps<{
   playback: DownloadPlaybackInfo;
+  activeDownload?: DownloadJob | null;
+  totalDownloadSpeed?: number;
+  totalUploadSpeed?: number;
+  totalCloudUploadSpeed?: number;
   group: SeriesDownloadGroup | null;
   subgroup: string | null;
   resolution: string | null;
@@ -359,6 +371,18 @@ const playbackMetaLine = computed(() => {
   return parts.filter(Boolean).join(" · ");
 });
 
+const liveDownloadSpeed = computed(() => props.activeDownload?.downloadSpeed || props.totalDownloadSpeed || 0);
+const liveUploadSpeed = computed(() => (props.activeDownload?.uploadSpeed || props.totalUploadSpeed || 0) + (props.totalCloudUploadSpeed || 0));
+const isStreamingActiveDownload = computed(
+  () => Boolean(props.activeDownload && props.activeDownload.status !== "complete")
+);
+const activeDownloadPercent = computed(() =>
+  props.activeDownload ? progressPercent(props.activeDownload) : null
+);
+const showPlaybackSpeedPill = computed(
+  () => isStreamingActiveDownload.value || liveDownloadSpeed.value > 0 || liveUploadSpeed.value > 0
+);
+
 const episodeSummaryStats = computed(() => {
   const list = unifiedEpisodes.value;
   const watchable = list.filter((ep) => ep.state !== "upcoming").length;
@@ -460,16 +484,40 @@ function formatMikanOptionLabel(item: MikanDownloadItem): string {
 <template>
   <div class="motion-rise @container min-h-0 overflow-auto p-3 sm:p-4 max-md:pb-[max(5.5rem,calc(env(safe-area-inset-bottom)+4.5rem))]">
     <header class="mb-3 flex min-w-0 items-center gap-2.5">
-      <button type="button" class="icon-btn playback-back-btn shrink-0" aria-label="返回下载管理" title="返回下载管理" @click="emit('close')">
-        <AppNavIcon name="chevron-left" />
-      </button>
-      <div class="min-w-0 flex-1">
-        <h2 class="truncate text-base font-semibold leading-snug text-[var(--ink)]" :title="playback.fileName">
-          {{ animeDetail?.anime.title || group?.title || playback.fileName }}
-        </h2>
-        <p class="truncate text-xs text-[var(--muted)]">{{ playbackMetaLine }}</p>
-      </div>
       <button
+        type="button"
+        class="playback-back-area group flex min-w-0 flex-1 items-center gap-2.5 rounded-xl px-2 py-1.5 -ml-2 text-left transition hover:bg-[var(--panel)]"
+        aria-label="返回下载管理"
+        title="点击返回下载管理"
+        @click="emit('close')"
+      >
+        <span class="grid size-8 shrink-0 place-items-center rounded-lg text-[var(--muted)] transition group-hover:text-[var(--ink)]">
+          <AppNavIcon name="chevron-left" class="size-4.5 transition-transform group-hover:-translate-x-0.5" />
+        </span>
+        <span class="min-w-0 flex-1">
+          <span class="block truncate text-base font-semibold leading-snug text-[var(--ink)]" :title="playback.fileName">
+            {{ animeDetail?.anime.title || group?.title || playback.fileName }}
+          </span>
+          <span class="block truncate text-xs text-[var(--muted)]">{{ playbackMetaLine }}</span>
+        </span>
+      </button>
+      <span
+        v-if="showPlaybackSpeedPill"
+        class="inline-flex shrink-0 items-center gap-2 rounded-full border border-[var(--line)] bg-[var(--panel)] px-3 py-1.5 text-xs font-semibold tabular-nums"
+        :title="`边下边播实时速率：下载 ${formatSpeed(liveDownloadSpeed)} · 上传 ${formatSpeed(liveUploadSpeed)}`"
+      >
+        <span v-if="isStreamingActiveDownload && activeDownloadPercent !== null" class="text-[var(--accent-vivid)]">
+          缓冲 {{ activeDownloadPercent }}%
+        </span>
+        <span :class="liveDownloadSpeed > 0 ? 'text-[var(--ok)]' : 'text-[var(--muted)]'">
+          ↓ <span :class="liveDownloadSpeed > 0 ? 'text-[var(--ink)]' : ''">{{ formatSpeed(liveDownloadSpeed) }}</span>
+        </span>
+        <span v-if="liveUploadSpeed > 0" class="max-sm:hidden text-[var(--accent)]">
+          ↑ <span class="text-[var(--ink)]">{{ formatSpeed(liveUploadSpeed) }}</span>
+        </span>
+      </span>
+      <button
+        v-if="SHARE_FEATURE_ENABLED"
         type="button"
         class="btn-ghost inline-flex h-9 min-w-[2.5rem] shrink-0 items-center justify-center gap-1.5 px-3 text-xs font-semibold"
         title="生成在线播放分享链接"

@@ -31,3 +31,42 @@ func bindDialerToPhysicalInterface(dialer *net.Dialer, targetIP string) {
 		return nil
 	}
 }
+
+func bindAnyPublicDialerToPhysicalInterface(dialer *net.Dialer) {
+	iface := detectDriveInterface()
+	if iface == nil || iface.Index <= 0 {
+		return
+	}
+	idx := iface.Index
+	dialer.Control = func(network, address string, c syscall.RawConn) error {
+		if !isDirectRoutablePeerAddr(address) {
+			return nil
+		}
+		_ = c.Control(func(fd uintptr) {
+			if strings.HasSuffix(network, "6") || strings.Contains(address, "]:") {
+				_ = syscall.SetsockoptInt(int(fd), syscall.IPPROTO_IPV6, syscall.IPV6_BOUND_IF, idx)
+			} else {
+				_ = syscall.SetsockoptInt(int(fd), syscall.IPPROTO_IP, syscall.IP_BOUND_IF, idx)
+			}
+		})
+		return nil
+	}
+}
+
+func bindListenConfigToPhysicalInterface(lc *net.ListenConfig) {
+	iface := detectDriveInterface()
+	if iface == nil || iface.Index <= 0 {
+		return
+	}
+	idx := iface.Index
+	lc.Control = func(network, address string, c syscall.RawConn) error {
+		_ = c.Control(func(fd uintptr) {
+			if strings.HasSuffix(network, "6") {
+				_ = syscall.SetsockoptInt(int(fd), syscall.IPPROTO_IPV6, syscall.IPV6_BOUND_IF, idx)
+			} else {
+				_ = syscall.SetsockoptInt(int(fd), syscall.IPPROTO_IP, syscall.IP_BOUND_IF, idx)
+			}
+		})
+		return nil
+	}
+}

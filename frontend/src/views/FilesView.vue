@@ -14,6 +14,7 @@ import {
   type FileEntryKind
 } from "../api";
 import AppDialog from "../components/common/AppDialog.vue";
+import ArtPlayerPlaceholder from "../components/downloads/ArtPlayerPlaceholder.vue";
 import AppNavIcon from "../components/layout/AppNavIcon.vue";
 import { copyText, openExternalLink } from "../lib/actions";
 import { formatBytes, formatDateTime } from "../lib/format";
@@ -61,6 +62,7 @@ import {
 } from "../stores/files";
 import { requestedSettingsPage } from "../stores/router";
 import {
+  SHARE_FEATURE_ENABLED,
   activeSharesCount,
   openShareForFileEntry,
   openShareManager,
@@ -69,7 +71,11 @@ import {
 import { isDesktopShell, settingsForm } from "../stores/session";
 import { toastError, updateFeedback } from "../stores/toasts";
 
-const ArtPlayerPane = defineAsyncComponent(() => import("../components/downloads/ArtPlayerPane.vue"));
+const ArtPlayerPane = defineAsyncComponent({
+  loader: () => import("../components/downloads/ArtPlayerPane.vue"),
+  loadingComponent: ArtPlayerPlaceholder,
+  delay: 0
+});
 
 type FileSortField = "name" | "size" | "time";
 type FilePreviewKind = "image" | "video" | "audio" | "pdf" | "text" | "other";
@@ -699,6 +705,7 @@ async function copyActiveStreamLink(): Promise<void> {
         <span class="max-sm:sr-only">下载</span>
       </a>
       <button
+        v-if="SHARE_FEATURE_ENABLED"
         type="button"
         class="ctrl-btn"
         title="生成在线播放/文件分享链接"
@@ -864,6 +871,7 @@ async function copyActiveStreamLink(): Promise<void> {
         </button>
 
         <button
+          v-if="SHARE_FEATURE_ENABLED"
           type="button"
           class="ctrl-btn"
           title="查看和管理已分享的链接"
@@ -1151,6 +1159,7 @@ async function copyActiveStreamLink(): Promise<void> {
               </a>
 
               <button
+                v-if="SHARE_FEATURE_ENABLED"
                 type="button"
                 class="act-icon-btn"
                 :title="`分享 ${entryLabel(entry)}`"
@@ -1231,7 +1240,7 @@ async function copyActiveStreamLink(): Promise<void> {
           <span>{{ (preview.source === "local" && !inLocalTrash) || (preview.source === "cloud" && settingsForm.cloudProvider !== "webdav") ? "移到回收站" : "删除" }}</span>
         </button>
         <button
-          v-if="!inLocalTrash"
+          v-if="SHARE_FEATURE_ENABLED && !inLocalTrash"
           type="button"
           class="row-btn !h-8 !px-3 !text-xs"
           @click="openShareForFileEntry(preview.entry, preview.source)"

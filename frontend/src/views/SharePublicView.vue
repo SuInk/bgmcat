@@ -22,7 +22,13 @@ import AppNavIcon from "../components/layout/AppNavIcon.vue";
 import { formatBytes } from "../lib/format";
 import { setThemeMode, themeMode } from "../stores/theme";
 
-const ArtPlayerPane = defineAsyncComponent(() => import("../components/downloads/ArtPlayerPane.vue"));
+import ArtPlayerPlaceholder from "../components/downloads/ArtPlayerPlaceholder.vue";
+
+const ArtPlayerPane = defineAsyncComponent({
+  loader: () => import("../components/downloads/ArtPlayerPane.vue"),
+  loadingComponent: ArtPlayerPlaceholder,
+  delay: 0
+});
 
 const props = defineProps<{
   code: string;

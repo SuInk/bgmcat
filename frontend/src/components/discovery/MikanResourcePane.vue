@@ -8,7 +8,7 @@
 import { computed, onMounted, reactive, ref, watch } from "vue";
 
 import { extractEpisodeNumber } from "@shared/episode";
-import type { AnimeStreamingLink, MikanDownloadItem, ResourceProviderFetchStatus } from "@shared/index";
+import type { AnimeStreamingLink, DownloadJob, MikanDownloadItem, ResourceProviderFetchStatus } from "@shared/index";
 
 import { getLocalAiStatus, sendLocalAiChat } from "../../api";
 import { formatDateTime } from "../../lib/format";
@@ -44,6 +44,7 @@ const props = defineProps<{
   busyKey: string | null;
   isDownloadBusy?: (item: MikanDownloadItem) => boolean;
   isDownloadQueued: (item: MikanDownloadItem) => boolean;
+  getQueuedDownload?: (item: MikanDownloadItem) => DownloadJob | null;
   animeTitles?: string[];
   animeTitle?: string;
   streamingLinks?: AnimeStreamingLink[];
@@ -55,12 +56,13 @@ const emit = defineEmits<{
   (event: "select-provider", value: string): void;
   (event: "select-download-group", value: string | null): void;
   (event: "queue-download", item: MikanDownloadItem): void;
+  (event: "play-download", job: DownloadJob): void;
   (event: "open-link", url: string): void;
 }>();
 
 const emptyFallbackWatchLinks = computed<AnimeStreamingLink[]>(() => {
   if (props.streamingLinks?.length) {
-    return props.streamingLinks;
+    return props.streamingLinks.slice(0, 2);
   }
   const keyword = (props.animeTitle ?? props.animeTitles?.[0] ?? "").trim();
   if (!keyword) {
@@ -702,11 +704,24 @@ async function runAiFilter(): Promise<void> {
   }
 }
 
-function downloadLabel(item: MikanDownloadItem): string {
-  if (props.isDownloadQueued(item)) {
-    return "已加入";
+function queuedDownloadOf(item: MikanDownloadItem): DownloadJob | null {
+  return props.getQueuedDownload?.(item) ?? null;
+}
+
+function handleRowAction(item: MikanDownloadItem): void {
+  const job = queuedDownloadOf(item);
+  if (job) {
+    emit("play-download", job);
+    return;
   }
-  return isBusyItem(item) ? "加入中…" : "下载";
+  emit("queue-download", item);
+}
+
+function downloadLabel(item: MikanDownloadItem): string {
+  if (queuedDownloadOf(item) || props.isDownloadQueued(item)) {
+    return "播放";
+  }
+  return isBusyItem(item) ? "…" : "下载";
 }
 </script>
 
@@ -993,8 +1008,8 @@ function downloadLabel(item: MikanDownloadItem): string {
               </span>
             </div>
 
-            <!-- 2. 主信息列：字幕组 / 单集标题 + 字幕封装与片源渠道胶囊 + 原始发布名 -->
-            <div class="grid min-w-0 gap-0.5">
+            <!-- 2. 主信息列：字幕组 / 单集标题 + 字幕/规格胶囊 + 原始发布名 -->
+            <div class="grid min-w-0 gap-1">
               <div class="flex min-w-0 flex-wrap items-center gap-1.5">
                 <!-- 在「按剧集」或「单话聚焦」视图中突出显示字幕组名；在「按字幕组」视图中突出显示单集名或组名 -->
                 <span
@@ -1006,19 +1021,19 @@ function downloadLabel(item: MikanDownloadItem): string {
                 </span>
                 <span
                   v-else-if="row.episodeTitle"
-                  class="truncate text-[12.5px] font-semibold leading-snug text-[var(--ink)]"
+                  class="truncate text-[13px] font-semibold leading-snug text-[var(--ink)]"
                   :title="row.episodeTitle"
                 >
                   {{ row.episodeTitle }}
                 </span>
                 <span
                   v-else
-                  class="truncate text-[12.5px] font-semibold leading-snug text-[var(--ink)]"
+                  class="truncate text-[13px] font-semibold leading-snug text-[var(--ink)]"
                 >
                   {{ row.isBatch ? "季度合集打包" : row.info.subgroup }}
                 </span>
 
-                <!-- 细粒度区分标签：字幕语种/封装、片源渠道、修正版本 -->
+                <!-- 细粒度区分标签：字幕语种/封装、片源渠道、修正版本、分辨率/封装规格 -->
                 <span
                   v-if="row.info.subtitleBadge"
                   class="sub-tag"
@@ -1032,52 +1047,47 @@ function downloadLabel(item: MikanDownloadItem): string {
                 <span v-if="row.info.versionTag" class="ver-tag">
                   {{ row.info.versionTag }} 修正
                 </span>
+                <span v-for="spec in row.info.specs" :key="spec" class="spec-pill">{{ spec }}</span>
 
-                <!-- 窄屏内联展示规格、体积与发布时间 -->
-                <span class="inline-flex flex-wrap items-center gap-1 text-[11px] text-[var(--muted)] tabular-nums @2xl:hidden">
-                  <template v-if="row.info.specs.length">{{ row.info.specs.join(" · ") }}</template>
-                  <template v-if="row.item.sizeText">{{ row.info.specs.length ? " · " : "" }}{{ row.item.sizeText }}</template>
-                  <template v-if="row.item.publishedAt">{{ (row.info.specs.length || row.item.sizeText) ? " · " : "" }}{{ friendlyTime(row.item.publishedAt) }}</template>
+                <!-- 窄屏内联展示来源、体积与发布时间 -->
+                <span class="inline-flex flex-wrap items-center gap-1 text-[11px] text-[var(--muted)] tabular-nums @xl:hidden">
+                  <template v-if="row.provider.text">{{ row.provider.text }}</template>
+                  <template v-if="row.item.sizeText">{{ row.provider.text ? " · " : "" }}{{ row.item.sizeText }}</template>
+                  <template v-if="row.item.publishedAt">{{ (row.provider.text || row.item.sizeText) ? " · " : "" }}{{ friendlyTime(row.item.publishedAt) }}</template>
                 </span>
               </div>
 
-              <p class="break-words [overflow-wrap:anywhere] text-[11.5px] leading-[1.35] text-[var(--muted)]" :title="row.item.title">
+              <p class="break-words [overflow-wrap:anywhere] text-[11.5px] leading-[1.4] text-[var(--muted)]" :title="row.item.title">
                 {{ row.rawSubtitle }}
               </p>
             </div>
 
-            <!-- 3. 音视频与封装规格 -->
-            <div class="hidden flex-wrap items-center gap-1 @2xl:flex">
-              <span v-for="spec in row.info.specs" :key="spec" class="spec-pill">{{ spec }}</span>
-              <span v-if="!row.info.specs.length" class="text-xs text-[var(--muted)]">—</span>
-            </div>
-
-            <!-- 4. 聚合来源 -->
-            <div class="hidden truncate text-xs text-[var(--ink-secondary)] @2xl:block" :title="row.provider.fullTitle">
-              {{ row.provider.text }}
-            </div>
-
-            <!-- 5. 体积与时间 -->
-            <div class="hidden flex-col items-end leading-tight tabular-nums @2xl:flex">
+            <!-- 3. 体积、来源与发布时间 -->
+            <div class="hidden flex-col items-end gap-0.5 leading-tight tabular-nums whitespace-nowrap @xl:flex">
               <span class="text-xs font-semibold text-[var(--ink)]">{{ row.item.sizeText ?? "—" }}</span>
-              <span class="text-[11px] text-[var(--muted)]">{{ friendlyTime(row.item.publishedAt) }}</span>
+              <span class="text-[11px] text-[var(--muted)]" :title="row.provider.fullTitle">
+                {{ [row.provider.text, friendlyTime(row.item.publishedAt)].filter(Boolean).join(" · ") }}
+              </span>
             </div>
 
-            <!-- 6. 下载操作 -->
+            <!-- 4. 下载 / 播放操作（固定宽度，避免状态切换撑宽按钮） -->
             <div class="flex justify-end">
               <button
                 v-if="hasDownloadSource(row.item)"
                 type="button"
-                class="dl-btn"
+                class="dl-btn row-action-btn"
                 :class="{
-                  'is-primary': rowIdx === 0 && !isDownloadQueued(row.item) && structuredSections.length === 1,
-                  'is-queued': isDownloadQueued(row.item)
+                  'is-play': Boolean(queuedDownloadOf(row.item)),
+                  'is-primary': rowIdx === 0 && !isDownloadQueued(row.item) && !queuedDownloadOf(row.item) && structuredSections.length === 1,
+                  'is-queued': !queuedDownloadOf(row.item) && isDownloadQueued(row.item)
                 }"
-                :disabled="isBusyItem(row.item) || isDownloadQueued(row.item)"
-                :aria-label="`下载 ${row.info.subgroup} ${row.episodeBadge}`"
-                @click="emit('queue-download', row.item)"
+                :disabled="isBusyItem(row.item) || (!queuedDownloadOf(row.item) && isDownloadQueued(row.item))"
+                :title="queuedDownloadOf(row.item) ? '立即播放（支持边下边播）' : `下载 ${row.info.subgroup} ${row.episodeBadge}`"
+                :aria-label="queuedDownloadOf(row.item) ? `播放 ${row.info.subgroup} ${row.episodeBadge}` : `下载 ${row.info.subgroup} ${row.episodeBadge}`"
+                @click="handleRowAction(row.item)"
               >
-                {{ downloadLabel(row.item) }}
+                <AppNavIcon v-if="queuedDownloadOf(row.item)" name="play" class="size-3 shrink-0" aria-hidden="true" />
+                <span>{{ downloadLabel(row.item) }}</span>
               </button>
             </div>
           </div>
@@ -1450,19 +1460,19 @@ function downloadLabel(item: MikanDownloadItem): string {
   display: grid;
   grid-template-columns: 64px minmax(0, 1fr) auto;
   align-items: center;
-  gap: 8px;
-  padding: 7px 10px;
+  gap: 8px 10px;
+  padding: 8px 10px;
   border-bottom: 1px solid color-mix(in srgb, var(--line) 70%, transparent);
   transition: background 0.12s;
 }
 .r-row:last-child {
   border-bottom: none;
 }
-@container (min-width: 42rem) {
+@container (min-width: 36rem) {
   .r-row {
-    grid-template-columns: 68px minmax(0, 1fr) 156px 84px 106px 70px;
-    gap: 10px;
-    padding: 7.5px 12px;
+    grid-template-columns: 68px minmax(0, 1fr) auto auto;
+    gap: 10px 14px;
+    padding: 9px 14px;
   }
 }
 .r-row:hover {
@@ -1570,7 +1580,8 @@ function downloadLabel(item: MikanDownloadItem): string {
   min-height: 34px;
   align-items: center;
   justify-content: center;
-  padding: 0 13px;
+  gap: 4px;
+  padding: 0 12px;
   border-radius: 8px;
   border: 1px solid var(--line);
   background: var(--card);
@@ -1578,7 +1589,12 @@ function downloadLabel(item: MikanDownloadItem): string {
   font-size: 12px;
   font-weight: 600;
   white-space: nowrap;
+  cursor: pointer;
   transition: border-color 0.15s, background 0.15s, color 0.15s, opacity 0.15s;
+}
+.row-action-btn {
+  width: 64px;
+  padding: 0;
 }
 .dl-btn:hover:not(:disabled) {
   border-color: var(--accent);
@@ -1592,6 +1608,16 @@ function downloadLabel(item: MikanDownloadItem): string {
 }
 .dl-btn.is-primary:hover:not(:disabled) {
   background: var(--accent-strong);
+}
+.dl-btn.is-play {
+  border-color: color-mix(in srgb, var(--ok) 45%, var(--line));
+  background: var(--ok-soft);
+  color: var(--ok);
+}
+.dl-btn.is-play:hover:not(:disabled) {
+  border-color: var(--ok);
+  background: var(--ok);
+  color: #fff;
 }
 .dl-btn.is-queued {
   border-color: var(--line);

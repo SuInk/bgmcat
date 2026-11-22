@@ -484,7 +484,7 @@ function handleClearAll(): void {
                     </div>
                   </div>
 
-                  <div class="flex shrink-0 items-center gap-1.5" @click.stop>
+                  <div class="flex shrink-0 items-center gap-1" @click.stop>
                     <button
                       type="button"
                       class="icon-btn reveal-on-hover hover:!border-[var(--err-soft)] hover:!bg-[var(--err-soft)] hover:!text-[var(--err)]"
@@ -497,7 +497,7 @@ function handleClearAll(): void {
 
                     <button
                       type="button"
-                      class="icon-btn"
+                      class="icon-btn reveal-on-hover"
                       :disabled="isBusy(`history-detail:${item.id}`)"
                       :aria-label="`查看 ${item.title} 的番剧详情`"
                       title="番剧详情"
@@ -509,12 +509,13 @@ function handleClearAll(): void {
                     <button
                       v-if="item.playable"
                       type="button"
-                      class="play-btn ml-0.5"
+                      class="history-play-pill"
                       :aria-label="`${item.completed ? '重新播放' : '继续播放'} ${item.title} ${item.episodeLabel ?? ''}`"
                       :title="item.completed ? '重新播放' : '继续观看'"
                       @click="handlePlayItem(item)"
                     >
-                      <AppNavIcon name="play" class="size-3.5" aria-hidden="true" />
+                      <AppNavIcon name="play" class="size-3 shrink-0 fill-current" aria-hidden="true" />
+                      <span class="max-sm:sr-only">{{ item.completed ? "重播" : "继续" }}</span>
                     </button>
                   </div>
                 </article>
@@ -570,6 +571,41 @@ function handleClearAll(): void {
   border-radius: 10px;
   background: var(--panel);
   box-shadow: var(--soft-shadow);
+}
+
+.history-play-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  height: 30px;
+  padding: 0 11px;
+  border-radius: 999px;
+  border: 1px solid var(--accent-line);
+  background: color-mix(in srgb, var(--accent-soft) 72%, var(--card));
+  color: var(--accent-vivid);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  transition: background-color 150ms ease, border-color 150ms ease, color 150ms ease, transform 150ms ease;
+}
+
+.history-play-pill:hover {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--accent-contrast);
+}
+
+.history-play-pill:active {
+  transform: scale(0.96);
+}
+
+@media (max-width: 639px) {
+  .history-play-pill {
+    width: 32px;
+    height: 32px;
+    padding: 0;
+  }
 }
 
 @media (max-width: 520px) {

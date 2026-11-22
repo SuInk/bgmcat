@@ -113,6 +113,41 @@ func TestTorrentAndMagnetTrackers(t *testing.T) {
 	}
 }
 
+func TestSyncPublicTrackersAndSeedingToggle(t *testing.T) {
+	a := testApp(t)
+	feedSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, "udp://tracker.opentrackr.org:1337/announce\n\nhttp://nyaa.tracker.wf:7777/announce\nnot-a-tracker\nhttps://tr.bangumi.moe:9696/announce\n")
+	}))
+	defer feedSrv.Close()
+
+	origFeeds := publicTrackerFeedSources
+	publicTrackerFeedSources = [][]string{{feedSrv.URL}}
+	defer func() { publicTrackerFeedSources = origFeeds }()
+
+	w := apiTest(a, "POST", "/api/settings/trackers/sync", Obj{}, true)
+	if w.Code != 200 {
+		t.Fatalf("POST /api/settings/trackers/sync status=%d body=%s", w.Code, w.Body.String())
+	}
+	gotTrackers := list(a.Settings()["btTrackers"])
+	if len(gotTrackers) != 3 {
+		t.Fatalf("expected 3 synced trackers saved to btTrackers, got %d: %v", len(gotTrackers), gotTrackers)
+	}
+	if dyn := a.getDynamicTrackers(); len(dyn) != 3 {
+		t.Fatalf("expected 3 dynamic trackers cached, got %d: %v", len(dyn), dyn)
+	}
+
+	// Verify aria2SeedEnabled setting can be toggled cleanly via PUT /api/settings.
+	sw := apiTest(a, "PUT", "/api/settings", Obj{"aria2SeedEnabled": true}, true)
+	if sw.Code != 200 {
+		t.Fatalf("PUT /api/settings aria2SeedEnabled=true status=%d body=%s", sw.Code, sw.Body.String())
+	}
+	if !flag(a.Settings()["aria2SeedEnabled"]) {
+		t.Fatal("expected aria2SeedEnabled to be true")
+	}
+	a.engine.SyncSeedTasks()
+	a.engine.StopAllSeeding()
+}
+
 func TestFetchErrorMessage(t *testing.T) {
 	feed := "https://mikanani.me/RSS/Search?searchstr=X"
 	cases := map[string]error{

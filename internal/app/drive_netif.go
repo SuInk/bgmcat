@@ -12,6 +12,8 @@ import (
 type driveNetInterface struct {
 	Name  string
 	Index int
+	IPv4  string
+	IPv6  string
 }
 
 var (
@@ -66,8 +68,10 @@ func detectDriveInterface() *driveNetInterface {
 
 func findPhysicalInterface() *driveNetInterface {
 	if name := routeDefaultInterfaceName(); name != "" && !isVirtualInterfaceName(name) {
-		if iface, err := net.InterfaceByName(name); err == nil && interfaceHasGlobalIPv4(iface) {
-			return &driveNetInterface{Name: iface.Name, Index: iface.Index}
+		if iface, err := net.InterfaceByName(name); err == nil {
+			if ip4, ip6 := interfaceGlobalIPs(iface); ip4 != "" {
+				return &driveNetInterface{Name: iface.Name, Index: iface.Index, IPv4: ip4, IPv6: ip6}
+			}
 		}
 	}
 	ifaces, err := net.Interfaces()
@@ -79,10 +83,14 @@ func findPhysicalInterface() *driveNetInterface {
 		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 || iface.Flags&net.FlagPointToPoint != 0 {
 			continue
 		}
-		if isVirtualInterfaceName(iface.Name) || !interfaceHasGlobalIPv4(&iface) {
+		if isVirtualInterfaceName(iface.Name) {
 			continue
 		}
-		candidate := &driveNetInterface{Name: iface.Name, Index: iface.Index}
+		ip4, ip6 := interfaceGlobalIPs(&iface)
+		if ip4 == "" {
+			continue
+		}
+		candidate := &driveNetInterface{Name: iface.Name, Index: iface.Index, IPv4: ip4, IPv6: ip6}
 		if strings.HasPrefix(iface.Name, "en") || strings.HasPrefix(iface.Name, "eth") || strings.HasPrefix(iface.Name, "wl") {
 			return candidate
 		}
@@ -94,12 +102,17 @@ func findPhysicalInterface() *driveNetInterface {
 }
 
 func interfaceHasGlobalIPv4(iface *net.Interface) bool {
+	ip4, _ := interfaceGlobalIPs(iface)
+	return ip4 != ""
+}
+
+func interfaceGlobalIPs(iface *net.Interface) (ipv4, ipv6 string) {
 	if iface == nil {
-		return false
+		return "", ""
 	}
 	addrs, err := iface.Addrs()
 	if err != nil {
-		return false
+		return "", ""
 	}
 	for _, addr := range addrs {
 		var ip net.IP
@@ -109,11 +122,91 @@ func interfaceHasGlobalIPv4(iface *net.Interface) bool {
 		case *net.IPAddr:
 			ip = v.IP
 		}
-		if ip4 := ip.To4(); ip4 != nil && ip4.IsGlobalUnicast() && !ip4.IsLoopback() && !ip4.IsLinkLocalUnicast() {
-			return true
+		if len(ip) == 0 || ip.IsLoopback() || ip.IsLinkLocalUnicast() || !ip.IsGlobalUnicast() {
+			continue
+		}
+		if ip4 := ip.To4(); ip4 != nil {
+			if ipv4 == "" {
+				ipv4 = ip4.String()
+			}
+			continue
+		}
+		if ipv6 == "" && !ip.IsPrivate() {
+			ipv6 = ip.String()
 		}
 	}
-	return false
+	return ipv4, ipv6
+}
+
+func isDirectRoutablePeerAddr(address string) bool {
+	host := strings.TrimSpace(address)
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		host = h
+	}
+	host = strings.Trim(host, "[]")
+	if host == "" || strings.EqualFold(host, "localhost") {
+		return false
+	}
+	ip := net.ParseIP(host)
+	if ip == nil {
+		// Domain names (such as HTTP/UDP tracker hostnames) should be routed via the physical interface.
+		return true
+	}
+	if ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsUnspecified() {
+		return false
+	}
+	// Fake-IP ranges (198.18.0.0/15) used by Clash/Mihomo/Sing-box TUN should not be bound to physical NIC
+	// if a literal 198.18.x.x IP is dialed.
+	if ip4 := ip.To4(); ip4 != nil && ip4[0] == 198 && (ip4[1]&0xfe) == 18 {
+		return false
+	}
+	return true
+}
+
+func newBTDialer(timeout time.Duration) *net.Dialer {
+	dialer := &net.Dialer{
+		Timeout:   timeout,
+		KeepAlive: 30 * time.Second,
+	}
+	bindAnyPublicDialerToPhysicalInterface(dialer)
+	return dialer
+}
+
+func dialBTContext(ctx context.Context, network, addr string) (net.Conn, error) {
+	physicalDialer := newBTDialer(10 * time.Second)
+	conn, err := physicalDialer.DialContext(ctx, network, addr)
+	if err == nil || ctx.Err() != nil {
+		return conn, err
+	}
+	fallbackDialer := &net.Dialer{
+		Timeout:   10 * time.Second,
+		KeepAlive: 30 * time.Second,
+	}
+	return fallbackDialer.DialContext(ctx, network, addr)
+}
+
+func listenBTPacket(network, addr string) (net.PacketConn, error) {
+	var lc net.ListenConfig
+	bindListenConfigToPhysicalInterface(&lc)
+	pc, err := lc.ListenPacket(context.Background(), network, addr)
+	if err == nil {
+		return pc, nil
+	}
+	return net.ListenPacket(network, addr)
+}
+
+func physicalBTListenHost(network string) string {
+	iface := detectDriveInterface()
+	if iface == nil {
+		return ""
+	}
+	if strings.HasSuffix(network, "6") {
+		return iface.IPv6
+	}
+	if strings.HasSuffix(network, "4") && iface.IPv4 != "" {
+		return iface.IPv4
+	}
+	return ""
 }
 
 func routeDefaultInterfaceName() string {

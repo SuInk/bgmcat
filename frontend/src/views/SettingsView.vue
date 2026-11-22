@@ -18,6 +18,7 @@ import DataPage from "../components/settings/pages/DataPage.vue";
 import AiPage from "../components/settings/pages/AiPage.vue";
 import DownloadPage from "../components/settings/pages/DownloadPage.vue";
 import GeneralPage from "../components/settings/pages/GeneralPage.vue";
+import McpPage from "../components/settings/pages/McpPage.vue";
 import NetworkPage from "../components/settings/pages/NetworkPage.vue";
 import RemotePage from "../components/settings/pages/RemotePage.vue";
 import SourcesPage from "../components/settings/pages/SourcesPage.vue";
@@ -68,11 +69,12 @@ const PAGE_GROUPS: Array<{ label: string; pages: SettingsPage[] }> = [
     ]
   },
   {
-    label: "网络与安全",
+    label: "网络与集成",
     pages: [
-      { key: "network", label: "网络直连", desc: "", icon: "integrations", component: NetworkPage, single: true },
+      { key: "network", label: "网络直连", desc: "", icon: "link", component: NetworkPage, single: true },
       { key: "remote", label: "访问与安全", desc: "", icon: "globe", component: RemotePage },
-      { key: "tunnel", label: "公网隧道", desc: "", icon: "cloud", component: TunnelPage, single: true }
+      { key: "tunnel", label: "公网隧道", desc: "", icon: "cloud", component: TunnelPage, single: true },
+      { key: "mcp", label: "MCP 接入", desc: "", icon: "integrations", component: McpPage }
     ]
   }
 ];

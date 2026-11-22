@@ -17,6 +17,7 @@ const (
 
 var (
 	hexGID24RE          = regexp.MustCompile(`^[0-9a-f]{24}$`)
+	firstGroupTagRE     = regexp.MustCompile(`^\s*(?:\[([^\]]{1,48})\]|【([^】]{1,48})】)`)
 	leadingGroupTagRE   = regexp.MustCompile(`^(?:\s*(?:\[[^\]]{1,48}\]|【[^】]{1,48}】)\s*)+`)
 	seriesEpisodeCutRE  = regexp.MustCompile(`(?i)(?:\s+[-–—]\s*(?:第?\s*)?\d{1,4}(?:\.\d+)?(?:\s*v\d)?(?:\b|\s|\[|\(|$)|\s*(?:\[|【|\()\s*(?:第?\s*\d{1,4}(?:\.\d+)?(?:\s*[-~]\s*\d{1,4}(?:\.\d+)?)?\s*(?:[话話集]|v\d)?|ep\.?\s*\d{1,4}|ova|oad|sp|fin|end|complete|全集|合集|\d{3,4}[pP]|4[kK]|2160[pP]|1080[pP]|720[pP]|bdrip|webrip|web-dl|hevc|avc|x264|x265|10bit|8bit|aac|flac|chs|cht|gb|big5|jp&cn|chs&jpn|简日|繁日|简繁)\b.*$|\s+第\s*\d{1,4}(?:\s*[-~]\s*\d{1,4})?\s*[话話集].*$)`)
 	knownMediaFileExtRE = regexp.MustCompile(`(?i)\.(?:mp4|mkv|webm|avi|ts|m2ts|mov|m4v|mp3|flac|m4a|ogg|opus|wav|torrent|zip|7z|rar)$`)
@@ -152,6 +153,77 @@ func extractSeriesFolderName(animeTitle, rawTitle string) string {
 		}
 	}
 	return sanitizeFolderName(s)
+}
+
+func validDownloadFolderMode(mode string) bool {
+	switch strings.TrimSpace(mode) {
+	case "anime", "anime_subgroup", "subgroup", "subgroup_anime", "flat":
+		return true
+	default:
+		return false
+	}
+}
+
+func normalizeDownloadFolderMode(mode string) string {
+	m := strings.TrimSpace(mode)
+	if validDownloadFolderMode(m) {
+		return m
+	}
+	return "anime_subgroup"
+}
+
+func extractSubgroupFolderName(rawTitle string) string {
+	m := firstGroupTagRE.FindStringSubmatch(strings.TrimSpace(rawTitle))
+	if len(m) < 3 {
+		return ""
+	}
+	tag := strings.TrimSpace(m[1])
+	if tag == "" {
+		tag = strings.TrimSpace(m[2])
+	}
+	return sanitizeFolderName(tag)
+}
+
+func buildDownloadSubfolders(mode, animeTitle, rawTitle string) []string {
+	m := normalizeDownloadFolderMode(mode)
+	if m == "flat" {
+		return nil
+	}
+	anime := extractSeriesFolderName(animeTitle, rawTitle)
+	subgroup := extractSubgroupFolderName(rawTitle)
+	switch m {
+	case "anime_subgroup":
+		var out []string
+		if anime != "" {
+			out = append(out, anime)
+		}
+		if subgroup != "" {
+			out = append(out, subgroup)
+		}
+		return out
+	case "subgroup":
+		if subgroup != "" {
+			return []string{subgroup}
+		}
+		if anime != "" {
+			return []string{anime}
+		}
+		return nil
+	case "subgroup_anime":
+		var out []string
+		if subgroup != "" {
+			out = append(out, subgroup)
+		}
+		if anime != "" {
+			out = append(out, anime)
+		}
+		return out
+	default: // "anime"
+		if anime != "" {
+			return []string{anime}
+		}
+		return nil
+	}
 }
 
 func isLegacyAnimeRSSPath(p string) bool {

@@ -17,6 +17,9 @@ import { displayTitle } from "./downloads";
 import { status } from "./session";
 import { toastError, updateFeedback } from "./toasts";
 
+/** 分享功能总开关：当前默认关闭，需要时改为 true 即可一键恢复所有分享入口 */
+export const SHARE_FEATURE_ENABLED = false;
+
 export interface ShareDraft {
   singleTitle: string;
   singleTargets: ShareTargetInput[];

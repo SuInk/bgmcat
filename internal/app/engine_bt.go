@@ -268,24 +268,47 @@ func (e *NativeEngine) acquireBTClient(loopbackOnly bool) (cl *torrent.Client, c
 	cfg := torrent.NewDefaultClientConfig()
 	cfg.DataDir = btStateDir
 	cfg.Slogger = silentLogger
+	cfg.Bep20 = "-qB4650-"
+	cfg.ExtendedHandshakeClientVersion = "qBittorrent/4.6.5"
+	cfg.HTTPUserAgent = "qBittorrent/4.6.5"
 	cfg.NoDHT = false
+	cfg.PeriodicallyAnnounceTorrentsToDht = true
 	cfg.DisableUTP = false
 	cfg.DisableTCP = false
 	cfg.DisablePEX = false
 	cfg.DisableIPv6 = false
 	cfg.DisableWebtorrent = false
 	cfg.NoUpload = false // Reciprocal upload prevents tit-for-tat choking by seeders/peers.
-	cfg.Seed = false
+	cfg.Seed = true      // Allow seeding completed torrents when aria2SeedEnabled is on; non-seeding tasks are dropped on completion.
 	cfg.ListenPort = 0
-	cfg.EstablishedConnsPerTorrent = 80
-	cfg.HalfOpenConnsPerTorrent = 40
-	cfg.TorrentPeersHighWater = 500
-	cfg.TorrentPeersLowWater = 100
+	if iface := detectDriveInterface(); iface != nil && iface.IPv4 != "" {
+		cfg.ListenHost = physicalBTListenHost
+	}
+	cfg.TrackerDialContext = dialBTContext
+	cfg.TrackerListenPacket = listenBTPacket
+	cfg.HTTPDialContext = dialBTContext
+	cfg.EstablishedConnsPerTorrent = 100
+	cfg.HalfOpenConnsPerTorrent = 50
+	cfg.TotalHalfOpenConns = 200
+	cfg.TorrentPeersHighWater = 800
+	cfg.TorrentPeersLowWater = 200
 	cfg.PieceHashersPerTorrent = 4
 	cfg.DownloadRateLimiter = e.btLimiter
 	prodCl, cErr := torrent.NewClient(cfg)
+	if cErr != nil && cfg.ListenHost != nil {
+		cfg.ListenHost = torrent.NewDefaultClientConfig().ListenHost
+		prodCl, cErr = torrent.NewClient(cfg)
+	}
 	if cErr != nil {
 		return nil, nil, cErr
+	}
+	if iface := detectDriveInterface(); iface != nil && (iface.Index > 0 || iface.Name != "") {
+		tcp4Dialer := newBTDialer(10 * time.Second)
+		prodCl.AddDialer(torrent.NetworkDialer{Network: "tcp4", Dialer: tcp4Dialer})
+		if iface.IPv6 != "" {
+			tcp6Dialer := newBTDialer(10 * time.Second)
+			prodCl.AddDialer(torrent.NetworkDialer{Network: "tcp6", Dialer: tcp6Dialer})
+		}
 	}
 	e.btClient = prodCl
 	return prodCl, func() {}, nil
@@ -300,10 +323,11 @@ func (e *NativeEngine) buildParallelTrackerTiers(own []string, loopbackOnly bool
 	if loopbackOnly {
 		groups = [][]string{own, userExtra}
 	} else {
-		groups = [][]string{own, userExtra, builtinBTTrackers, builtinWebTorrentTrackers}
+		dynamicExtra := e.app.getDynamicTrackers()
+		groups = [][]string{own, userExtra, dynamicExtra, builtinBTTrackers, builtinWebTorrentTrackers}
 	}
 	seen := map[string]bool{}
-	tiers := make([][]string, 0, len(own)+len(userExtra)+len(builtinBTTrackers))
+	tiers := make([][]string, 0, len(own)+len(userExtra)+len(builtinBTTrackers)+32)
 	for _, grp := range groups {
 		for _, raw := range grp {
 			tr := strings.TrimSpace(raw)
@@ -586,13 +610,14 @@ func (e *NativeEngine) downloadBT(ctx context.Context, j Obj) error {
 		UsePartFiles:    g.Some(false),
 		Logger:          silentLogger,
 	})
-	defer func() { _ = taskStorage.Close() }()
+	handedOffToSeeding := false
 
 	spec.Storage = taskStorage
 	spec.Trackers = e.buildParallelTrackerTiers(own, loopbackOnly)
 
 	t, _, err := cl.AddTorrentSpec(spec)
 	if err != nil {
+		_ = taskStorage.Close()
 		return err
 	}
 	if len(spec.Trackers) > 0 {
@@ -609,7 +634,10 @@ func (e *NativeEngine) downloadBT(ctx context.Context, j Obj) error {
 		if stream != nil {
 			stream.dropped.Store(true)
 		}
-		t.Drop()
+		if !handedOffToSeeding {
+			t.Drop()
+			_ = taskStorage.Close()
+		}
 	}()
 
 	// Wait for magnet metadata (instant if .torrent or cached .torrent was loaded).
@@ -778,6 +806,10 @@ waitMeta:
 					"filePath":        primaryPath,
 				})
 				e.app.notifyDownloads()
+				if !loopbackOnly && flag(e.app.Settings()["aria2SeedEnabled"]) && !e.app.willDeleteLocalOnArchive(j) {
+					handedOffToSeeding = true
+					e.attachSeedTask(gid, t, taskStorage)
+				}
 			}
 			return nil
 		}
@@ -849,5 +881,266 @@ waitMeta:
 				e.app.notifyDownloads()
 			}
 		}
+	}
+}
+
+type btSeedTask struct {
+	gid     string
+	torrent *torrent.Torrent
+	storage storage.ClientImplCloser
+	cancel  context.CancelFunc
+	done    chan struct{}
+}
+
+func (a *App) willDeleteLocalOnArchive(j Obj) bool {
+	if j == nil {
+		return false
+	}
+	return flag(a.Settings()["cloudDeleteLocal"]) && a.archiveWanted(j)
+}
+
+func (e *NativeEngine) attachSeedTask(gid string, t *torrent.Torrent, st storage.ClientImplCloser) {
+	if gid == "" || t == nil || e.isClosed() {
+		if t != nil {
+			t.Drop()
+		}
+		if st != nil {
+			_ = st.Close()
+		}
+		return
+	}
+	e.StopSeeding(gid)
+
+	ctx, cancel := context.WithCancel(e.app.ctx)
+	task := &btSeedTask{
+		gid:     gid,
+		torrent: t,
+		storage: st,
+		cancel:  cancel,
+		done:    make(chan struct{}),
+	}
+	e.seedMu.Lock()
+	if e.closed {
+		e.seedMu.Unlock()
+		cancel()
+		t.Drop()
+		if st != nil {
+			_ = st.Close()
+		}
+		return
+	}
+	e.seedTasks[gid] = task
+	e.seedMu.Unlock()
+
+	go func() {
+		defer close(task.done)
+		defer func() {
+			e.seedMu.Lock()
+			if e.seedTasks[gid] == task {
+				delete(e.seedTasks, gid)
+			}
+			e.seedMu.Unlock()
+			t.Drop()
+			if st != nil {
+				_ = st.Close()
+			}
+			if e.app.ctx.Err() == nil {
+				_, _ = e.app.Store.Patch("downloads", gid, Obj{
+					"uploadSpeed":     0,
+					"connectionCount": 0,
+				})
+				e.app.notifyDownloads()
+			}
+		}()
+
+		upMeter := newSpeedWindow(3 * time.Second)
+		initStats := t.Stats()
+		upMeter.Observe(time.Now(), initStats.BytesWrittenData.Int64())
+		var lastUp, lastConns int64 = -1, -1
+
+		ticker := time.NewTicker(1 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+			}
+			stNow := t.Stats()
+			upSpeed := upMeter.Observe(time.Now(), stNow.BytesWrittenData.Int64())
+			conns := int64(stNow.ActivePeers)
+			if upSpeed != lastUp || conns != lastConns {
+				lastUp, lastConns = upSpeed, conns
+				_, _ = e.app.Store.Patch("downloads", gid, Obj{
+					"uploadSpeed":     upSpeed,
+					"connectionCount": conns,
+				})
+				e.app.notifyDownloads()
+			}
+		}
+	}()
+}
+
+func (e *NativeEngine) StopSeeding(gid string) {
+	if gid == "" {
+		return
+	}
+	e.seedMu.Lock()
+	task := e.seedTasks[gid]
+	if task != nil {
+		delete(e.seedTasks, gid)
+	}
+	e.seedMu.Unlock()
+	if task != nil {
+		task.cancel()
+		select {
+		case <-task.done:
+		case <-time.After(3 * time.Second):
+		}
+	}
+}
+
+func (e *NativeEngine) StopAllSeeding() {
+	e.seedMu.Lock()
+	tasks := make([]*btSeedTask, 0, len(e.seedTasks))
+	for gid, task := range e.seedTasks {
+		tasks = append(tasks, task)
+		delete(e.seedTasks, gid)
+	}
+	e.seedMu.Unlock()
+	for _, task := range tasks {
+		task.cancel()
+	}
+	for _, task := range tasks {
+		select {
+		case <-task.done:
+		case <-time.After(3 * time.Second):
+		}
+	}
+}
+
+func (e *NativeEngine) IsSeeding(gid string) bool {
+	if gid == "" {
+		return false
+	}
+	e.seedMu.Lock()
+	_, ok := e.seedTasks[gid]
+	e.seedMu.Unlock()
+	return ok
+}
+
+// SyncSeedTasks reconciles background BT seeding with the aria2SeedEnabled setting.
+// When enabled, completed BT tasks whose local files and cached .torrent still exist
+// on disk are mounted for upload seeding; when disabled, all active seed tasks stop.
+func (e *NativeEngine) SyncSeedTasks() {
+	if e.isClosed() || e.app.ctx.Err() != nil {
+		return
+	}
+	if !flag(e.app.Settings()["aria2SeedEnabled"]) {
+		e.StopAllSeeding()
+		return
+	}
+	jobs, err := e.app.Store.List("downloads")
+	if err != nil {
+		return
+	}
+	for _, j := range jobs {
+		if e.isClosed() || e.app.ctx.Err() != nil {
+			return
+		}
+		if str(j["status"]) != "complete" || e.app.willDeleteLocalOnArchive(j) {
+			continue
+		}
+		gid := str(j["gid"])
+		if gid == "" || e.IsSeeding(gid) {
+			continue
+		}
+		kind := strings.TrimSpace(str(j["sourceType"]))
+		if kind == "" {
+			kind = inferSource(str(j["sourceUrl"]))
+		}
+		if kind != "magnet" && kind != "torrent-url" {
+			continue
+		}
+		dir := strings.TrimSpace(str(j["directory"]))
+		if dir == "" {
+			continue
+		}
+		stateDir := e.app.btTaskStateDir(gid)
+		knownHash := strings.ToLower(strings.TrimSpace(str(j["infoHash"])))
+		data := cachedTorrent(stateDir, knownHash)
+		if len(data) == 0 && stateDir != dir {
+			data = cachedTorrent(dir, knownHash)
+		}
+		if len(data) == 0 {
+			continue
+		}
+		mi, loadErr := metainfo.Load(bytes.NewReader(data))
+		if loadErr != nil {
+			continue
+		}
+		spec, specErr := torrent.TorrentSpecFromMetaInfoErr(mi)
+		if specErr != nil {
+			continue
+		}
+		// Ensure all payload files exist on disk before seeding so we never re-download deleted files.
+		allPresent := false
+		if files := list(j["files"]); len(files) > 0 {
+			allPresent = true
+			for _, f := range files {
+				p := str(object(f)["path"])
+				want := num(object(f)["size"])
+				info, sErr := os.Stat(p)
+				if sErr != nil || !info.Mode().IsRegular() || (want > 0 && info.Size() != want) {
+					allPresent = false
+					break
+				}
+			}
+		} else if fp := str(j["filePath"]); fp != "" {
+			if info, sErr := os.Stat(fp); sErr == nil && info.Mode().IsRegular() && info.Size() > 0 {
+				allPresent = true
+			}
+		}
+		if !allPresent {
+			continue
+		}
+		_, own, _ := torrentTrackers(data)
+		if hasLoopbackTracker(own) {
+			continue
+		}
+		cl, _, clErr := e.acquireBTClient(false)
+		if clErr != nil {
+			return
+		}
+		taskPC, pcErr := storage.NewBoltPieceCompletion(stateDir)
+		if pcErr != nil {
+			taskPC = storage.NewMapPieceCompletion()
+		}
+		silentLogger := slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelError + 10}))
+		taskStorage := storage.NewFileOpts(storage.NewFileClientOpts{
+			ClientBaseDir:   dir,
+			PieceCompletion: taskPC,
+			UsePartFiles:    g.Some(false),
+			Logger:          silentLogger,
+		})
+		spec.Storage = taskStorage
+		spec.Trackers = e.buildParallelTrackerTiers(own, false)
+		t, _, addErr := cl.AddTorrentSpec(spec)
+		if addErr != nil {
+			_ = taskStorage.Close()
+			continue
+		}
+		if len(spec.Trackers) > 0 {
+			t.AddTrackers(spec.Trackers)
+		}
+		if t.BytesMissing() > 0 {
+			_ = t.VerifyDataContext(e.app.ctx)
+		}
+		if t.BytesMissing() != 0 {
+			t.Drop()
+			_ = taskStorage.Close()
+			continue
+		}
+		e.attachSeedTask(gid, t, taskStorage)
 	}
 }
