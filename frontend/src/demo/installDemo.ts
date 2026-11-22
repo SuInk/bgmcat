@@ -471,7 +471,7 @@ export function installDemoMode(): void {
 
   function buildStatus(): SystemStatus {
     return {
-      appVersion: "0.2.1",
+      appVersion: "0.2.2",
       activeHost: "127.0.0.1",
       activePort: 39123,
       configuredHost: "127.0.0.1",
@@ -740,7 +740,7 @@ export function installDemoMode(): void {
     if (path === "/api/system/status") {
       return jsonResponse({
         ok: true,
-        appVersion: "0.2.1",
+        appVersion: "0.2.2",
         githubOAuthAvailable: false,
         googleOAuthAvailable: false,
         dianaAuthAvailable: false,
@@ -1205,10 +1205,10 @@ export function installDemoMode(): void {
       return jsonResponse({ enabled: false, baseUrl: "http://127.0.0.1:11434", model: "gemma3:4b", reachable: false, availableModels: [], lastError: null });
     }
     if (path === "/api/system/version") {
-      return jsonResponse({ currentVersion: "0.2.1", channel: "stable" });
+      return jsonResponse({ currentVersion: "0.2.2", channel: "stable" });
     }
     if (path === "/api/system/update" || path === "/api/system/update/check") {
-      return jsonResponse({ state: "up-to-date", currentVersion: "0.2.1", latestVersion: "0.2.1", releaseUrl: "https://github.com/SuInk/bgmcat/releases" });
+      return jsonResponse({ state: "up-to-date", currentVersion: "0.2.2", latestVersion: "0.2.2", releaseUrl: "https://github.com/SuInk/bgmcat/releases" });
     }
     if (path === "/api/system/update/policy") {
       return jsonResponse({ autoDownload: true, autoInstall: false, mirror: "auto", channel: "stable" });

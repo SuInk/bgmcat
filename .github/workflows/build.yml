@@ -319,7 +319,7 @@ jobs:
           {
             echo "这是从 main 自动构建的 Canary 测试版（提交 ${GITHUB_SHA:0:7}），没有经过正式发布前的检查，可能不稳定。"
             echo
-            echo "想长期使用请装稳定版。应用内「设置 → 版本」把更新通道切到 Canary，才会提示这类版本。"
+            echo "想长期使用请装稳定版。应用内点侧栏底部版本号，把更新通道切到 Canary，才会提示这类版本。"
             echo
             if [[ -n "$previous" ]]; then
               echo "## 自 ${previous} 以来的改动"
