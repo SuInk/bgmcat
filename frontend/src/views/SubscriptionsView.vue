@@ -168,18 +168,71 @@ const groupedSubscriptions = computed<SubscriptionGroup[]>(() => {
   );
 });
 
-function groupRuleSummary(group: SubscriptionGroup): string {
+interface RuleChip {
+  label: string;
+  value: string;
+  tone?: "accent" | "warn" | "muted";
+}
+
+function groupRuleChips(group: SubscriptionGroup): RuleChip[] {
   const rule = group.items[0]?.rule;
   if (!rule) {
-    return "";
+    return [];
   }
-  const parts: string[] = [];
-  const subgroup = rule.lockedSubgroup?.trim() || rule.preferredSubgroups?.[0]?.trim();
-  parts.push(subgroup || "自动优选");
+  const chips: RuleChip[] = [];
+
+  const locked = rule.lockedSubgroup?.trim();
+  const preferred = (rule.preferredSubgroups ?? []).map((s) => s.trim()).filter(Boolean);
+  if (locked) {
+    chips.push({ label: "字幕组", value: `仅限 ${locked}`, tone: "accent" });
+  } else if (preferred.length) {
+    chips.push({ label: "字幕组", value: `优先 ${preferred.join(" / ")}`, tone: "accent" });
+  } else {
+    chips.push({ label: "字幕组", value: "自动优选" });
+  }
+
+  const resolutions = (rule.preferredResolutions ?? []).map((s) => s.trim()).filter(Boolean);
+  if (resolutions.length) {
+    chips.push({ label: "画质", value: resolutions.join(" / ") });
+  } else if (group.animeId) {
+    chips.push({ label: "画质", value: "1080p 优先" });
+  } else {
+    chips.push({ label: "画质", value: "不限" });
+  }
+
+  if (rule.preferredLanguage === "chs") {
+    chips.push({ label: "语言", value: "简中优先" });
+  } else if (rule.preferredLanguage === "cht") {
+    chips.push({ label: "语言", value: "繁中优先" });
+  } else {
+    chips.push({ label: "语言", value: "不限" });
+  }
+
   if (rule.onlyNew) {
-    parts.push("仅追新集");
+    const base = typeof rule.baselineEpisode === "number" && rule.baselineEpisode > 0 ? rule.baselineEpisode : null;
+    chips.push({
+      label: "范围",
+      value: base ? `仅追新集（第 ${base + 1} 集起）` : "仅追新集",
+      tone: "accent"
+    });
+  } else {
+    chips.push({ label: "范围", value: "全部剧集" });
   }
-  return parts.join(" · ");
+
+  if (group.items.length > 1) {
+    chips.push({ label: "去重", value: `${group.items.length} 源互备 · 每集下 1 份` });
+  }
+
+  if (rule.skipBatch === false) {
+    chips.push({ label: "合集", value: "允许合集" });
+  }
+  if (rule.includeKeywords?.length) {
+    chips.push({ label: "包含", value: rule.includeKeywords.join(" / ") });
+  }
+  if (rule.excludeKeywords?.length) {
+    chips.push({ label: "排除", value: rule.excludeKeywords.join(" / "), tone: "warn" });
+  }
+  return chips;
 }
 
 const editingAnimeGroup = ref<SubscriptionGroup | null>(null);
@@ -688,32 +741,50 @@ watch(editingSubscriptionId, (id) => {
         <div v-else class="grid content-start gap-3">
           <section v-for="group in groupedSubscriptions" :key="group.key" class="list-panel">
             <!-- 卡头：这部番整体在干什么 -->
-            <header class="flex min-w-0 items-center gap-3 bg-[var(--tint-1)] px-3.5 py-3">
-              <div class="grid h-12 w-9 shrink-0 place-items-center overflow-hidden rounded-[9px] bg-[var(--panel)] text-sm font-semibold text-[var(--muted)]">
-                <img v-if="group.imageUrl" :src="group.imageUrl" alt="" class="size-full object-cover" loading="lazy" />
-                <span v-else aria-hidden="true">{{ group.title.slice(0, 1) }}</span>
+            <header class="grid gap-2.5 bg-[var(--tint-1)] px-3.5 py-3">
+              <div class="flex min-w-0 items-center gap-3">
+                <div class="grid h-12 w-9 shrink-0 place-items-center overflow-hidden rounded-[9px] bg-[var(--panel)] text-sm font-semibold text-[var(--muted)]">
+                  <img v-if="group.imageUrl" :src="group.imageUrl" alt="" class="size-full object-cover" loading="lazy" />
+                  <span v-else aria-hidden="true">{{ group.title.slice(0, 1) }}</span>
+                </div>
+                <div class="grid min-w-0 flex-1 gap-0.5">
+                  <h3 class="truncate text-sm font-semibold text-[var(--ink)]" :title="group.title">{{ group.title }}</h3>
+                  <p class="text-xs text-[var(--muted)]">
+                    {{ group.items.length }} 个 RSS 源
+                    <template v-if="groupDownloaded(group).count">
+                      · 已下 {{ groupDownloaded(group).count }}{{ groupDownloaded(group).latest ? ` / ${groupDownloaded(group).latest}` : "" }} 集
+                    </template>
+                  </p>
+                </div>
+                <button
+                  v-if="group.animeId"
+                  type="button"
+                  class="btn-ghost shrink-0 px-2.5 py-1 text-xs font-semibold"
+                  @click="editingAnimeGroup = group"
+                >
+                  追更设置
+                </button>
+                <span class="status-pill shrink-0" :class="groupState(group).className">{{ groupState(group).label }}</span>
               </div>
-              <div class="grid min-w-0 flex-1 gap-0.5">
-                <h3 class="truncate text-sm font-semibold text-[var(--ink)]" :title="group.title">{{ group.title }}</h3>
-                <p class="text-xs text-[var(--muted)]">
-                  {{ group.items.length }} 个源
-                  <template v-if="group.animeId && groupRuleSummary(group)">
-                    · {{ groupRuleSummary(group) }}
-                  </template>
-                  <template v-if="groupDownloaded(group).count">
-                    · 已下 {{ groupDownloaded(group).count }}{{ groupDownloaded(group).latest ? ` / ${groupDownloaded(group).latest}` : "" }} 集
-                  </template>
-                </p>
-              </div>
-              <button
-                v-if="group.animeId"
-                type="button"
-                class="btn-ghost shrink-0 px-2.5 py-1 text-xs font-semibold"
-                @click="editingAnimeGroup = group"
+
+              <!-- 结构化规则标签条：一眼看清当前生效的匹配与去重策略 -->
+              <div
+                v-if="groupRuleChips(group).length"
+                class="rule-chips-bar"
+                :class="{ 'cursor-pointer': Boolean(group.animeId) }"
+                :title="group.animeId ? '点击修改追更规则' : undefined"
+                @click="group.animeId && (editingAnimeGroup = group)"
               >
-                追更设置
-              </button>
-              <span class="status-pill shrink-0" :class="groupState(group).className">{{ groupState(group).label }}</span>
+                <span
+                  v-for="chip in groupRuleChips(group)"
+                  :key="`${chip.label}:${chip.value}`"
+                  class="rule-chip"
+                  :class="chip.tone ? `is-${chip.tone}` : ''"
+                >
+                  <span class="rule-chip-key">{{ chip.label }}</span>
+                  <span class="rule-chip-val">{{ chip.value }}</span>
+                </span>
+              </div>
             </header>
 
             <!-- 每个源一行 -->
@@ -819,3 +890,61 @@ watch(editingSubscriptionId, (id) => {
     </div>
   </section>
 </template>
+
+<style scoped>
+.rule-chips-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.rule-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--card);
+  font-size: 11.5px;
+  line-height: 1.5;
+  transition: border-color 140ms ease, background 140ms ease;
+}
+
+.rule-chips-bar.cursor-pointer:hover .rule-chip {
+  border-color: color-mix(in srgb, var(--accent) 35%, var(--line));
+}
+
+.rule-chip-key {
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.rule-chip-val {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.rule-chip.is-accent {
+  border-color: var(--accent-line);
+  background: var(--accent-soft);
+}
+
+.rule-chip.is-accent .rule-chip-key {
+  color: color-mix(in srgb, var(--accent-vivid) 75%, var(--muted));
+}
+
+.rule-chip.is-accent .rule-chip-val {
+  color: var(--accent-vivid);
+}
+
+.rule-chip.is-warn {
+  border-color: color-mix(in srgb, var(--warn) 35%, var(--line));
+  background: var(--warn-soft);
+}
+
+.rule-chip.is-warn .rule-chip-val {
+  color: var(--warn);
+}
+</style>
