@@ -219,14 +219,14 @@ func (a *App) integrationRoutes() {
 		return e
 	})
 	a.handle("GET /api/system/version", func(w http.ResponseWriter, r *http.Request) error {
-		ok(w, Obj{"version": Version, "appVersion": Version, "platform": runtime.GOOS, "arch": runtime.GOARCH, "buildType": "source", "gitDescribe": nil, "packaged": false, "channel": "stable", "source": "go"})
+		ok(w, Obj{"version": Version, "appVersion": Version, "platform": runtime.GOOS, "arch": runtime.GOARCH, "buildType": "source", "gitDescribe": nil, "packaged": false, "channel": buildChannel(Version), "source": "go"})
 		return nil
 	})
 	a.handle("GET /api/system/update", func(w http.ResponseWriter, r *http.Request) error { ok(w, a.updateState()); return nil })
 	a.handle("POST /api/system/update/check", func(w http.ResponseWriter, r *http.Request) error { ok(w, a.checkRelease(r.Context())); return nil })
 	a.handle("GET /api/system/update/policy", func(w http.ResponseWriter, r *http.Request) error {
 		s := a.Settings()
-		ok(w, Obj{"autoDownload": s["updateAutoDownload"], "autoInstall": s["updateAutoInstall"], "mirror": s["updateMirror"], "channel": "stable"})
+		ok(w, Obj{"autoDownload": s["updateAutoDownload"], "autoInstall": s["updateAutoInstall"], "mirror": s["updateMirror"], "channel": normalizeUpdateChannel(s["updateChannel"])})
 		return nil
 	})
 	a.handle("PUT /api/system/update/policy", func(w http.ResponseWriter, r *http.Request) error {
@@ -234,11 +234,26 @@ func (a *App) integrationRoutes() {
 		if e != nil {
 			return e
 		}
-		_, e = a.Store.Patch("config", "settings", Obj{"updateAutoDownload": o["autoDownload"], "updateAutoInstall": o["autoInstall"], "updateMirror": o["mirror"]})
-		if e == nil {
-			ok(w, o)
+		// Only write the fields the request sent, so changing the channel alone
+		// does not blank the other update settings.
+		patch := Obj{}
+		for from, to := range map[string]string{"autoDownload": "updateAutoDownload", "autoInstall": "updateAutoInstall", "mirror": "updateMirror"} {
+			if v, has := o[from]; has {
+				patch[to] = v
+			}
 		}
-		return e
+		if v, has := o["channel"]; has {
+			if c := str(v); c != updateChannelStable && c != updateChannelCanary {
+				return errors.New("更新通道只能是 stable 或 canary")
+			}
+			patch["updateChannel"] = str(v)
+		}
+		if _, e = a.Store.Patch("config", "settings", patch); e != nil {
+			return e
+		}
+		s := a.Settings()
+		ok(w, Obj{"autoDownload": s["updateAutoDownload"], "autoInstall": s["updateAutoInstall"], "mirror": s["updateMirror"], "channel": normalizeUpdateChannel(s["updateChannel"])})
+		return nil
 	})
 	a.handle("GET /api/system/update/changelog", func(w http.ResponseWriter, r *http.Request) error {
 		history, _ := a.Store.Get("updates", "history")

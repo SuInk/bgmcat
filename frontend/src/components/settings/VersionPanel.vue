@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { isDesktopShell, status } from "../../stores/session";
-import { updateVersion, updateStatus, updateStatusLabel, updateStatusTone, updateReleases, updateBusy, refreshUpdateOverview, runUpdateCheck } from "../../stores/update";
+import { updateVersion, updateStatus, updatePolicy, updateStatusLabel, updateStatusTone, updateReleases, updateBusy, refreshUpdateOverview, runUpdateCheck, setUpdateChannel } from "../../stores/update";
 import { copyText, openExternalLink } from "../../lib/actions";
 import AppSelect from "../common/AppSelect.vue";
 import AppNavIcon from "../layout/AppNavIcon.vue";
@@ -20,6 +20,11 @@ const deployment = ref<DeploymentMode>(isDesktopShell ? "desktop" : "server");
 const copied = ref(false);
 const copyError = ref("");
 let copyTimer: number | null = null;
+
+const CHANNEL_OPTIONS = [
+  { value: "stable", label: "稳定版" },
+  { value: "canary", label: "Canary（每次合并的测试版）" },
+];
 
 const versionLabel = computed(() => `v${(updateVersion.value?.version || status.value?.appVersion || "未知").replace(/^v/, "")}`);
 const phaseLabel = computed(() => updateBusy.value ? "检查中…" : updateStatus.value?.kind === "error" ? "检查失败" : updateStatusLabel.value);
@@ -93,7 +98,7 @@ onBeforeUnmount(clearCopyTimer);
   <div class="version-options">
    <div class="option-field">
     <label>更新通道</label>
-    <AppSelect size="sm" class="option-select" model-value="stable" disabled aria-label="更新通道" :options="[{ value: 'stable', label: '稳定版' }]" />
+    <AppSelect size="sm" class="option-select" :model-value="updatePolicy.channel" :disabled="loading || updateBusy" aria-label="更新通道" :options="CHANNEL_OPTIONS" @update:model-value="(v) => setUpdateChannel(String(v))" />
    </div>
    <div class="option-field">
     <label>下载来源</label>

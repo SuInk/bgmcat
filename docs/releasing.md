@@ -15,6 +15,16 @@
 - Go 服务（`bgmcat --version`）、前端侧栏、Electron 桌面端（`desktop/package.json`）与 Android 客户端（`android/app/build.gradle.kts` 的 `versionName` / `versionCode`）全部自动从该文件派生版本。
 - Git 标签必须严格匹配 `v<VERSION>`（例如 `v0.2.0` 或预发布 `v0.2.0-rc.1`）；带 `-` 的标签由 CI 自动标记为 GitHub Prerelease 且不会覆盖 Docker `latest` 标签。
 
+## Canary 测试版
+
+- 每次合并到 `main`，CI 自动发一个 Canary 预发布，不用手动打标签。版本号是最新正式版的下一个修订号加序号，例如正式版是 `v0.2.1` 时依次发 `v0.2.2-canary.1`、`v0.2.2-canary.2`……
+- Canary 和正式版是同一套产物：五平台服务包、四个桌面安装包和 APK。发布说明自动生成，列出上一个版本以来的提交。
+- 某次合并改了 `internal/version/VERSION`，就当作在准备发正式版，这次不发 Canary。否则 Canary 的版本号会高过紧接着发的正式版，Canary 用户会以为正式版是退版。
+- 发正式版 `vX.Y.Z` 时，自动删掉版本号不高于它的 Canary 及其标签；手动发的 beta / rc 不动。应用内检查更新只看最近 30 条 Release，不清理的话正式版会被挤出去。
+- Canary 都标成 GitHub Prerelease，不会成为 Latest。一键安装脚本和官网下载页只取 Latest，所以默认用户不会装到 Canary。想装某个 Canary，可以给安装脚本指定版本：`sh scripts/install.sh --version v0.2.2-canary.1`。
+- 应用内「设置 → 版本」的更新通道选 Canary 后，检查更新时会把 Canary（以及 beta / rc）算进去；选稳定版只看正式版。
+- 仓库变量 `PUBLISH_CONTAINER=true` 时，Canary 也会推送 GHCR 镜像，标签为版本号和 `canary`。
+
 ## 发布前本地检查清单
 
 1. 更新 `internal/version/VERSION` 并编写中文发布说明 `docs/releases/<版本>.md`（不得包含 `YOUR_ACCOUNT` 等占位符，否则 CI `Validate release tag` 步骤会直接拦截失败）。

@@ -169,6 +169,21 @@ export async function refreshUpdateOverview(): Promise<void> {
   }
 }
 
+/** 切换更新通道后立刻重新检查，让「最新版本」跟着通道变。 */
+export async function setUpdateChannel(channel: string): Promise<void> {
+  if (channel === updatePolicy.value.channel) return;
+  const previous = updatePolicy.value.channel;
+  updatePolicy.value = { ...updatePolicy.value, channel };
+  try {
+    updatePolicy.value = await saveUpdatePolicy({ channel });
+  } catch (error) {
+    updatePolicy.value = { ...updatePolicy.value, channel: previous };
+    toastError(error, "切换更新通道失败。");
+    return;
+  }
+  await runUpdateCheck();
+}
+
 export async function runUpdateCheck(): Promise<void> {
   await withBusy("update-action", async () => {
     try {
