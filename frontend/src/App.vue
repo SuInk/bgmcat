@@ -39,7 +39,7 @@ import { activeFilePlayback, closeFilePlayback } from "./stores/files";
 import { animeDetail, animeDetailError, closeAnimeDetail } from "./stores/discovery";
 import { refreshUpdateStatus, updateAvailable } from "./stores/update";
 import { openExternalLink } from "./lib/actions";
-import { activeTab, TABS, type TabKey } from "./stores/router";
+import { activeTab, stripRouteBase, TABS, type TabKey } from "./stores/router";
 import {
   authChecked,
   hasConsoleAccess,
@@ -71,7 +71,7 @@ function openVersion() { mobileSidebarOpen.value = false; versionOpen.value = tr
 function confirmLogout() { logoutConfirmOpen.value = false; void logout(); }
 
 const publicShareCode = ref(
-  /^\/s\/([A-Za-z0-9_-]{6,32})\/?$/u.exec(window.location.pathname)?.[1] ?? ""
+  /^\/s\/([A-Za-z0-9_-]{6,32})\/?$/u.exec(stripRouteBase(window.location.pathname))?.[1] ?? ""
 );
 
 const lazyPage = (loader: () => Promise<any>) =>
@@ -88,6 +88,8 @@ const SubscriptionsView = lazyPage(() => import("./views/SubscriptionsView.vue")
 
 const activeTabMeta = computed(() => TABS.find((tab) => tab.key === activeTab.value) ?? TABS[0]);
 const isDemoMode = import.meta.env.VITE_DEMO_MODE === "true";
+/** 演示挂在官网的 demo/ 子目录下，官网首页就是它的上一级；深层路由下不能用相对的 ../ */
+const demoSiteHome = new URL("../", new URL(import.meta.env.BASE_URL, window.location.origin)).pathname;
 
 const refreshing = computed(() => isBusy("refresh-view"));
 
@@ -333,7 +335,7 @@ onUnmounted(() => {
 
           <a
             v-if="isDemoMode"
-            href="../"
+            :href="demoSiteHome"
             class="topbar-badge topbar-demo transition hover:opacity-85"
             title="当前为纯前端演示环境，点击返回产品官网与下载页"
           >

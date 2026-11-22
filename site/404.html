@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>页面不存在 — 猫追番 · Bangumi Cat</title>
+<script>
+  // 在线演示是单页应用，深层地址（如 /bgmcat/demo/downloads）在 Pages 上没有对应文件，
+  // 会落到这里：把路径交给演示首页去还原，见 frontend/index.html。
+  (function () {
+    var m = /^(\/[^/]+)?\/demo(\/.*)$/.exec(location.pathname);
+    if (m) {
+      location.replace((m[1] || "") + "/demo/?__route=" + encodeURIComponent(m[2] + location.search) + location.hash);
+    }
+  })();
+</script>
+<style>
+  body { margin: 0; min-height: 100vh; display: grid; place-items: center; font-family: system-ui, -apple-system, "PingFang SC", sans-serif; background: #f6f7f9; color: #12151d; }
+  @media (prefers-color-scheme: dark) { body { background: #0d1016; color: #f2f5fa; } }
+  main { text-align: center; padding: 24px; }
+  a { color: #0041fd; }
+  @media (prefers-color-scheme: dark) { a { color: #548aff; } }
+</style>
+</head>
+<body>
+<main>
+  <h1>页面不存在</h1>
+  <p><a href="/bgmcat/">回到猫追番官网</a></p>
+</main>
+</body>
+</html>

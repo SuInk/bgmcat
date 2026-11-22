@@ -9,6 +9,8 @@ param(
   [switch]$SkipAria2
 )
 $ErrorActionPreference = 'Stop'
+# 通过 `irm ... | iex` 一键运行时没有脚本文件路径，也没法传 -Start；这时和 Linux / macOS 的一键命令一样，装完直接启动。
+if (-not $MyInvocation.MyCommand.Path -and -not $PSBoundParameters.ContainsKey('Start')) { $Start = $true }
 if (-not [IO.Path]::IsPathRooted($InstallDir)) { throw 'InstallDir must be absolute' }
 if ($env:PROCESSOR_ARCHITECTURE -ne 'AMD64') { throw 'This release supports Windows AMD64 only' }
 $asset = 'bgmcat-windows-amd64.zip'

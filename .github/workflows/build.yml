@@ -336,15 +336,25 @@ jobs:
           BUILD_VERSION: ${{ needs.version.outputs.value }}
           TAG: ${{ github.ref_name }}
         run: |
+          # 每个版本的说明末尾都附上「下载哪个文件」，发布页上的文件太多时一眼能找到自己要的。
+          notes="$RUNNER_TEMP/release-notes.md"
+          if [[ "$CANARY" == true ]]; then
+            version="$BUILD_VERSION"
+            cp "$RUNNER_TEMP/canary-notes.md" "$notes"
+          else
+            version="${TAG#v}"
+            cp "docs/releases/${version}.md" "$notes"
+          fi
+          sed "s/{VERSION}/${version}/g" docs/release-download-guide.md >> "$notes"
           if [[ "$CANARY" == true ]]; then
             # Canary 的标签由这里在当前提交上创建；GITHUB_TOKEN 建的标签不会再触发一轮 CI。
             gh release create "v$BUILD_VERSION" release/* --target "$GITHUB_SHA" --title "Bangumi Cat v$BUILD_VERSION" \
-              --notes-file "$RUNNER_TEMP/canary-notes.md" --prerelease --latest=false
+              --notes-file "$notes" --prerelease --latest=false
             exit 0
           fi
           flags=(--latest)
           if [[ "$TAG" == *-* ]]; then flags=(--prerelease --latest=false); fi
-          gh release create "$TAG" release/* --verify-tag --title "Bangumi Cat $TAG" --notes-file "docs/releases/${TAG#v}.md" "${flags[@]}"
+          gh release create "$TAG" release/* --verify-tag --title "Bangumi Cat $TAG" --notes-file "$notes" "${flags[@]}"
       - name: Prune superseded canary releases
         if: startsWith(github.ref, 'refs/tags/v') && !contains(github.ref_name, '-')
         env:

@@ -37,6 +37,24 @@ const TAB_PATH_BY_KEY: Record<TabKey, string> = {
   settings: "/service"
 };
 
+// 前端挂在子路径下（官网演示是 /bgmcat/demo/）时，路由路径都相对这个前缀；
+// 后端和桌面版挂在根路径，前缀为空。
+const ROUTE_BASE = (() => {
+  const base = import.meta.env.BASE_URL || "/";
+  return base.startsWith("/") ? base.replace(/\/+$/, "") : "";
+})();
+
+/** 去掉部署前缀，得到应用内路径（总是以 / 开头）。 */
+export function stripRouteBase(pathname: string): string {
+  if (!ROUTE_BASE) return pathname;
+  if (pathname === ROUTE_BASE) return "/";
+  return pathname.startsWith(`${ROUTE_BASE}/`) ? pathname.slice(ROUTE_BASE.length) : pathname;
+}
+
+function withRouteBase(path: string): string {
+  return ROUTE_BASE ? `${ROUTE_BASE}${path}` : path;
+}
+
 // 旧版路径别名，保持既有书签/外链可用
 const LEGACY_PATH_TABS: Array<[string, TabKey]> = [
   ["/bangumi", "home"],
@@ -59,7 +77,7 @@ export const lastAppTab = ref<TabKey>(activeTab.value === "settings" ? "home" : 
 export const playbackRouteLabel = ref("");
 
 export function resolveTabFromPath(pathname: string): TabKey {
-  const normalizedPath = pathname.replace(/\/+$/g, "") || "/";
+  const normalizedPath = stripRouteBase(pathname).replace(/\/+$/g, "") || "/";
   if (normalizedPath === "/probe" || normalizedPath.startsWith("/probe/")) {
     requestedSettingsPage.value = "probe";
     try {
@@ -153,11 +171,11 @@ function normalizePlaybackRouteLabel(value: string): string {
 
 function buildTabPath(tab: TabKey): string {
   if (tab !== "downloads") {
-    return TAB_PATH_BY_KEY[tab];
+    return withRouteBase(TAB_PATH_BY_KEY[tab]);
   }
   const basePath = TAB_PATH_BY_KEY.downloads;
   const playbackLabel = normalizePlaybackRouteLabel(playbackRouteLabel.value);
-  return playbackLabel ? `${basePath}/${encodeURIComponent(playbackLabel)}` : basePath;
+  return withRouteBase(playbackLabel ? `${basePath}/${encodeURIComponent(playbackLabel)}` : basePath);
 }
 
 function buildLocationUrl(
