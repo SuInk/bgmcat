@@ -15,6 +15,7 @@ import {
   type CloudProviderStatus,
   type DownloadEngineTestResult
 } from "../../../api";
+import AppDialog from "../../common/AppDialog.vue";
 import SegmentedControl from "../../common/SegmentedControl.vue";
 import AppNavIcon from "../../layout/AppNavIcon.vue";
 import SettingsItem from "../SettingsItem.vue";
@@ -439,6 +440,8 @@ async function handleImportJsonAndAuthorize(event: Event): Promise<void> {
   }
 }
 
+const confirmDisconnectOpen = ref(false);
+
 async function handleDisconnect(): Promise<void> {
   authBusy.value = true;
   const targetProvider = cloudProvider.value;
@@ -450,6 +453,7 @@ async function handleDisconnect(): Promise<void> {
     folderPickerOpen.value = false;
     await refreshCloud();
     updateFeedback(`已断开 ${label}`, "info");
+    confirmDisconnectOpen.value = false;
   } catch (error) {
     toastError(error, "断开连接失败");
   } finally {
@@ -722,7 +726,7 @@ onUnmounted(() => {
                 type="button"
                 class="settings-secondary-button"
                 :disabled="authBusy"
-                @click="handleDisconnect"
+                @click="confirmDisconnectOpen = true"
               >
                 断开
               </button>
@@ -941,7 +945,7 @@ onUnmounted(() => {
                 type="button"
                 class="settings-secondary-button"
                 :disabled="authBusy"
-                @click="handleDisconnect"
+                @click="confirmDisconnectOpen = true"
               >
                 断开
               </button>
@@ -1103,7 +1107,7 @@ onUnmounted(() => {
               type="button"
               class="settings-secondary-button"
               :disabled="authBusy"
-              @click="handleDisconnect"
+              @click="confirmDisconnectOpen = true"
             >
               断开
             </button>
@@ -1374,6 +1378,23 @@ onUnmounted(() => {
       </SettingsItem>
     </div>
   </SettingsSection>
+
+  <AppDialog
+    v-if="confirmDisconnectOpen"
+    :title="`确认断开 ${activeProviderStatus.displayName}？`"
+    :dismissible="!authBusy"
+    @close="confirmDisconnectOpen = false"
+  >
+    <p class="text-sm leading-6 text-[var(--muted)]">
+      将清除本机保存的 <strong class="text-[var(--ink)]">{{ activeProviderStatus.displayName }}</strong> 授权信息并切回本机保存，云端已有文件不会被删除。
+    </p>
+    <template #footer>
+      <button type="button" class="btn-ghost" :disabled="authBusy" @click="confirmDisconnectOpen = false">取消</button>
+      <button type="button" class="btn-danger" :disabled="authBusy" @click="handleDisconnect">
+        {{ authBusy ? "断开中…" : "确认断开" }}
+      </button>
+    </template>
+  </AppDialog>
 </template>
 
 <style scoped>

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, inject, onMounted, reactive, ref } from "vue";
+import { GripVertical } from "@lucide/vue";
 
 import type { ResourceProviderSummary } from "@shared/index";
 
@@ -35,13 +36,23 @@ const PLATFORM_DEFAULT_HOSTS: Record<string, string> = {
 const openProbe = inject(settingsOpenProbeKey, () => undefined);
 
 const resourceProviders = ref<ResourceProviderSummary[]>([]);
-const providerTesting = ref<string | null>(null);
+const testingProviders = reactive(new Set<string>());
+const testingAllProviders = ref(false);
+const providerBatchDone = ref(0);
+const providerBatchTotal = ref(0);
 const providerResults = ref<Record<string, ProbeResult>>({});
 const openMirrorId = ref<string | null>(null);
 const mirrorDrafts = reactive<Record<string, string>>({});
 
+const draggingProviderId = ref<string | null>(null);
+const dragOverProviderId = ref<string | null>(null);
+const dragOverPosition = ref<"before" | "after">("before");
+
 const metadataPlatforms = ref<MetadataPlatformInfo[]>([]);
-const platformTesting = ref<string | null>(null);
+const testingPlatforms = reactive(new Set<string>());
+const testingAllPlatforms = ref(false);
+const platformBatchDone = ref(0);
+const platformBatchTotal = ref(0);
 const platformResults = ref<Record<string, ProbeResult>>({});
 
 const orderedProviders = computed(() => {
@@ -181,8 +192,74 @@ function moveProvider(providerId: string, delta: number): void {
   settingsForm.enabledResourceProviders = order.filter((id) => isProviderEnabled(id));
 }
 
+function reorderProvider(fromId: string, toId: string, position: "before" | "after"): void {
+  if (fromId === toId) return;
+  const order = orderedProviders.value.map((provider) => provider.id);
+  const fromIdx = order.indexOf(fromId);
+  if (fromIdx === -1) return;
+  const [moved] = order.splice(fromIdx, 1);
+  let targetIdx = order.indexOf(toId);
+  if (targetIdx === -1) return;
+  if (position === "after") {
+    targetIdx += 1;
+  }
+  order.splice(targetIdx, 0, moved as string);
+  settingsForm.resourceProviderOrder = order;
+  settingsForm.enabledResourceProviders = order.filter((id) => isProviderEnabled(id));
+}
+
+function handleProviderDragStart(providerId: string, event: DragEvent): void {
+  draggingProviderId.value = providerId;
+  if (event.dataTransfer) {
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("text/plain", providerId);
+  }
+}
+
+function handleProviderDragOver(providerId: string, event: DragEvent): void {
+  if (!draggingProviderId.value || draggingProviderId.value === providerId) {
+    dragOverProviderId.value = null;
+    return;
+  }
+  event.preventDefault();
+  if (event.dataTransfer) {
+    event.dataTransfer.dropEffect = "move";
+  }
+  const el = event.currentTarget as HTMLElement | null;
+  if (el) {
+    const rect = el.getBoundingClientRect();
+    dragOverPosition.value = event.clientY < rect.top + rect.height / 2 ? "before" : "after";
+  }
+  dragOverProviderId.value = providerId;
+}
+
+function handleProviderDrop(providerId: string, event: DragEvent): void {
+  event.preventDefault();
+  const fromId = draggingProviderId.value || event.dataTransfer?.getData("text/plain") || "";
+  if (fromId && fromId !== providerId) {
+    reorderProvider(fromId, providerId, dragOverPosition.value);
+  }
+  clearProviderDrag();
+}
+
+function clearProviderDrag(): void {
+  draggingProviderId.value = null;
+  dragOverProviderId.value = null;
+}
+
+function handleProviderHandleKeydown(providerId: string, event: KeyboardEvent): void {
+  if (event.key === "ArrowUp") {
+    event.preventDefault();
+    moveProvider(providerId, -1);
+  } else if (event.key === "ArrowDown") {
+    event.preventDefault();
+    moveProvider(providerId, 1);
+  }
+}
+
 async function testProvider(providerId: string): Promise<void> {
-  providerTesting.value = providerId;
+  if (testingProviders.has(providerId)) return;
+  testingProviders.add(providerId);
   try {
     const status = await testResourceProvider(providerId, "1080p");
     providerResults.value = { ...providerResults.value, [providerId]: { ok: status.ok, count: status.count, error: status.error } };
@@ -192,7 +269,30 @@ async function testProvider(providerId: string): Promise<void> {
       [providerId]: { ok: false, count: 0, error: error instanceof Error ? error.message : String(error) }
     };
   } finally {
-    providerTesting.value = null;
+    testingProviders.delete(providerId);
+  }
+}
+
+async function testAllProviders(): Promise<void> {
+  if (testingAllProviders.value || !orderedProviders.value.length) return;
+  const ids = orderedProviders.value.map((p) => p.id);
+  testingAllProviders.value = true;
+  providerBatchDone.value = 0;
+  providerBatchTotal.value = ids.length;
+  let cursor = 0;
+  const concurrency = Math.min(4, ids.length);
+  try {
+    await Promise.all(
+      Array.from({ length: concurrency }, async () => {
+        while (cursor < ids.length) {
+          const id = ids[cursor++]!;
+          await testProvider(id);
+          providerBatchDone.value += 1;
+        }
+      })
+    );
+  } finally {
+    testingAllProviders.value = false;
   }
 }
 
@@ -218,7 +318,8 @@ function platformIdleLabel(platform: MetadataPlatformInfo): string {
 }
 
 async function testPlatform(platformId: string): Promise<void> {
-  platformTesting.value = platformId;
+  if (testingPlatforms.has(platformId)) return;
+  testingPlatforms.add(platformId);
   try {
     if (platformId === "tmdb") {
       await saveSettingsFields(["tmdbApiKey"]);
@@ -231,7 +332,25 @@ async function testPlatform(platformId: string): Promise<void> {
       [platformId]: { ok: false, count: 0, error: error instanceof Error ? error.message : String(error) }
     };
   } finally {
-    platformTesting.value = null;
+    testingPlatforms.delete(platformId);
+  }
+}
+
+async function testAllPlatforms(): Promise<void> {
+  if (testingAllPlatforms.value || !metadataPlatforms.value.length) return;
+  const ids = metadataPlatforms.value.map((p) => p.id);
+  testingAllPlatforms.value = true;
+  platformBatchDone.value = 0;
+  platformBatchTotal.value = ids.length;
+  try {
+    await Promise.all(
+      ids.map(async (id) => {
+        await testPlatform(id);
+        platformBatchDone.value += 1;
+      })
+    );
+  } finally {
+    testingAllPlatforms.value = false;
   }
 }
 
@@ -259,8 +378,42 @@ onMounted(async () => {
     <div class="settings-group">
       <SettingsItem as="div" stacked>
         <div class="provider-list">
-          <div v-for="(provider, index) in orderedProviders" :key="provider.id" class="source-entry">
-            <div class="source-row">
+          <div v-if="orderedProviders.length" class="source-list-toolbar">
+            <span class="text-xs text-[var(--muted)]">拖动左侧手柄可调整资源站优先级</span>
+            <button
+              type="button"
+              class="settings-secondary-button"
+              :disabled="testingAllProviders"
+              @click="testAllProviders"
+            >
+              {{ testingAllProviders ? `测试中 (${providerBatchDone}/${providerBatchTotal})…` : "测试全部" }}
+            </button>
+          </div>
+          <div
+            v-for="provider in orderedProviders"
+            :key="provider.id"
+            class="source-entry"
+            :class="{
+              'is-dragging': draggingProviderId === provider.id,
+              'is-drop-before': dragOverProviderId === provider.id && dragOverPosition === 'before',
+              'is-drop-after': dragOverProviderId === provider.id && dragOverPosition === 'after'
+            }"
+            draggable="true"
+            @dragstart="handleProviderDragStart(provider.id, $event)"
+            @dragover="handleProviderDragOver(provider.id, $event)"
+            @drop="handleProviderDrop(provider.id, $event)"
+            @dragend="clearProviderDrag"
+          >
+            <div class="source-row is-draggable">
+              <button
+                type="button"
+                class="drag-handle"
+                :aria-label="`拖动排序 ${provider.displayName}（支持上下方向键）`"
+                title="拖动调整优先级（聚焦后也可用 ↑/↓ 键）"
+                @keydown="handleProviderHandleKeydown(provider.id, $event)"
+              >
+                <GripVertical :size="15" aria-hidden="true" />
+              </button>
               <input
                 :checked="isProviderEnabled(provider.id)"
                 type="checkbox"
@@ -270,7 +423,7 @@ onMounted(async () => {
               />
               <span class="provider-name">{{ provider.displayName }}</span>
               <span class="provider-status" :class="probeStatusClass(providerResults[provider.id])">
-                {{ probeStatusLabel(providerResults[provider.id]) }}
+                {{ testingProviders.has(provider.id) ? "测试中…" : probeStatusLabel(providerResults[provider.id]) }}
               </span>
 
               <div class="source-actions">
@@ -292,28 +445,10 @@ onMounted(async () => {
                 <button
                   type="button"
                   class="btn-ghost provider-button"
-                  :disabled="providerTesting === provider.id"
+                  :disabled="testingProviders.has(provider.id)"
                   @click="testProvider(provider.id)"
                 >
-                  {{ providerTesting === provider.id ? "测试中…" : "测试" }}
-                </button>
-                <button
-                  type="button"
-                  class="btn-ghost provider-button"
-                  :disabled="index === 0"
-                  aria-label="上移"
-                  @click="moveProvider(provider.id, -1)"
-                >
-                  ↑
-                </button>
-                <button
-                  type="button"
-                  class="btn-ghost provider-button"
-                  :disabled="index === orderedProviders.length - 1"
-                  aria-label="下移"
-                  @click="moveProvider(provider.id, 1)"
-                >
-                  ↓
+                  {{ testingProviders.has(provider.id) ? "测试中…" : "测试" }}
                 </button>
               </div>
             </div>
@@ -348,6 +483,17 @@ onMounted(async () => {
     <div class="settings-group">
       <SettingsItem as="div" stacked>
         <div class="provider-list">
+          <div v-if="metadataPlatforms.length" class="source-list-toolbar">
+            <span class="text-xs text-[var(--muted)]">共 {{ metadataPlatforms.length }} 个信息平台</span>
+            <button
+              type="button"
+              class="settings-secondary-button"
+              :disabled="testingAllPlatforms"
+              @click="testAllPlatforms"
+            >
+              {{ testingAllPlatforms ? `测试中 (${platformBatchDone}/${platformBatchTotal})…` : "测试全部" }}
+            </button>
+          </div>
           <div v-for="platform in metadataPlatforms" :key="platform.id" class="source-entry">
             <div class="source-row">
               <input
@@ -359,7 +505,7 @@ onMounted(async () => {
               />
               <span class="provider-name">{{ platform.displayName }}</span>
               <span class="provider-status" :class="probeStatusClass(platformResults[platform.id])">
-                {{ probeStatusLabel(platformResults[platform.id], platformIdleLabel(platform)) }}
+                {{ testingPlatforms.has(platform.id) ? "测试中…" : probeStatusLabel(platformResults[platform.id], platformIdleLabel(platform)) }}
               </span>
 
               <div class="source-actions">
@@ -373,10 +519,10 @@ onMounted(async () => {
                 <button
                   type="button"
                   class="btn-ghost provider-button"
-                  :disabled="platformTesting === platform.id"
+                  :disabled="testingPlatforms.has(platform.id)"
                   @click="testPlatform(platform.id)"
                 >
-                  {{ platformTesting === platform.id ? "测试中…" : "测试" }}
+                  {{ testingPlatforms.has(platform.id) ? "测试中…" : "测试" }}
                 </button>
               </div>
             </div>
@@ -399,8 +545,35 @@ onMounted(async () => {
 </template>
 
 <style scoped>
+.source-list-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding-bottom: 0.55rem;
+  margin-bottom: 0.15rem;
+  border-bottom: 1px solid color-mix(in srgb, var(--line) 70%, transparent);
+}
+
+.source-entry {
+  position: relative;
+  transition: opacity 140ms ease, background 140ms ease;
+}
+
 .source-entry + .source-entry {
   border-top: 1px solid color-mix(in srgb, var(--line) 55%, transparent);
+}
+
+.source-entry.is-dragging {
+  opacity: 0.4;
+}
+
+.source-entry.is-drop-before {
+  box-shadow: inset 0 2px 0 var(--accent);
+}
+
+.source-entry.is-drop-after {
+  box-shadow: inset 0 -2px 0 var(--accent);
 }
 
 .source-row {
@@ -409,6 +582,32 @@ onMounted(async () => {
   align-items: center;
   gap: 0.5rem;
   padding: 0.375rem 0;
+}
+
+.source-row.is-draggable {
+  grid-template-columns: auto auto minmax(5.5rem, 1fr) minmax(0, 1.35fr) auto;
+}
+
+.drag-handle {
+  display: inline-grid;
+  place-items: center;
+  width: 24px;
+  height: 28px;
+  border-radius: 6px;
+  color: var(--muted);
+  cursor: grab;
+  transition: background 140ms ease, color 140ms ease;
+}
+
+.drag-handle:hover,
+.drag-handle:focus-visible {
+  background: var(--panel);
+  color: var(--ink);
+  outline: none;
+}
+
+.drag-handle:active {
+  cursor: grabbing;
 }
 
 .source-actions {
@@ -435,6 +634,9 @@ onMounted(async () => {
 @media (max-width: 640px) {
   .source-row {
     grid-template-columns: auto minmax(5rem, 1fr) auto;
+  }
+  .source-row.is-draggable {
+    grid-template-columns: auto auto minmax(5rem, 1fr) auto;
   }
   .provider-status {
     display: none;
