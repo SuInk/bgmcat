@@ -27,7 +27,23 @@
 
 ## macOS 签名与公证
 
-没有签名时，Mac 安装包只有临时签名（ad-hoc）。macOS 按每次构建的哈希识别应用，每次升级都被当成新应用：本地网络、文件夹等权限要重新授权，首次打开还会提示「无法验证开发者」。配置好 Apple Developer ID 后，CI 的两个 macOS 作业会自动签名、公证并装订 .app 和 .dmg；没配置时照旧打未签名包。
+没有签名时，Mac 安装包只有临时签名（ad-hoc）。macOS 按每次构建的哈希识别应用，每次升级都被当成新应用：本地网络、文件夹等权限要重新授权，首次打开还会提示「无法验证开发者」。
+
+CI 的两个 macOS 作业按仓库里配置的密钥决定怎么签名：
+
+| 配置的密钥 | 签名方式 | 升级后仍认得是同一个应用 | 首次打开不被拦 |
+| --- | --- | --- | --- |
+| `MAC_CERT_P12_BASE64` 等（Apple Developer ID） | 签名 + hardened runtime + 公证 + 装订 | 是 | 是 |
+| 只有 `MAC_SELFSIGN_CERT_P12_BASE64` / `MAC_SELFSIGN_CERT_PASSWORD` | 用自签名证书签名，不公证 | 是 | 否，需右键「打开」放行一次 |
+| 都没有 | 不签名 | 否 | 否 |
+
+两种都配了时用 Developer ID。每换一次签名身份（未签名 → 自签名 → Developer ID），macOS 都会把应用当成新应用一次。
+
+### 自签名证书（当前在用）
+
+证书 CN 为 `Bangumi Cat Self-Signed`，10 年有效，指定要求是 `identifier "io.github.suink.bgmcat" and certificate root = H"<证书 SHA-1>"`，与构建内容无关。证书和密码的备份在维护者电脑的 `~/Documents/bgmcat-macos-signing/`，那里的 README 写了怎么重新写入仓库密钥。不要换证书，换了会让所有用户再重新授权一次。
+
+### Apple Developer ID
 
 一次性准备（需要 Apple 开发者账号，每年 99 美元）：
 

@@ -3,7 +3,7 @@
 // 有 Developer ID 证书时（CI 导入证书后设置 MAC_SIGNING=1）：
 //   1. 先确认 electron-builder 已把 .app 签好名、公证并装订（stapled）；
 //   2. 打好 dmg 后用同一张证书签名，再提交公证并装订，用户下载后双击就能打开。
-// 没有证书时照旧只打包，不签名。
+// 自签名证书时（MAC_SIGNING=selfsigned）只签名不公证；没有证书时照旧只打包。
 const { execFileSync } = require('node:child_process');
 const { mkdtempSync, symlinkSync, rmSync, readFileSync, writeFileSync } = require('node:fs');
 const { join, resolve } = require('node:path');
@@ -16,12 +16,15 @@ const directory = process.arch === 'x64' ? 'mac' : `mac-${process.arch}`;
 const appPath = resolve('desktop-dist', directory, 'Bangumi Cat.app');
 const dmgPath = resolve('desktop-dist', `bgmcat-desktop-${version}-mac-${process.arch}.dmg`);
 const signing = process.env.MAC_SIGNING === '1';
+const selfSigned = process.env.MAC_SIGNING === 'selfsigned';
 const notarizing = Boolean(process.env.APPLE_API_KEY && process.env.APPLE_API_KEY_ID && process.env.APPLE_API_ISSUER);
 const run = (cmd, args) => execFileSync(cmd, args, { stdio: 'inherit' });
 
-if (signing) {
+if (signing || selfSigned) {
   // 签名和公证出错要在这里失败，而不是发出一个打不开的安装包。
   run('codesign', ['--verify', '--deep', '--strict', '--verbose=2', appPath]);
+}
+if (signing) {
   if (notarizing) run('spctl', ['--assess', '--type', 'execute', '--verbose=2', appPath]);
 }
 
@@ -45,4 +48,8 @@ if (signing) {
     run('xcrun', ['stapler', 'staple', dmgPath]);
     run('spctl', ['--assess', '--type', 'open', '--context', 'context:primary-signature', '--verbose=2', dmgPath]);
   }
+}
+
+if (selfSigned) {
+  run('codesign', ['--sign', process.env.MAC_SELFSIGN_IDENTITY, '--keychain', process.env.CSC_KEYCHAIN, '--timestamp=none', dmgPath]);
 }
