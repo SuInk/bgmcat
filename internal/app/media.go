@@ -205,19 +205,14 @@ func (m *Media) serveStreamByGID(w http.ResponseWriter, r *http.Request, gid str
 	}
 	return nil
 }
+
 // ffmpegMissingMessage explains why a file that needs transcoding cannot play.
 // The Android app bundles no FFmpeg, so it points the user elsewhere instead.
 func ffmpegMissingMessage(goos string) string {
 	if goos == "android" {
 		return "安卓版暂不支持 FFmpeg 转码，这个视频（如 MKV 或 HEVC 编码）无法在手机上播放；请连接电脑端或服务器播放，或用其他播放器打开下载好的文件"
 	}
-	return "此视频需要 FFmpeg 转码；请使用包含 FFmpeg 的发布包或 Docker 镜像"
-}
-func (m *Media) ffmpeg() string {
-	if p := str(m.a.Settings()["ffmpegPath"]); p != "" {
-		return p
-	}
-	return "ffmpeg"
+	return "此视频需要 FFmpeg 转码；请安装 FFmpeg 或在设置里填写 ffmpeg 路径（桌面版和 Docker 镜像已内置）"
 }
 func (m *Media) probe(ctx context.Context, gid string) (Obj, error) {
 	m.mu.Lock()
@@ -226,13 +221,7 @@ func (m *Media) probe(ctx context.Context, gid string) (Obj, error) {
 		return cached, nil
 	}
 	m.mu.Unlock()
-	binary := "ffprobe"
-	if p := str(m.a.Settings()["ffmpegPath"]); p != "" {
-		binary = filepath.Join(filepath.Dir(p), "ffprobe")
-		if strings.HasSuffix(p, ".exe") {
-			binary += ".exe"
-		}
-	}
+	binary := m.ffprobe()
 	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
 	out, e := exec.CommandContext(ctx, binary, "-v", "error", "-show_format", "-show_streams", "-of", "json", m.inputURL(gid)).Output()

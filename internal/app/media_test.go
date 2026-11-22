@@ -48,7 +48,7 @@ func TestFFmpegMissingMessageNamesAndroid(t *testing.T) {
 	if msg := ffmpegMissingMessage("android"); !strings.Contains(msg, "安卓版暂不支持") {
 		t.Fatalf("android message = %q", msg)
 	}
-	if msg := ffmpegMissingMessage("linux"); !strings.Contains(msg, "FFmpeg 的发布包") {
+	if msg := ffmpegMissingMessage("linux"); !strings.Contains(msg, "ffmpeg 路径") {
 		t.Fatalf("server message = %q", msg)
 	}
 }
