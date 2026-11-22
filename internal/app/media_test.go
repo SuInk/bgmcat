@@ -43,3 +43,12 @@ func TestFFmpegHLSManifestAndSegments(t *testing.T) {
 		t.Fatal(w.Code, w.Body.String())
 	}
 }
+
+func TestFFmpegMissingMessageNamesAndroid(t *testing.T) {
+	if msg := ffmpegMissingMessage("android"); !strings.Contains(msg, "安卓版暂不支持") {
+		t.Fatalf("android message = %q", msg)
+	}
+	if msg := ffmpegMissingMessage("linux"); !strings.Contains(msg, "FFmpeg 的发布包") {
+		t.Fatalf("server message = %q", msg)
+	}
+}

@@ -61,7 +61,7 @@ docker compose up -d --build
 | --- | --- | --- |
 | **电脑桌面端（推荐）** | macOS (`arm64` / `x64`)、Windows `x64`、Linux `x64` | 内置受管 Go 后端与独立窗口，开机即用、免输口令，详见 [桌面版说明](docs/desktop.md) |
 | **iOS / 移动端网页 PWA** | iPhone / iPad Safari、手机与桌面浏览器 | 首屏单次 `/api/bootstrap` + Gzip 极速加载，适配刘海与底部安全区，支持添加到主屏幕与扫码秒登 |
-| **Android 客户端** | Android 8.0+ 手机 / 平板 | 支持「局域网主地址 + Cloudflare Tunnel 备用地址」自动故障切换、横屏沉浸全屏与常亮 |
+| **Android App** | Android 8.0+ 手机 / 平板（arm64 / x86_64） | 内置服务，装好即用；也可切换为连接远程服务器（局域网主地址 + Cloudflare Tunnel 备用地址自动切换）；横屏沉浸全屏与常亮 |
 | **无头服务版 / Docker** | Linux / macOS / Windows 服务器、NAS | 单二进制常驻运行，资源占用极低，详见 [安装文档](docs/install.md) |
 
 ## 内置能力

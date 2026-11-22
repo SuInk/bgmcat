@@ -17,6 +17,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -204,6 +205,14 @@ func (m *Media) serveStreamByGID(w http.ResponseWriter, r *http.Request, gid str
 	}
 	return nil
 }
+// ffmpegMissingMessage explains why a file that needs transcoding cannot play.
+// The Android app bundles no FFmpeg, so it points the user elsewhere instead.
+func ffmpegMissingMessage(goos string) string {
+	if goos == "android" {
+		return "安卓版暂不支持 FFmpeg 转码，这个视频（如 MKV 或 HEVC 编码）无法在手机上播放；请连接电脑端或服务器播放，或用其他播放器打开下载好的文件"
+	}
+	return "此视频需要 FFmpeg 转码；请使用包含 FFmpeg 的发布包或 Docker 镜像"
+}
 func (m *Media) ffmpeg() string {
 	if p := str(m.a.Settings()["ffmpegPath"]); p != "" {
 		return p
@@ -298,7 +307,7 @@ func (m *Media) servePlaybackByGID(w http.ResponseWriter, r *http.Request, gid s
 	mode := "direct"
 	if !direct {
 		if ffErr != nil {
-			return errors.New("此视频需要 FFmpeg 转码；请使用包含 FFmpeg 的发布包或 Docker 镜像")
+			return errors.New(ffmpegMissingMessage(runtime.GOOS))
 		}
 		mode = "hls-transcode"
 	}

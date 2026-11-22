@@ -59,4 +59,4 @@
 
 - 检查 GitHub Actions 所有作业绿灯、Release 非 Draft、桌面端 / 移动端 / 服务端资产与 `SHA256SUMS` 齐全。
 - 下载本机对应的桌面安装包与 `SHA256SUMS` 核对哈希，实际启动验证免密进入主页、全库筛选、内置引擎在线状态与局域网共享开关。
-- 在 Android 手机安装 `bgmcat-android-*-universal.apk`，测试局域网主地址连接与本地 / Google Drive 视频横屏流式播放。
+- 在 Android 手机安装 `bgmcat-android-*-universal.apk`，确认不填地址即可进入首页（内置服务），再测试切换到局域网主地址连接与本地 / Google Drive 视频横屏流式播放。
