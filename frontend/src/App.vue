@@ -376,9 +376,8 @@ onUnmounted(() => {
             <button type="button" class="topbar-btn" title="刷新数据" aria-label="刷新数据" :disabled="refreshing" @click="refreshCurrentView">
               <AppNavIcon name="refresh" :class="{ 'animate-spin': refreshing }" />
             </button>
-            <button v-if="!isDesktopShell && !isDemoMode" type="button" class="topbar-btn topbar-logout" title="退出登录" @click="logoutConfirmOpen = true">
+            <button v-if="!isDesktopShell && !isDemoMode" type="button" class="topbar-btn topbar-logout" title="退出登录" aria-label="退出登录" @click="logoutConfirmOpen = true">
               <AppNavIcon name="logout" />
-              <span class="topbar-logout-text">退出登录</span>
             </button>
           </div>
           <div v-if="isLoading || refreshing || busyCount > 0" class="scope-progress" role="progressbar" aria-label="正在加载数据"><span /></div>
@@ -439,11 +438,10 @@ onUnmounted(() => {
 .topbar-btn :deep(svg) { width:16px; height:16px; flex-shrink:0; }
 .topbar-btn svg[width="15"] { width:15px; height:15px; }
 .topbar-repo:hover:not(:disabled) { border-color:var(--accent-line); background:var(--accent-soft); color:var(--accent); }
-.topbar-logout { height:36px; padding:6px 13px; border-radius:999px; }.topbar-logout:hover:not(:disabled) { border-color:var(--err); color:var(--err); }
+.topbar-logout:hover:not(:disabled) { border-color:var(--err); background:var(--err-soft); color:var(--err); }
 .topbar-menu { width:38px; min-width:38px; height:38px; padding:6px; border-radius:10px; }.topbar-menu :deep(svg) { width:18px; height:18px; }
 .app-content { width:100%; max-width:1240px; margin:0 auto; padding:10px clamp(16px, 2.5vw, 28px) 16px; }
 @media(max-width:960px) { .app-topbar { padding:0 14px; } }
-@media(max-width:700px) { .topbar-logout-text { display:none; } .topbar-logout { width:34px; height:34px; padding:8px; } }
 @media(max-width:480px) { .topbar-client { padding:3px 6px; font-size:0; gap:0; } }
 @media(max-width:640px) { .app-topbar { height:48px; padding:0 12px; gap:8px; }.app-content { padding:8px 10px 12px; }.topbar-repo { display:none; } }
 
