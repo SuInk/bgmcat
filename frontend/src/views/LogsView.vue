@@ -9,6 +9,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } 
 
 import type { LogEntry } from "@shared/index";
 
+import AppSelect, { type AppSelectOption } from "../components/common/AppSelect.vue";
 import AppNavIcon from "../components/layout/AppNavIcon.vue";
 import { copyText } from "../lib/actions";
 import { isBusy } from "../stores/busy";
@@ -24,6 +25,7 @@ const MAX_LOG_FONT_SIZE = 17;
 const COLLAPSE_LINES = 4;
 
 const levelFilter = ref<LogLevelFilter>("all");
+const dateFilter = ref<string>("all");
 const query = ref("");
 const follow = ref(true);
 const wrapLines = ref(readWrapPref());
@@ -67,9 +69,34 @@ function toggleWrap(): void {
   window.localStorage.setItem(LOG_WRAP_KEY, String(wrapLines.value));
 }
 
-const levelCounts = computed<Record<LogLevelFilter, number>>(() => {
-  const counts: Record<LogLevelFilter, number> = { all: logs.value.length, error: 0, warn: 0, info: 0 };
+const todayKey = computed(() => dayKey(new Date().toISOString()));
+
+const dateOptions = computed<AppSelectOption[]>(() => {
+  const counts = new Map<string, number>();
   for (const entry of logs.value) {
+    const key = dayKey(entry.createdAt);
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  const days = [...counts.keys()].sort((a, b) => b.localeCompare(a));
+  const opts: AppSelectOption[] = [{ value: "all", label: "全部日期" }];
+  for (const day of days) {
+    const count = counts.get(day) ?? 0;
+    const tag = day === todayKey.value ? "今天 · " : "";
+    opts.push({ value: day, label: `${day} (${tag}${count})` });
+  }
+  return opts;
+});
+
+const dateScopedLogs = computed(() => {
+  if (dateFilter.value === "all") {
+    return logs.value;
+  }
+  return logs.value.filter((entry) => dayKey(entry.createdAt) === dateFilter.value);
+});
+
+const levelCounts = computed<Record<LogLevelFilter, number>>(() => {
+  const counts: Record<LogLevelFilter, number> = { all: dateScopedLogs.value.length, error: 0, warn: 0, info: 0 };
+  for (const entry of dateScopedLogs.value) {
     counts[entry.level] = (counts[entry.level] ?? 0) + 1;
   }
   return counts;
@@ -78,11 +105,30 @@ const levelCounts = computed<Record<LogLevelFilter, number>>(() => {
 /** 接口给的是新→旧，终端习惯旧→新往下读 */
 const visibleLogs = computed(() => {
   const keyword = query.value.trim().toLowerCase();
-  return [...logs.value]
+  return [...dateScopedLogs.value]
     .reverse()
     .filter((entry) => levelFilter.value === "all" || entry.level === levelFilter.value)
     .filter((entry) => !keyword || entry.message.toLowerCase().includes(keyword));
 });
+
+function handleDateChange(value: string | number): void {
+  const next = String(value);
+  dateFilter.value = next;
+  if (next !== "all" && next !== todayKey.value) {
+    follow.value = false;
+    void nextTick(() => {
+      if (outputRef.value) {
+        outputRef.value.scrollTop = 0;
+      }
+    });
+  } else if (next === "all") {
+    void nextTick(scrollToBottom);
+  }
+}
+
+function toggleDayFilter(day: string): void {
+  handleDateChange(dateFilter.value === day ? "all" : day);
+}
 
 function dayKey(value: string): string {
   const date = new Date(value);
@@ -298,6 +344,15 @@ onBeforeUnmount(() => {
               <span class="level-count">{{ levelCounts[level.key] }}</span>
             </button>
           </div>
+
+          <AppSelect
+            class="log-date-select"
+            size="sm"
+            :model-value="dateFilter"
+            :options="dateOptions"
+            aria-label="按日期筛选日志"
+            @change="handleDateChange"
+          />
         </div>
 
         <div class="console-header-right">
@@ -392,13 +447,20 @@ onBeforeUnmount(() => {
             <AppNavIcon name="logs" class="size-7 opacity-40" aria-hidden="true" />
             <p class="empty-title">{{ logs.length ? "没有匹配的日志记录" : "暂无运行日志" }}</p>
             <p class="empty-sub">
-              {{ logs.length ? "可尝试清空搜索关键词或切换日志级别。" : "订阅刷新、BT 下载、云盘归档等后台事件会实时输出在这里。" }}
+              {{ logs.length ? "可尝试清空搜索关键词、切换日期或日志级别。" : "订阅刷新、BT 下载、云盘归档等后台事件会实时输出在这里。" }}
             </p>
           </div>
 
           <template v-for="(entry, index) in visibleLogs" :key="entry.id">
             <div v-if="startsNewDay(index)" class="day-divider">
-              <span>{{ dayKey(entry.createdAt) }}</span>
+              <button
+                type="button"
+                class="day-divider-btn"
+                :title="dateFilter === dayKey(entry.createdAt) ? '点击显示全部日期' : `只看 ${dayKey(entry.createdAt)} 的日志`"
+                @click="toggleDayFilter(dayKey(entry.createdAt))"
+              >
+                <span>{{ dayKey(entry.createdAt) }}</span>
+              </button>
             </div>
 
             <div class="term-row" :class="`is-${entry.level}`">
@@ -478,7 +540,7 @@ onBeforeUnmount(() => {
   flex-direction: column;
   height: 100%;
   min-height: 0;
-  padding: 12px 16px 16px;
+  padding: 6px 0 4px;
 }
 
 .log-console {
@@ -487,23 +549,22 @@ onBeforeUnmount(() => {
   flex: 1 1 auto;
   min-height: 0;
   overflow: hidden;
-  border-radius: 14px;
-  border: 1px solid #262b36;
-  background: #12151c;
-  color: #dce3f0;
-  box-shadow: 0 8px 28px rgba(10, 14, 24, 0.14);
+  border-radius: 16px;
+  border: 1px solid var(--line);
+  background: var(--card);
+  color: var(--ink);
 }
 
-/* 顶部控制台头 */
+/* 顶部工具栏：与全站卡片头部风格统一 */
 .console-header {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: 8px 12px;
-  padding: 9px 12px;
-  background: #181c26;
-  border-bottom: 1px solid #252a36;
+  padding: 10px 12px;
+  background: var(--tint-1);
+  border-bottom: 1px solid var(--line);
 }
 
 .console-header-left,
@@ -522,29 +583,32 @@ onBeforeUnmount(() => {
   height: 28px;
   padding: 0 10px;
   border-radius: 999px;
-  border: 1px solid #2e3444;
-  background: #202532;
-  color: #9aa5bc;
+  border: 1px solid var(--line);
+  background: var(--card);
+  color: var(--muted);
   font-size: 12px;
   font-weight: 600;
   cursor: pointer;
   white-space: nowrap;
   transition: border-color 0.15s, background 0.15s, color 0.15s;
 }
+.live-pill:hover {
+  color: var(--ink);
+  background: var(--panel);
+}
 .live-pill.active {
-  border-color: rgba(52, 211, 153, 0.35);
-  background: rgba(16, 185, 129, 0.12);
-  color: #6ee7b7;
+  border-color: color-mix(in srgb, var(--ok) 35%, var(--line));
+  background: var(--ok-soft);
+  color: var(--ok);
 }
 .live-dot {
   width: 7px;
   height: 7px;
   border-radius: 999px;
-  background: #f59e0b;
+  background: var(--warn);
 }
 .live-pill.active .live-dot {
-  background: #34d399;
-  box-shadow: 0 0 0 3px rgba(52, 211, 153, 0.22);
+  background: var(--ok);
   animation: pulse-dot 2s infinite;
 }
 @keyframes pulse-dot {
@@ -557,9 +621,9 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 2px;
   padding: 2px;
-  border-radius: 8px;
-  background: #11141c;
-  border: 1px solid #252a36;
+  border-radius: 9px;
+  background: var(--panel);
+  border: 1px solid var(--line);
 }
 
 .level-tab {
@@ -568,10 +632,10 @@ onBeforeUnmount(() => {
   gap: 5px;
   height: 24px;
   padding: 0 8px;
-  border-radius: 6px;
+  border-radius: 7px;
   border: 0;
   background: transparent;
-  color: #8f9ab0;
+  color: var(--muted);
   font-size: 12px;
   font-weight: 550;
   cursor: pointer;
@@ -579,24 +643,28 @@ onBeforeUnmount(() => {
   transition: background 0.14s, color 0.14s;
 }
 .level-tab:hover {
-  color: #e5ebf5;
-  background: rgba(255, 255, 255, 0.04);
+  color: var(--ink);
+  background: var(--tint-2);
 }
 .level-tab.active {
-  background: #272e3f;
-  color: #f4f7fc;
+  background: var(--card);
+  color: var(--ink);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.08);
 }
 .level-tab.level-error.active {
-  background: rgba(239, 68, 68, 0.2);
-  color: #fca5a5;
+  background: var(--err-soft);
+  color: var(--err);
+  box-shadow: none;
 }
 .level-tab.level-warn.active {
-  background: rgba(245, 158, 11, 0.2);
-  color: #fcd34d;
+  background: var(--warn-soft);
+  color: var(--warn);
+  box-shadow: none;
 }
 .level-tab.level-info.active {
-  background: rgba(56, 189, 248, 0.18);
-  color: #7dd3fc;
+  background: var(--accent-soft);
+  color: var(--accent-vivid);
+  box-shadow: none;
 }
 
 .level-count {
@@ -606,22 +674,31 @@ onBeforeUnmount(() => {
   font-variant-numeric: tabular-nums;
 }
 
+.log-date-select :deep(.app-select-trigger) {
+  min-height: 28px;
+  height: 28px;
+  padding: 0 9px;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 550;
+}
+
 .console-search {
   display: inline-flex;
   align-items: center;
   gap: 6px;
   height: 28px;
   padding: 0 9px;
-  border-radius: 7px;
-  border: 1px solid #2b3140;
-  background: #11141c;
-  color: #9aa5bc;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: var(--card);
+  color: var(--muted);
   min-width: 11rem;
   transition: border-color 0.15s;
 }
 .console-search:focus-within {
-  border-color: #60a5fa;
-  color: #dce3f0;
+  border-color: var(--accent);
+  color: var(--ink);
 }
 .console-search-icon {
   width: 13px;
@@ -633,12 +710,12 @@ onBeforeUnmount(() => {
   min-width: 0;
   border: 0;
   background: transparent;
-  color: #eef2f9;
+  color: var(--ink);
   font-size: 12px;
   outline: none;
 }
 .console-search input::placeholder {
-  color: #647087;
+  color: var(--muted);
 }
 
 .console-actions {
@@ -654,10 +731,10 @@ onBeforeUnmount(() => {
   gap: 5px;
   height: 28px;
   padding: 0 9px;
-  border-radius: 7px;
-  border: 1px solid #2b3140;
-  background: #1d222e;
-  color: #c2ccde;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: var(--card);
+  color: var(--ink-secondary);
   font-size: 12px;
   font-weight: 550;
   cursor: pointer;
@@ -665,14 +742,13 @@ onBeforeUnmount(() => {
   transition: background 0.14s, border-color 0.14s, color 0.14s;
 }
 .console-btn:hover:not(:disabled) {
-  background: #272e3f;
-  border-color: #3c465c;
-  color: #f4f7fc;
+  background: var(--panel);
+  color: var(--ink);
 }
 .console-btn.active {
-  border-color: rgba(96, 165, 250, 0.45);
-  background: rgba(59, 130, 246, 0.16);
-  color: #93c5fd;
+  border-color: var(--accent-line);
+  background: var(--accent-soft);
+  color: var(--accent-vivid);
 }
 .console-btn:disabled {
   opacity: 0.4;
@@ -705,7 +781,7 @@ onBeforeUnmount(() => {
   border-bottom-left-radius: 0;
 }
 
-/* 终端正文区 */
+/* 日志正文区 */
 .console-body-wrap {
   position: relative;
   flex: 1 1 auto;
@@ -721,19 +797,19 @@ onBeforeUnmount(() => {
   padding: 6px 0 14px;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   line-height: 1.58;
-  scrollbar-color: #303748 transparent;
+  scrollbar-color: var(--line) transparent;
   scrollbar-width: thin;
 }
 .console-body::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+  width: 6px;
+  height: 6px;
 }
 .console-body::-webkit-scrollbar-thumb {
-  background: #2f3646;
+  background: var(--line);
   border-radius: 999px;
 }
 .console-body::-webkit-scrollbar-thumb:hover {
-  background: #434d63;
+  background: var(--muted);
 }
 
 .console-empty {
@@ -744,7 +820,7 @@ onBeforeUnmount(() => {
   justify-content: center;
   gap: 8px;
   padding: 32px;
-  color: #7c879c;
+  color: var(--muted);
   font-family: inherit;
   text-align: center;
 }
@@ -752,12 +828,12 @@ onBeforeUnmount(() => {
   margin: 0;
   font-size: 14px;
   font-weight: 600;
-  color: #c7d0e0;
+  color: var(--ink);
 }
 .empty-sub {
   margin: 0;
   font-size: 12px;
-  color: #748096;
+  color: var(--muted);
 }
 
 .day-divider {
@@ -767,10 +843,10 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 4px 14px;
-  background: rgba(18, 21, 28, 0.92);
+  padding: 5px 14px;
+  background: color-mix(in srgb, var(--card) 92%, transparent);
   backdrop-filter: blur(6px);
-  color: #6b768c;
+  color: var(--muted);
   font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.04em;
@@ -779,7 +855,20 @@ onBeforeUnmount(() => {
   content: "";
   flex: 1 1 auto;
   height: 1px;
-  background: #222734;
+  background: var(--line);
+}
+.day-divider-btn {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  color: inherit;
+  font: inherit;
+  letter-spacing: inherit;
+  cursor: pointer;
+  transition: color 0.14s;
+}
+.day-divider-btn:hover {
+  color: var(--ink);
 }
 
 .term-row {
@@ -787,37 +876,38 @@ onBeforeUnmount(() => {
   grid-template-columns: 2.8rem 4.9rem 3.3rem minmax(0, 1fr) 26px;
   align-items: start;
   gap: 0 10px;
-  padding: 3px 12px 3px 10px;
+  padding: 3.5px 12px 3.5px 10px;
   border-left: 2px solid transparent;
   transition: background 0.1s;
 }
 .term-row:hover {
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--tint-1);
 }
 .term-row.is-warn {
-  border-left-color: #f59e0b;
-  background: rgba(245, 158, 11, 0.045);
+  border-left-color: var(--warn);
+  background: color-mix(in srgb, var(--warn-soft) 55%, transparent);
 }
 .term-row.is-warn:hover {
-  background: rgba(245, 158, 11, 0.085);
+  background: var(--warn-soft);
 }
 .term-row.is-error {
-  border-left-color: #ef4444;
-  background: rgba(239, 68, 68, 0.08);
+  border-left-color: var(--err);
+  background: color-mix(in srgb, var(--err-soft) 60%, transparent);
 }
 .term-row.is-error:hover {
-  background: rgba(239, 68, 68, 0.13);
+  background: var(--err-soft);
 }
 
 .term-lineno {
   text-align: right;
-  color: #495266;
+  color: var(--muted);
+  opacity: 0.55;
   font-variant-numeric: tabular-nums;
   user-select: none;
 }
 
 .term-time {
-  color: #7d89a0;
+  color: var(--muted);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
   user-select: none;
@@ -829,23 +919,23 @@ onBeforeUnmount(() => {
   justify-content: center;
   height: 18px;
   margin-top: 1px;
-  border-radius: 4px;
+  border-radius: 5px;
   font-size: 10.5px;
   font-weight: 700;
   letter-spacing: 0.03em;
   user-select: none;
 }
 .lvl-info {
-  background: rgba(56, 189, 248, 0.14);
-  color: #7dd3fc;
+  background: var(--panel);
+  color: var(--ink-secondary);
 }
 .lvl-warn {
-  background: rgba(245, 158, 11, 0.18);
-  color: #fcd34d;
+  background: var(--warn-soft);
+  color: var(--warn);
 }
 .lvl-error {
-  background: rgba(239, 68, 68, 0.22);
-  color: #fca5a5;
+  background: var(--err-soft);
+  color: var(--err);
 }
 
 .term-content {
@@ -853,7 +943,7 @@ onBeforeUnmount(() => {
 }
 
 .term-msg {
-  color: #e4eaf5;
+  color: var(--ink);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
@@ -862,16 +952,16 @@ onBeforeUnmount(() => {
   overflow-wrap: normal;
 }
 .term-row.is-warn .term-msg {
-  color: #fde68a;
+  color: var(--ink);
 }
 .term-row.is-error .term-msg {
-  color: #fecaca;
+  color: var(--err);
 }
 
 .log-mark {
-  background: rgba(250, 204, 21, 0.34);
-  color: #fef08a;
-  border-radius: 2px;
+  background: var(--warn-soft);
+  color: var(--ink);
+  border-radius: 3px;
   padding: 0 2px;
 }
 
@@ -880,7 +970,7 @@ onBeforeUnmount(() => {
   border: 0;
   background: transparent;
   padding: 0;
-  color: #60a5fa;
+  color: var(--accent-vivid);
   font-size: 11px;
   font-weight: 600;
   cursor: pointer;
@@ -896,9 +986,9 @@ onBeforeUnmount(() => {
   width: 24px;
   height: 22px;
   border: 0;
-  border-radius: 5px;
+  border-radius: 6px;
   background: transparent;
-  color: #6f7b92;
+  color: var(--muted);
   opacity: 0;
   cursor: pointer;
   transition: opacity 0.12s, background 0.12s, color 0.12s;
@@ -909,11 +999,11 @@ onBeforeUnmount(() => {
   opacity: 1;
 }
 .term-copy:hover {
-  background: rgba(255, 255, 255, 0.08);
-  color: #e5ebf5;
+  background: var(--panel);
+  color: var(--ink);
 }
 .term-copy.copied {
-  color: #34d399;
+  color: var(--ok);
 }
 
 /* 回到底部悬浮按钮 */
@@ -928,20 +1018,20 @@ onBeforeUnmount(() => {
   height: 30px;
   padding: 0 12px;
   border-radius: 999px;
-  border: 1px solid rgba(96, 165, 250, 0.45);
-  background: rgba(24, 30, 44, 0.94);
-  color: #93c5fd;
+  border: 1px solid var(--accent-line);
+  background: var(--card);
+  color: var(--accent-vivid);
   font-size: 12px;
   font-weight: 600;
   cursor: pointer;
-  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+  box-shadow: var(--strong-shadow);
   backdrop-filter: blur(8px);
-  transition: background 0.15s, color 0.15s, transform 0.15s;
+  transition: background 0.15s, color 0.15s, border-color 0.15s, transform 0.15s;
 }
 .jump-bottom-btn:hover {
-  background: #2563eb;
-  border-color: #3b82f6;
-  color: #fff;
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-contrast);
   transform: translateY(-1px);
 }
 
@@ -955,7 +1045,7 @@ onBeforeUnmount(() => {
   transform: translateY(6px);
 }
 
-/* 底部终端状态栏 */
+/* 底部状态栏 */
 .console-footer {
   display: flex;
   align-items: center;
@@ -963,9 +1053,9 @@ onBeforeUnmount(() => {
   gap: 12px;
   height: 30px;
   padding: 0 12px;
-  background: #171b24;
-  border-top: 1px solid #252a36;
-  color: #77839a;
+  background: var(--tint-1);
+  border-top: 1px solid var(--line);
+  color: var(--muted);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 11px;
 }
@@ -983,7 +1073,7 @@ onBeforeUnmount(() => {
   text-align: left;
 }
 .footer-path:hover:not(:disabled) {
-  color: #cdd6e6;
+  color: var(--ink);
 }
 .footer-meta {
   display: inline-flex;
@@ -998,7 +1088,7 @@ onBeforeUnmount(() => {
 
 @media (max-width: 640px) {
   .logs-page {
-    padding: 8px 10px 12px;
+    padding: 4px 0 6px;
   }
   .console-search {
     flex: 1 1 100%;
